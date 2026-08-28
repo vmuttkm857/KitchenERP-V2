@@ -48,4 +48,7 @@ class IngredientRepository:
         return list(self.session.scalars(statement))
     def has_history(self, ingredient_id: uuid.UUID) -> bool:
         return self.session.scalar(select(IngredientPriceHistory.id).where(IngredientPriceHistory.ingredient_id == ingredient_id).limit(1)) is not None
+    def has_recipe_references(self, ingredient_id: uuid.UUID) -> bool:
+        from app.domains.recipes.models import DishIngredient
+        return self.session.scalar(select(DishIngredient.id).where(DishIngredient.ingredient_id == ingredient_id).limit(1)) is not None
     def delete(self, ingredient: Ingredient) -> None: self.session.delete(ingredient)

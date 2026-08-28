@@ -49,13 +49,15 @@ class CategoryRepository:
         return list(self.session.scalars(statement)), total
 
     def has_references(self, kind: CategoryKind, category_id: uuid.UUID) -> bool:
-        if kind != "ingredient":
+        if kind == "ingredient":
+            from app.domains.ingredients.models import Ingredient
+            statement = select(Ingredient.id).where(Ingredient.category_id == category_id)
+        elif kind == "dish":
+            from app.domains.dishes.models import Dish
+            statement = select(Dish.id).where(Dish.category_id == category_id)
+        else:
             return False
-        from app.domains.ingredients.models import Ingredient
-
-        return self.session.scalar(
-            select(Ingredient.id).where(Ingredient.category_id == category_id).limit(1)
-        ) is not None
+        return self.session.scalar(statement.limit(1)) is not None
 
     def delete(self, category: Any) -> None:
         self.session.delete(category)

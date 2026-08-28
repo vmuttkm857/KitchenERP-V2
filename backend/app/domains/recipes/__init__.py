@@ -1,0 +1,1 @@
+"""Dish recipe aggregate domain."""

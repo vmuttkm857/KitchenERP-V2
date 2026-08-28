@@ -61,7 +61,7 @@ class IngredientService:
     def hard_delete(self, ingredient_id: uuid.UUID, actor_id: uuid.UUID, password: str) -> None:
         AuthService(self.session).verify_current_password(actor_id, password)
         ingredient = self.get_model(ingredient_id)
-        if self.repository.has_history(ingredient_id): raise IngredientInUseError()
+        if self.repository.has_history(ingredient_id) or self.repository.has_recipe_references(ingredient_id): raise IngredientInUseError()
         self.repository.delete(ingredient)
         try: self.session.commit()
         except IntegrityError as exc: self.session.rollback(); raise IngredientInUseError() from exc

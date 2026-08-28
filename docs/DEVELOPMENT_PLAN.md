@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 3－Categories、Suppliers、Ingredients 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 4－Dishes、Recipes 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -40,7 +40,7 @@
 
 重點：server-side 搜尋/篩選/分頁、停用保留引用、食材與初始價格/改價歷史的原子交易。
 
-## Phase 4：菜色與標準配方
+## Phase 4：菜色與標準配方（已完成）
 
 依序實作：
 

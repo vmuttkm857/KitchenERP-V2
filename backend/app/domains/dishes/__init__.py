@@ -1,0 +1,1 @@
+"""Dish master-data domain."""
