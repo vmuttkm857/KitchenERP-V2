@@ -12,7 +12,8 @@ THIN=Side(style="thin",color="D9E2F3")
 
 def _value(value):
     if isinstance(value,Decimal):return int(value) if value==value.to_integral_value() else float(value)
-    if isinstance(value,(date,datetime)):return value
+    if isinstance(value,datetime):return value.isoformat()
+    if isinstance(value,date):return value
     if isinstance(value,str):return safe_cell_text(value)
     return value
 
