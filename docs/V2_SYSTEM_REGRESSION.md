@@ -50,14 +50,14 @@
 
 - Streamlit rerun/session state 改為 React client state + versioned Backend API，避免整頁 rerun、重複查詢與 UI session 作為一致性保證。
 - SQLite 不再支援；PostgreSQL 是唯一正式與測試資料庫。
-- 舊資料的 `mL` 只在未來 V1 migration 一次正規化，不建立永久 runtime compatibility layer。
+- V1 資料已確認全為測試資料，不會匯入 V2；`mL` 舊資料只作 regression 參考，不建立 runtime compatibility layer。
 - Snapshot duplicate protection 改為 deterministic fingerprint + PostgreSQL unique constraint，不依賴單一 UI session。
 
 ## V1 Missing Feature Audit
 
 ### A. 正式使用前必須補
 
-- V1 正式資料 read-only audit、migration rehearsal、正式 migration 與核對報告。
+- 全新 PostgreSQL production database bootstrap、migration-to-head 與初始 admin 驗證。
 - 正式環境部署、HTTPS、production secrets、備份／還原演練與操作手冊。
 - 若現場每日工作依賴配送：delivery allocations、配送日期、拆分／改量與訂購量上限。
 - 以實際使用者完成本文件及 `MANUAL_SMOKE_TEST.md` 的驗收與資料格式確認。

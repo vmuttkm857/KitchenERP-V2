@@ -1,3 +1,7 @@
+import logging
+import time
+import uuid
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -7,8 +11,46 @@ from app.core.config import settings
 from app.domains.auth.exceptions import AuthenticationError
 
 
+logging.basicConfig(
+    level=getattr(logging, settings.log_level),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("kitchenerp.request")
+
+
 def create_app() -> FastAPI:
-    application = FastAPI(title=settings.app_name, version="0.1.0")
+    application = FastAPI(title=settings.app_name, version=settings.app_version)
+
+    @application.middleware("http")
+    async def request_observability(request: Request, call_next):
+        request_id = str(uuid.uuid4())
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            logger.error(
+                "request_failed method=%s path=%s request_id=%s exception_type=%s",
+                request.method,
+                request.url.path,
+                request_id,
+                type(exc).__name__,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"detail": "Internal server error", "request_id": request_id},
+                headers={"X-Request-ID": request_id},
+            )
+        duration_ms = (time.perf_counter() - started) * 1000
+        response.headers["X-Request-ID"] = request_id
+        logger.info(
+            "request method=%s path=%s status=%s duration_ms=%.2f request_id=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+            request_id,
+        )
+        return response
 
     @application.exception_handler(AuthenticationError)
     async def authentication_error_handler(

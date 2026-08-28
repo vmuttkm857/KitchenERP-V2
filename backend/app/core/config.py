@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+import os
 from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
@@ -17,13 +18,16 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "KitchenERP V2 API"
-    app_env: str = "development"
+    app_env: Literal["development", "test", "production"] = "development"
+    app_version: str = "0.1.0"
     database_url: str = "postgresql+psycopg://kitchenerp@localhost:5432/kitchenerp_v2"
     test_database_url: str | None = None
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=5, ge=0)
     db_pool_timeout_seconds: int = Field(default=30, ge=1)
+    db_pool_recycle_seconds: int = Field(default=1800, ge=0)
     db_echo: bool = False
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     jwt_secret: SecretStr | None = None
     jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_minutes: int = Field(default=15, ge=1)
@@ -35,10 +39,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_settings(self) -> "Settings":
+        if not self.database_url.startswith(("postgresql+psycopg://", "postgresql://")):
+            raise ValueError("DATABASE_URL must point to PostgreSQL")
         if self.jwt_secret is not None and len(self.jwt_secret.get_secret_value()) < 32:
             raise ValueError("JWT_SECRET must contain at least 32 characters")
-        if self.app_env.lower() == "production" and not self.refresh_cookie_secure:
-            raise ValueError("REFRESH_COOKIE_SECURE must be true in production")
+        if self.app_env == "production":
+            missing = [name for name in ("DATABASE_URL", "JWT_SECRET", "CORS_ORIGINS") if not os.getenv(name)]
+            if missing:
+                raise ValueError(f"Production environment variables are required: {', '.join(missing)}")
+            if not self.refresh_cookie_secure:
+                raise ValueError("REFRESH_COOKIE_SECURE must be true in production")
+            if self.db_echo:
+                raise ValueError("DB_ECHO must be false in production")
+            if not self.cors_origins or any("localhost" in origin or "127.0.0.1" in origin for origin in self.cors_origins):
+                raise ValueError("Production CORS_ORIGINS must contain only explicit production origins")
         if self.refresh_cookie_samesite == "none" and not self.refresh_cookie_secure:
             raise ValueError("SameSite=None requires a Secure refresh cookie")
         if "*" in self.cors_origins:

@@ -294,7 +294,7 @@ Repository 只執行 Service 已授權的 delete operation，不判斷刪除政�
 - Snapshot duplicate prevention 必須使用 Backend 產生的 deterministic fingerprint 與 PostgreSQL unique constraint；不得依賴 React state、Web session 或任何 Streamlit-style session state。fingerprint 精確組成於 Snapshot domain 實作時依業務規則確定。
 - Snapshot 是 hard copy；建立後不受 ingredient、recipe、menu 或其他來源後續修改影響。
 - `mL` 等 legacy unit 只在未來 Import/Migration 階段一次正規化，不建立永久 runtime compatibility。
-- V1 正式資料 migration 延後至功能完成、回歸驗證與 migration rehearsal 階段；本階段不建立資料匯入工具。
+- V1 只保留作為 Business Rule / Regression 參考；其資料皆為測試資料。V2 production 必須從乾淨 PostgreSQL schema 開始，由使用者透過 V2 UI 建立正式資料，不建立 V1 data migration/import 工具。
 
 ## 15. 尚待 Domain 實作時確認的細節
 
@@ -306,7 +306,7 @@ Repository 只執行 Service 已授權的 delete operation，不判斷刪除政�
 2. Recipe 的草稿/正式狀態如何建模，以及從草稿轉正式的完整驗證時點。
 3. Snapshot deterministic fingerprint 的精確欄位、排序/正規化方式與使用者明確重建策略。
 4. `created_by`、`updated_by` 適用的「重要主表」逐表清單。
-5. SQLite 現場資料的 migration、歷史 NULL/舊單位實況，留待 read-only audit。
+5. V1 SQLite 資料已確認不作為 production source，因此不再需要 data migration audit；舊資料的 NULL/舊單位只作 regression 參考。
 6. V1 A/B 未列入 regression checklist 的微小 UI 差異。
 7. 預設餐別的實際名稱集合。
 8. 非七日菜單的「整週複製」邊界行為。

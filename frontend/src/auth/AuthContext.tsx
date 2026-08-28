@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
-import { apiRequest, setAccessToken } from '../api/client'
+import { apiRequest, setAccessToken, setAuthExpiredHandler } from '../api/client'
 import type { AuthResponse, User } from '../types/api'
 
 
@@ -23,6 +23,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   useEffect(() => {
+    setAuthExpiredHandler(() => {
+      setAccessToken(null)
+      setUser(null)
+    })
     apiRequest<AuthResponse>('/auth/refresh', { method: 'POST' })
       .then(applyAuth)
       .catch(() => {
@@ -30,6 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null)
       })
       .finally(() => setIsLoading(false))
+    return () => setAuthExpiredHandler(null)
   }, [applyAuth])
 
   const login = useCallback(async (username: string, password: string) => {

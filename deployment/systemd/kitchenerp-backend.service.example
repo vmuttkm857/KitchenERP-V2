@@ -1,0 +1,22 @@
+[Unit]
+Description=KitchenERP V2 FastAPI backend
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kitchenerp
+Group=kitchenerp
+WorkingDirectory=/opt/kitchenerp/backend
+EnvironmentFile=/etc/kitchenerp/backend.env
+ExecStart=/opt/kitchenerp/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/kitchenerp
+
+[Install]
+WantedBy=multi-user.target
