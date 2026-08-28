@@ -1,0 +1,1 @@
+"""Requirement snapshot domain."""

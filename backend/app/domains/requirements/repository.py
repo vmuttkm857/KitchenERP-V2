@@ -23,7 +23,7 @@ class RequirementRepository:
             DishIngredient.id.label("recipe_detail_id"),DishIngredient.quantity.label("recipe_quantity"),DishIngredient.unit.label("recipe_unit"),DishIngredient.loss_rate,
             Ingredient.id.label("ingredient_id"),Ingredient.code.label("ingredient_code"),Ingredient.name.label("ingredient_name"),Ingredient.unit.label("base_unit"),
             Ingredient.current_price,Ingredient.primary_supplier_id.label("supplier_id"),Ingredient.purchase_unit,Ingredient.package_size,Ingredient.minimum_order_quantity,
-            Ingredient.is_active.label("ingredient_is_active"),Supplier.name.label("supplier_name"),Supplier.is_active.label("supplier_is_active"),
+            Ingredient.is_active.label("ingredient_is_active"),Supplier.code.label("supplier_code"),Supplier.name.label("supplier_name"),Supplier.is_active.label("supplier_is_active"),
         ).join(MenuDay,MenuDay.menu_id==Menu.id).join(MenuMealType,MenuMealType.id==MenuDay.menu_meal_type_id)
         statement=statement.join(MenuDish,MenuDish.menu_day_id==MenuDay.id).join(Dish,Dish.id==MenuDish.dish_id)
         statement=statement.outerjoin(DishIngredient,DishIngredient.dish_id==Dish.id).outerjoin(Ingredient,Ingredient.id==DishIngredient.ingredient_id).outerjoin(Supplier,Supplier.id==Ingredient.primary_supplier_id)

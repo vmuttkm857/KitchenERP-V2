@@ -38,6 +38,7 @@ class RequirementRow(BaseModel):
     ingredient_name: str
     supplier_id: uuid.UUID | None
     supplier_name: str | None
+    supplier_code: str | None = None
     base_unit: str
     requirement_quantity: Decimal
     requirement_unit: str
@@ -51,6 +52,7 @@ class RequirementRow(BaseModel):
     needs_review: bool
     total_diner_count: int
     source_count: int
+    schedules: list[dict[str, Any]] = []
 
     @field_serializer("requirement_quantity", "suggested_purchase_quantity", "package_size", "minimum_order_quantity", "current_price", "estimated_cost")
     def decimal_string(self, value: Decimal | None): return None if value is None else format(value,"f")

@@ -9,6 +9,7 @@ from app.api.v1.routes.menus import router as menus_router
 from app.api.v1.routes.recipes import router as recipes_router
 from app.api.v1.routes.requirements import router as requirements_router
 from app.api.v1.routes.suppliers import router as suppliers_router
+from app.api.v1.routes.snapshots import router as snapshots_router
 
 
 api_v1_router = APIRouter()
@@ -21,3 +22,4 @@ api_v1_router.include_router(dishes_router)
 api_v1_router.include_router(recipes_router)
 api_v1_router.include_router(menus_router)
 api_v1_router.include_router(requirements_router)
+api_v1_router.include_router(snapshots_router)

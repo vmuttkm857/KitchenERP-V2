@@ -65,3 +65,4 @@ small { display: block; color: #607065; }
 .requirements-table { overflow:auto; margin-bottom:1.5rem; }
 .requirements-table table { min-width:70rem; }
 @media (max-width:900px) { .requirements-form { grid-template-columns:1fr; } }
+.snapshot-action { display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin:1rem 0; padding:1rem; background:#eef4ed; border-radius:.7rem; }

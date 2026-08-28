@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 7－Requirements Preview 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 8－Requirement Snapshots 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -76,7 +76,7 @@
 
 重點：純計算先做 unit tests，再接 Repository aggregate query 與 API query budget。
 
-## Phase 8：需求快照與需求確認
+## Phase 8：需求快照與需求確認（已完成）
 
 - snapshot、items、schedules hard copy 的原子建立。
 - 防重複策略、狀態查詢、人工採購量/單位調整。
