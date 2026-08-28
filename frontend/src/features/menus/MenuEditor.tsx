@@ -1,38 +1,139 @@
-import { FormEvent,useCallback,useEffect,useMemo,useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiRequest } from '../../api/client'
-import { Feedback,LoadingState } from '../../components/ui/Page'
-import { DishOption,List,MealType,Menu,MenuAggregate,MenuDish,MenuSlot } from './types'
-const key=(date:string,mealId:string)=>`${date}:${mealId}`
-interface Paged<T>{items:T[];pagination:{total:number}}
+import { Feedback, LoadingState } from '../../components/ui/Page'
+import { MenuEditorPanel } from './MenuEditorPanel'
+import { MenuWeekGrid } from './MenuWeekGrid'
+import { DishOption, List, MealType, Menu, MenuAggregate, MenuDish, MenuSlot } from './types'
 
-export function MenuEditor({menu,onClose}:{menu:Menu;onClose:()=>void}){
-  const [data,setData]=useState<MenuAggregate|null>(null),[dishes,setDishes]=useState<DishOption[]>([]),[menus,setMenus]=useState<Menu[]>([])
-  const [slots,setSlots]=useState<Record<string,MenuSlot>>({}),[mealName,setMealName]=useState(''),[mealDrafts,setMealDrafts]=useState<Record<string,string>>({})
-  const [dishSearch,setDishSearch]=useState(''),[dishPage,setDishPage]=useState(1),[dishTotal,setDishTotal]=useState(0),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false)
-  const [error,setError]=useState(''),[message,setMessage]=useState(''),[panel,setPanel]=useState<'meal'|'copy'|null>(null),[editingKey,setEditingKey]=useState<string|null>(null),[candidate,setCandidate]=useState('')
-  const [sourceMenu,setSourceMenu]=useState(menu.id),[sourceDate,setSourceDate]=useState(menu.start_date),[destinationDate,setDestinationDate]=useState(menu.start_date),[copyMode,setCopyMode]=useState<'add'|'replace'>('add'),[confirmReplace,setConfirmReplace]=useState(false)
-  const load=useCallback(async()=>{setLoading(true);try{const [aggregate,list]=await Promise.all([apiRequest<MenuAggregate>(`/menus/${menu.id}/editor`),apiRequest<List<Menu>>('/menus?active=true&page_size=100')]);setData(aggregate);setMenus(list.items);setMealDrafts(Object.fromEntries(aggregate.meal_types.map(m=>[m.id,m.name])));setSlots(Object.fromEntries(aggregate.slots.map(s=>[key(s.menu_date,s.menu_meal_type_id),s])));setError('')}catch{setError('菜單工作區載入失敗')}finally{setLoading(false)}},[menu.id])
-  const loadDishes=useCallback(async()=>{try{const result=await apiRequest<Paged<DishOption>>(`/dishes?active=true&page=${dishPage}&page_size=25&search=${encodeURIComponent(dishSearch)}`);setDishes(result.items);setDishTotal(result.pagination.total)}catch{setError('菜色候選載入失敗')}},[dishPage,dishSearch])
-  useEffect(()=>{void load()},[load]);useEffect(()=>{void loadDishes()},[loadDishes])
-  const meals=useMemo(()=>data?.meal_types.filter(m=>m.is_active||Object.values(slots).some(s=>s.menu_meal_type_id===m.id))??[],[data,slots])
-  function slotFor(date:string,meal:MealType){return slots[key(date,meal.id)]??{menu_date:date,menu_meal_type_id:meal.id,notes:null,dishes:[]}}
-  function setSlot(slot:MenuSlot){setSlots(current=>({...current,[key(slot.menu_date,slot.menu_meal_type_id)]:slot}))}
-  function updateDish(slot:MenuSlot,index:number,changes:Partial<MenuDish>){setSlot({...slot,dishes:slot.dishes.map((x,i)=>i===index?{...x,...changes}:x)})}
-  function removeDish(slot:MenuSlot,index:number){if(!window.confirm('只移除此餐格關聯，不會刪除菜色主檔。確定移除？'))return;setSlot({...slot,dishes:slot.dishes.filter((_,i)=>i!==index).map((x,i)=>({...x,sort_order:i+1}))})}
-  function addDish(slot:MenuSlot){const dish=dishes.find(x=>x.id===candidate);if(!dish||slot.dishes.some(x=>x.dish_id===dish.id))return;setSlot({...slot,dishes:[...slot.dishes,{dish_id:dish.id,dish_code:dish.code,dish_name:dish.name,diner_count:1,notes:null,sort_order:slot.dishes.length+1}]});setCandidate('')}
-  async function save(){setSaving(true);setMessage('');try{const payload=Object.values(slots).filter(s=>s.menu_day_id||s.notes||s.dishes.length).map(s=>({...s,dishes:s.dishes.map(({id,dish_id,diner_count,notes,sort_order})=>({id,dish_id,diner_count,notes,sort_order}))}));const saved=await apiRequest<MenuAggregate>(`/menus/${menu.id}/editor`,{method:'PUT',body:JSON.stringify({slots:payload})});setData(saved);setSlots(Object.fromEntries(saved.slots.map(s=>[key(s.menu_date,s.menu_meal_type_id),s])));setMessage('完整菜單已儲存');setEditingKey(null)}catch{setError('儲存失敗；所有變更均已回復，請檢查停用資料、重複菜色與數值')}finally{setSaving(false)}}
-  async function addMeal(event:FormEvent){event.preventDefault();try{await apiRequest(`/menus/${menu.id}/meal-types`,{method:'POST',body:JSON.stringify({name:mealName,sort_order:(data?.meal_types.length??0)+1})});setMealName('');await load()}catch{setError('餐別新增失敗，名稱不可重複')}}
-  async function saveMeal(meal:MealType){try{await apiRequest(`/menus/${menu.id}/meal-types/${meal.id}`,{method:'PATCH',body:JSON.stringify({name:mealDrafts[meal.id]})});await load()}catch{setError('餐別修改失敗')}}
-  async function toggleMeal(meal:MealType){try{await apiRequest(`/menus/${menu.id}/meal-types/${meal.id}/${meal.is_active?'deactivate':'reactivate'}`,{method:'POST'});await load()}catch{setError('餐別狀態更新失敗')}}
-  async function moveMeal(meal:MealType,direction:-1|1){if(!data)return;const ordered=[...data.meal_types].sort((a,b)=>a.sort_order-b.sort_order),index=ordered.findIndex(x=>x.id===meal.id),target=index+direction;if(target<0||target>=ordered.length)return;[ordered[index],ordered[target]]=[ordered[target],ordered[index]];await apiRequest(`/menus/${menu.id}/meal-types/reorder`,{method:'PUT',body:JSON.stringify({ordered_ids:ordered.map(x=>x.id)})});await load()}
-  async function copy(kind:'day'|'week'){try{const body=kind==='day'?{source_menu_id:sourceMenu,source_date:sourceDate,destination_date:destinationDate,mode:copyMode,confirm_replace:confirmReplace}:{source_menu_id:sourceMenu,mode:copyMode,confirm_replace:confirmReplace};const copied=await apiRequest<MenuAggregate>(`/menus/${menu.id}/copy-${kind}`,{method:'POST',body:JSON.stringify(body)});setData(copied);setSlots(Object.fromEntries(copied.slots.map(s=>[key(s.menu_date,s.menu_meal_type_id),s])));setMessage(kind==='day'?'日期複製完成':'完整七日複製完成');setPanel(null)}catch{setError('複製失敗；請確認日期、餐別與覆蓋確認')}}
-  if(loading||!data)return <section><button className="secondary" onClick={onClose}>返回菜單</button>{loading?<LoadingState label="菜單工作區載入中…"/>:<Feedback type="error">{error}</Feedback>}</section>
-  const editing=editingKey?(()=>{const [date,mealId]=editingKey.split(':');const meal=meals.find(x=>x.id===mealId);return meal?{date,meal,slot:slotFor(date,meal)}:null})():null
-  return <section><header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button className="secondary" onClick={()=>setPanel('meal')}>餐別設定</button><button className="secondary" onClick={()=>setPanel('copy')}>複製菜單</button><button className="secondary" onClick={onClose}>返回</button><button onClick={()=>void save()} disabled={saving}>{saving?'儲存中…':'儲存完整菜單'}</button></div></header>
-    {error&&<Feedback type="error">{error}</Feedback>}{message&&<Feedback type="success">{message}</Feedback>}
-    {!meals.length?<div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div>:<div className="menu-matrix"><table><thead><tr><th className="sticky-col">餐別</th>{data.dates.map(date=><th key={date}><span>{new Date(`${date}T00:00:00`).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric',weekday:'short'})}</span><small>{date}</small></th>)}</tr></thead><tbody>{meals.map(meal=><tr key={meal.id}><th className="sticky-col">{meal.name}{!meal.is_active&&<small>已停用（歷史）</small>}</th>{data.dates.map(date=>{const slot=slotFor(date,meal);return <td className="meal-cell meal-cell-summary" key={date}><div className="dish-chips">{slot.dishes.map(d=><div className="dish-chip" key={d.id??d.dish_id}><strong>{d.dish_name}</strong><span>{d.diner_count} 人{d.notes?'・有備註':''}</span></div>)}</div>{!slot.dishes.length&&<small>尚未排菜</small>}<button className="secondary cell-edit" onClick={()=>{setEditingKey(key(date,meal.id));setCandidate('')}}>{slot.dishes.length?'編輯餐格':'新增菜色'}</button></td>})}</tr>)}</tbody></table></div>}
-    {editing&&<div className="modal-backdrop" onMouseDown={()=>setEditingKey(null)}><section className="modal-panel wide" role="dialog" aria-modal="true" aria-labelledby="cell-title" onMouseDown={e=>e.stopPropagation()}><header><div><h2 id="cell-title">{editing.date}・{editing.meal.name}</h2><p>調整菜色、人數、順序與餐格備註。</p></div><button className="secondary" onClick={()=>setEditingKey(null)}>關閉</button></header><label>餐格備註<input value={editing.slot.notes??''} onChange={e=>setSlot({...editing.slot,notes:e.target.value||null})}/></label><div className="editor-lines">{editing.slot.dishes.map((dish,index)=><article className="scheduled-dish" key={dish.id??dish.dish_id}><strong>{dish.dish_code}｜{dish.dish_name}</strong><div className="form-grid"><label>人數<input type="number" min="0" value={dish.diner_count} onChange={e=>updateDish(editing.slot,index,{diner_count:Number(e.target.value)})}/></label><label>順序<input type="number" min="1" value={dish.sort_order} onChange={e=>updateDish(editing.slot,index,{sort_order:Number(e.target.value)})}/></label><label>菜色備註<input value={dish.notes??''} onChange={e=>updateDish(editing.slot,index,{notes:e.target.value||null})}/></label></div><button className="danger secondary-danger" onClick={()=>removeDish(editing.slot,index)}>移除此餐格關聯</button></article>)}</div><div className="picker-panel"><label>搜尋菜色<input autoFocus value={dishSearch} onChange={e=>{setDishSearch(e.target.value);setDishPage(1)}}/></label><label>加入菜色<select value={candidate} onChange={e=>setCandidate(e.target.value)}><option value="">請選擇</option>{dishes.filter(d=>!editing.slot.dishes.some(x=>x.dish_id===d.id)).map(d=><option key={d.id} value={d.id}>{d.code}｜{d.name}</option>)}</select></label><button disabled={!candidate||!editing.meal.is_active} onClick={()=>addDish(editing.slot)}>加入餐格</button><small>候選 {dishTotal} 筆・第 {dishPage} 頁 <button className="link-button" disabled={dishPage<=1} onClick={()=>setDishPage(p=>p-1)}>上一頁</button> <button className="link-button" disabled={dishPage*25>=dishTotal} onClick={()=>setDishPage(p=>p+1)}>下一頁</button></small></div><footer><button onClick={()=>void save()} disabled={saving}>{saving?'儲存中…':'儲存並關閉'}</button></footer></section></div>}
-    {panel==='meal'&&<div className="modal-backdrop" onMouseDown={()=>setPanel(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="meal-title" onMouseDown={e=>e.stopPropagation()}><header><h2 id="meal-title">餐別設定</h2><button className="secondary" onClick={()=>setPanel(null)}>關閉</button></header><form className="inline-form" onSubmit={addMeal}><label>新餐別名稱<input autoFocus value={mealName} onChange={e=>setMealName(e.target.value)} required/></label><button>新增餐別</button></form><div className="meal-list">{data.meal_types.map(meal=><div key={meal.id} className={!meal.is_active?'inactive':''}><label>名稱<input value={mealDrafts[meal.id]??meal.name} onChange={e=>setMealDrafts({...mealDrafts,[meal.id]:e.target.value})}/></label><span>順序 {meal.sort_order}</span><button className="secondary" aria-label={`${meal.name} 上移`} onClick={()=>void moveMeal(meal,-1)}>上移</button><button className="secondary" aria-label={`${meal.name} 下移`} onClick={()=>void moveMeal(meal,1)}>下移</button><button onClick={()=>void saveMeal(meal)}>儲存</button><button className="secondary" onClick={()=>void toggleMeal(meal)}>{meal.is_active?'停用':'恢復'}</button></div>)}</div></section></div>}
-    {panel==='copy'&&<div className="modal-backdrop" onMouseDown={()=>setPanel(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="copy-title" onMouseDown={e=>e.stopPropagation()}><header><div><h2 id="copy-title">複製菜單</h2><p>可複製單日或完整七日；覆蓋模式會先要求確認。</p></div><button className="secondary" onClick={()=>setPanel(null)}>關閉</button></header><div className="form-grid"><label>來源菜單<select autoFocus value={sourceMenu} onChange={e=>setSourceMenu(e.target.value)}>{menus.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>來源日期<input type="date" value={sourceDate} onChange={e=>setSourceDate(e.target.value)}/></label><label>目的日期<input type="date" value={destinationDate} onChange={e=>setDestinationDate(e.target.value)}/></label><label>模式<select value={copyMode} onChange={e=>{setCopyMode(e.target.value as 'add'|'replace');setConfirmReplace(false)}}><option value="add">加入（跳過重複）</option><option value="replace">覆蓋目的資料</option></select></label></div>{copyMode==='replace'&&<label className="confirm-box"><input type="checkbox" checked={confirmReplace} onChange={e=>setConfirmReplace(e.target.checked)}/>我了解目的日期原有餐格內容將被覆蓋。</label>}<footer><button className="secondary" disabled={copyMode==='replace'&&!confirmReplace} onClick={()=>void copy('day')}>複製一天</button><button disabled={copyMode==='replace'&&!confirmReplace} onClick={()=>void copy('week')}>複製完整七日</button></footer></section></div>}
+const slotKey = (date: string, mealId: string) => `${date}:${mealId}`
+interface Paged<T> { items: T[]; pagination: { total: number } }
+
+export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void }) {
+  const [data, setData] = useState<MenuAggregate | null>(null)
+  const [menus, setMenus] = useState<Menu[]>([])
+  const [slots, setSlots] = useState<Record<string, MenuSlot>>({})
+  const [mealName, setMealName] = useState('')
+  const [mealDrafts, setMealDrafts] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [dialog, setDialog] = useState<'meal' | 'copy' | null>(null)
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [dishSearch, setDishSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [dishPage, setDishPage] = useState(1)
+  const [dishResults, setDishResults] = useState<DishOption[]>([])
+  const [dishTotal, setDishTotal] = useState(0)
+  const [dishLoading, setDishLoading] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [sourceMenu, setSourceMenu] = useState(menu.id)
+  const [sourceDate, setSourceDate] = useState(menu.start_date)
+  const [destinationDate, setDestinationDate] = useState(menu.start_date)
+  const [copyMode, setCopyMode] = useState<'add' | 'replace'>('add')
+  const [confirmReplace, setConfirmReplace] = useState(false)
+
+  const applyAggregate = useCallback((aggregate: MenuAggregate) => {
+    setData(aggregate)
+    setMealDrafts(Object.fromEntries(aggregate.meal_types.map(meal => [meal.id, meal.name])))
+    setSlots(Object.fromEntries(aggregate.slots.map(slot => [slotKey(slot.menu_date, slot.menu_meal_type_id), slot])))
+    setDirty(false)
+  }, [])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [aggregate, list] = await Promise.all([
+        apiRequest<MenuAggregate>(`/menus/${menu.id}/editor`),
+        apiRequest<List<Menu>>('/menus?active=true&page_size=100'),
+      ])
+      applyAggregate(aggregate); setMenus(list.items); setError('')
+    } catch { setError('菜單工作區載入失敗') }
+    finally { setLoading(false) }
+  }, [applyAggregate, menu.id])
+
+  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(dishSearch.trim()), 250)
+    return () => window.clearTimeout(timer)
+  }, [dishSearch])
+  useEffect(() => {
+    if (!editingKey || !debouncedSearch) {
+      setDishResults([]); setDishTotal(0); setDishLoading(false); return
+    }
+    let active = true
+    setDishLoading(true)
+    apiRequest<Paged<DishOption>>(`/dishes?active=true&page=${dishPage}&page_size=10&search=${encodeURIComponent(debouncedSearch)}`)
+      .then(result => { if (active) { setDishResults(result.items); setDishTotal(result.pagination.total) } })
+      .catch(() => { if (active) setError('菜色搜尋失敗，請稍後再試') })
+      .finally(() => { if (active) setDishLoading(false) })
+    return () => { active = false }
+  }, [debouncedSearch, dishPage, editingKey])
+
+  const meals = useMemo(() => data?.meal_types.filter(meal => meal.is_active || Object.values(slots).some(slot => slot.menu_meal_type_id === meal.id)) ?? [], [data, slots])
+  function slotFor(date: string, meal: MealType): MenuSlot { return slots[slotKey(date, meal.id)] ?? { menu_date: date, menu_meal_type_id: meal.id, notes: null, dishes: [] } }
+  function setDraftSlot(slot: MenuSlot) { setSlots(current => ({ ...current, [slotKey(slot.menu_date, slot.menu_meal_type_id)]: slot })); setDirty(true); setMessage('') }
+  function updateDish(slot: MenuSlot, index: number, changes: Partial<MenuDish>) { setDraftSlot({ ...slot, dishes: slot.dishes.map((dish, dishIndex) => dishIndex === index ? { ...dish, ...changes } : dish) }) }
+  function moveDish(slot: MenuSlot, index: number, direction: -1 | 1) {
+    const target = index + direction
+    if (target < 0 || target >= slot.dishes.length) return
+    const dishes = [...slot.dishes]; [dishes[index], dishes[target]] = [dishes[target], dishes[index]]
+    setDraftSlot({ ...slot, dishes: dishes.map((dish, order) => ({ ...dish, sort_order: order + 1 })) })
+  }
+  function removeDish(slot: MenuSlot, index: number) {
+    const dish = slot.dishes[index]
+    if (!window.confirm(`只會從本餐移除「${dish.dish_name}」，不會刪除菜色主檔。確定移除？`)) return
+    setDraftSlot({ ...slot, dishes: slot.dishes.filter((_, dishIndex) => dishIndex !== index).map((item, order) => ({ ...item, sort_order: order + 1 })) })
+  }
+  function addDish(slot: MenuSlot, dish: DishOption) {
+    if (slot.dishes.some(item => item.dish_id === dish.id)) { setError(`「${dish.name}」已在本餐中`); return }
+    setDraftSlot({ ...slot, dishes: [...slot.dishes, { dish_id: dish.id, dish_code: dish.code, dish_name: dish.name, dish_category_name: dish.category_name, diner_count: 1, notes: null, sort_order: slot.dishes.length + 1 }] })
+    setDishSearch(''); setDebouncedSearch(''); setDishPage(1); setDishResults([]); setDishTotal(0); setError('')
+    window.setTimeout(() => searchInputRef.current?.focus(), 0)
+  }
+  function selectCell(date: string, meal: MealType) { setEditingKey(slotKey(date, meal.id)); setDishSearch(''); setDishPage(1); setError(''); window.setTimeout(() => searchInputRef.current?.focus(), 0) }
+  function openDialog(next: 'meal' | 'copy') {
+    if (dirty) { setError('請先儲存菜單，再開啟餐別設定或複製菜單，以免尚未儲存的變更遺失。'); return }
+    setDialog(next)
+  }
+
+  async function save() {
+    if (!dirty) return
+    setSaving(true); setMessage(''); setError('')
+    try {
+      const payload = Object.values(slots).filter(slot => slot.menu_day_id || slot.notes || slot.dishes.length).map(slot => ({ ...slot, dishes: slot.dishes.map(({ id, dish_id, diner_count, notes, sort_order }) => ({ id, dish_id, diner_count, notes, sort_order })) }))
+      applyAggregate(await apiRequest<MenuAggregate>(`/menus/${menu.id}/editor`, { method: 'PUT', body: JSON.stringify({ slots: payload }) }))
+      setMessage('菜單已儲存')
+    } catch { setError('儲存失敗；資料庫未接受任何部分變更，請檢查停用資料、重複菜色與人數') }
+    finally { setSaving(false) }
+  }
+  async function addMeal(event: FormEvent) { event.preventDefault(); try { await apiRequest(`/menus/${menu.id}/meal-types`, { method: 'POST', body: JSON.stringify({ name: mealName, sort_order: (data?.meal_types.length ?? 0) + 1 }) }); setMealName(''); await load() } catch { setError('餐別新增失敗，名稱不可重複') } }
+  async function saveMeal(meal: MealType) { try { await apiRequest(`/menus/${menu.id}/meal-types/${meal.id}`, { method: 'PATCH', body: JSON.stringify({ name: mealDrafts[meal.id] }) }); await load() } catch { setError('餐別修改失敗') } }
+  async function toggleMeal(meal: MealType) { try { await apiRequest(`/menus/${menu.id}/meal-types/${meal.id}/${meal.is_active ? 'deactivate' : 'reactivate'}`, { method: 'POST' }); await load() } catch { setError('餐別狀態更新失敗') } }
+  async function moveMeal(meal: MealType, direction: -1 | 1) {
+    if (!data) return
+    const ordered = [...data.meal_types].sort((a, b) => a.sort_order - b.sort_order), index = ordered.findIndex(item => item.id === meal.id), target = index + direction
+    if (target < 0 || target >= ordered.length) return
+    ;[ordered[index], ordered[target]] = [ordered[target], ordered[index]]
+    await apiRequest(`/menus/${menu.id}/meal-types/reorder`, { method: 'PUT', body: JSON.stringify({ ordered_ids: ordered.map(item => item.id) }) }); await load()
+  }
+  async function copy(kind: 'day' | 'week') {
+    try {
+      const body = kind === 'day' ? { source_menu_id: sourceMenu, source_date: sourceDate, destination_date: destinationDate, mode: copyMode, confirm_replace: confirmReplace } : { source_menu_id: sourceMenu, mode: copyMode, confirm_replace: confirmReplace }
+      applyAggregate(await apiRequest<MenuAggregate>(`/menus/${menu.id}/copy-${kind}`, { method: 'POST', body: JSON.stringify(body) }))
+      setMessage(kind === 'day' ? '日期複製完成' : '完整七日複製完成'); setDialog(null)
+    } catch { setError('複製失敗；請確認日期、餐別與覆蓋確認') }
+  }
+
+  if (loading || !data) return <section><button className="secondary" onClick={onClose}>返回菜單</button>{loading ? <LoadingState label="菜單工作區載入中…"/> : <Feedback type="error">{error}</Feedback>}</section>
+  const editing = editingKey ? (() => { const [date, mealId] = editingKey.split(':'); const meal = meals.find(item => item.id === mealId); return meal ? { date, meal, slot: slotFor(date, meal) } : null })() : null
+
+  return <section className="menu-editor-page">
+    <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p>{dirty && <span className="unsaved-indicator" role="status">● 有尚未儲存的變更</span>}</div><div className="page-actions"><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={onClose}>返回</button><button onClick={() => void save()} disabled={!dirty || saving}>{saving ? '儲存中…' : '儲存菜單'}</button></div></header>
+    {error && <Feedback type="error">{error}</Feedback>}{message && <Feedback type="success">{message}</Feedback>}
+    {!meals.length ? <div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div> : <div className={`menu-editor-workspace${editing ? ' has-drawer' : ''}`}><MenuWeekGrid dates={data.dates} meals={meals} selectedKey={editingKey} slotFor={slotFor} onSelect={selectCell}/>{editing && <MenuEditorPanel date={editing.date} meal={editing.meal} slot={editing.slot} search={dishSearch} results={dishResults.filter(dish => !editing.slot.dishes.some(item => item.dish_id === dish.id))} searchTotal={dishTotal} searchPage={dishPage} searchLoading={dishLoading} searchInputRef={searchInputRef} onClose={() => setEditingKey(null)} onSlotNotes={notes => setDraftSlot({ ...editing.slot, notes })} onDishChange={(index, changes) => updateDish(editing.slot, index, changes)} onMove={(index, direction) => moveDish(editing.slot, index, direction)} onRemove={index => removeDish(editing.slot, index)} onSearch={value => { setDishSearch(value); setDishPage(1) }} onSearchPage={setDishPage} onAdd={dish => addDish(editing.slot, dish)}/>}</div>}
+    {dialog === 'meal' && <div className="modal-backdrop" onMouseDown={() => setDialog(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="meal-title" onMouseDown={event => event.stopPropagation()}><header><h2 id="meal-title">餐別設定</h2><button className="secondary" onClick={() => setDialog(null)}>關閉</button></header><form className="inline-form" onSubmit={addMeal}><label>新餐別名稱<input autoFocus value={mealName} onChange={event => setMealName(event.target.value)} required/></label><button>新增餐別</button></form><div className="meal-list">{data.meal_types.map(meal => <div key={meal.id} className={!meal.is_active ? 'inactive' : ''}><label>名稱<input value={mealDrafts[meal.id] ?? meal.name} onChange={event => setMealDrafts({ ...mealDrafts, [meal.id]: event.target.value })}/></label><button className="secondary" aria-label={`${meal.name} 上移`} onClick={() => void moveMeal(meal, -1)}>上移</button><button className="secondary" aria-label={`${meal.name} 下移`} onClick={() => void moveMeal(meal, 1)}>下移</button><button onClick={() => void saveMeal(meal)}>儲存</button><button className="secondary" onClick={() => void toggleMeal(meal)}>{meal.is_active ? '停用' : '恢復'}</button></div>)}</div></section></div>}
+    {dialog === 'copy' && <div className="modal-backdrop" onMouseDown={() => setDialog(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="copy-title" onMouseDown={event => event.stopPropagation()}><header><div><h2 id="copy-title">複製菜單</h2><p>可複製單日或完整七日；覆蓋模式會先要求確認。</p></div><button className="secondary" onClick={() => setDialog(null)}>關閉</button></header><div className="form-grid"><label>來源菜單<select autoFocus value={sourceMenu} onChange={event => setSourceMenu(event.target.value)}>{menus.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>來源日期<input type="date" value={sourceDate} onChange={event => setSourceDate(event.target.value)}/></label><label>目的日期<input type="date" value={destinationDate} onChange={event => setDestinationDate(event.target.value)}/></label><label>模式<select value={copyMode} onChange={event => { setCopyMode(event.target.value as 'add' | 'replace'); setConfirmReplace(false) }}><option value="add">加入（跳過重複）</option><option value="replace">覆蓋目的資料</option></select></label></div>{copyMode === 'replace' && <label className="confirm-box"><input type="checkbox" checked={confirmReplace} onChange={event => setConfirmReplace(event.target.checked)}/>我了解目的日期原有餐格內容將被覆蓋。</label>}<footer><button className="secondary" disabled={copyMode === 'replace' && !confirmReplace} onClick={() => void copy('day')}>複製一天</button><button disabled={copyMode === 'replace' && !confirmReplace} onClick={() => void copy('week')}>複製完整七日</button></footer></section></div>}
   </section>
 }
