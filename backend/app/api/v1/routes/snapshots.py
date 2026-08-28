@@ -1,20 +1,26 @@
 import uuid
 from typing import Annotated
-from fastapi import APIRouter,Depends,HTTPException,Query,status
+from fastapi import APIRouter,Depends,HTTPException,Query,Response,status
 from sqlalchemy.orm import Session
 from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user
-from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,SnapshotNotFoundError
+from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
+from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.snapshots.schemas import SnapshotCreate,SnapshotDetail,SnapshotHeaderPublic,SnapshotItemPublic,SnapshotItemUpdate,SnapshotList
 from app.domains.snapshots.service import SnapshotService
 from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta
+from app.shared.schemas import PasswordConfirmation
 
 router=APIRouter(prefix="/requirement-snapshots",tags=["requirement-snapshots"])
 def mapped(exc):
     if isinstance(exc,SnapshotNotFoundError):return HTTPException(404,"Snapshot not found")
     if isinstance(exc,DuplicateSnapshotError):return HTTPException(409,detail={"code":"DUPLICATE_SNAPSHOT","existing_snapshot_id":str(exc.snapshot_id) if exc.snapshot_id else None})
     if isinstance(exc,EmptySnapshotError):return HTTPException(422,"Requirement calculation has no rows to snapshot")
+    if isinstance(exc,SnapshotLockedError):return HTTPException(409,detail={"code":"SNAPSHOT_LOCKED"})
+    if isinstance(exc,InvalidPurchaseUnitError):return HTTPException(422,detail={"code":"INVALID_PURCHASE_UNIT"})
+    if isinstance(exc,SnapshotInUseError):return HTTPException(409,detail={"code":"SNAPSHOT_HAS_PURCHASE"})
+    if isinstance(exc,InvalidCredentialsError):return HTTPException(401,"Password verification failed")
     return HTTPException(400,"Snapshot operation failed")
 
 @router.post("",response_model=SnapshotDetail,status_code=status.HTTP_201_CREATED)
@@ -34,5 +40,12 @@ def detail(snapshot_id:uuid.UUID,user:Annotated[User,Depends(get_current_user)],
 
 @router.patch("/{snapshot_id}/items/{item_id}",response_model=SnapshotItemPublic)
 def adjust(snapshot_id:uuid.UUID,item_id:uuid.UUID,data:SnapshotItemUpdate,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
-    try:return SnapshotItemPublic.model_validate(SnapshotService(session).update_adjusted(snapshot_id,item_id,data.adjusted_quantity,user.id))
+    try:return SnapshotItemPublic.model_validate(SnapshotService(session).update_adjusted(snapshot_id,item_id,data.adjusted_quantity,data.purchase_unit,user.id))
     except Exception as exc:raise mapped(exc) from exc
+
+@router.post("/{snapshot_id}/hard-delete",status_code=204)
+def hard_delete(snapshot_id:uuid.UUID,data:PasswordConfirmation,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    if user.role!="admin":raise HTTPException(403,"Admin role required")
+    try:SnapshotService(session).delete(snapshot_id,user.id,data.password)
+    except Exception as exc:raise mapped(exc) from exc
+    return Response(status_code=204)

@@ -45,6 +45,7 @@ def migrated_test_database() -> Generator[Engine, None, None]:
 def clean_auth_tables(migrated_test_database: Engine) -> Generator[None, None, None]:
     yield
     with migrated_test_database.begin() as connection:
+        connection.execute(text("DELETE FROM purchase_batches"))
         connection.execute(text("DELETE FROM requirement_snapshots"))
         connection.execute(text("DELETE FROM menu_dishes"))
         connection.execute(text("DELETE FROM menu_days"))

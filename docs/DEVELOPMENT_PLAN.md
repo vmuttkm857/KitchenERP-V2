@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 8－Requirement Snapshots 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 9－Purchases（不含配送）已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -84,7 +84,7 @@
 
 重點：不可回寫原需求/菜單/配方/食材；歷史資料不受主檔變更影響。
 
-## Phase 9：正式採購與配送
+## Phase 9：正式採購與配送（正式採購已完成；配送尚未開始）
 
 - 從 snapshot 原子建立 purchase order/items/allocations。
 - 工作匣、每日叫貨、配送拆分/改期/改量/刪除。

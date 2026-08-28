@@ -8,9 +8,12 @@ from app.db.base import Base
 
 class RequirementSnapshot(Base):
     __tablename__="requirement_snapshots"
-    __table_args__=(UniqueConstraint("fingerprint",name="uq_requirement_snapshots_fingerprint"),Index("ix_requirement_snapshots_created_at","created_at"),)
+    __table_args__=(UniqueConstraint("criteria_fingerprint","content_fingerprint",name="uq_snapshots_criteria_content"),UniqueConstraint("criteria_fingerprint","revision",name="uq_snapshots_criteria_revision"),Index("ix_requirement_snapshots_created_at","created_at"),)
     id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
     fingerprint:Mapped[str]=mapped_column(String(64),nullable=False)
+    criteria_fingerprint:Mapped[str]=mapped_column(String(64),nullable=False,index=True)
+    content_fingerprint:Mapped[str]=mapped_column(String(64),nullable=False)
+    revision:Mapped[int]=mapped_column(Integer,nullable=False)
     criteria:Mapped[dict]=mapped_column(JSONB,nullable=False)
     source_menus:Mapped[list]=mapped_column(JSONB,nullable=False)
     anomaly_snapshot:Mapped[list]=mapped_column(JSONB,nullable=False,default=list)
@@ -38,6 +41,7 @@ class RequirementSnapshotItem(Base):
     adjusted_quantity:Mapped[Decimal|None]=mapped_column(Numeric(18,6))
     suggested_purchase_unit_snapshot:Mapped[str|None]=mapped_column(String(20))
     purchase_unit_snapshot:Mapped[str|None]=mapped_column(String(20))
+    configured_purchase_unit_snapshot:Mapped[str|None]=mapped_column(String(20))
     package_size_snapshot:Mapped[Decimal]=mapped_column(Numeric(18,6),nullable=False)
     minimum_order_quantity_snapshot:Mapped[Decimal]=mapped_column(Numeric(18,6),nullable=False)
     unit_price_snapshot:Mapped[Decimal|None]=mapped_column(Numeric(18,6))

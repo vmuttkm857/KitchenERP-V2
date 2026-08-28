@@ -8,6 +8,8 @@ class SnapshotRepository:
     def __init__(self,session:Session):self.session=session
     def add(self,value):self.session.add(value)
     def by_fingerprint(self,value):return self.session.scalar(select(RequirementSnapshot).where(RequirementSnapshot.fingerprint==value))
+    def by_content(self,criteria_fingerprint,content_fingerprint):return self.session.scalar(select(RequirementSnapshot).where(RequirementSnapshot.criteria_fingerprint==criteria_fingerprint,RequirementSnapshot.content_fingerprint==content_fingerprint))
+    def next_revision(self,criteria_fingerprint):return (self.session.scalar(select(func.max(RequirementSnapshot.revision)).where(RequirementSnapshot.criteria_fingerprint==criteria_fingerprint)) or 0)+1
     def get(self,snapshot_id):return self.session.get(RequirementSnapshot,snapshot_id)
     def item(self,snapshot_id,item_id):return self.session.scalar(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id,RequirementSnapshotItem.id==item_id))
     def detail(self,snapshot_id):
@@ -21,3 +23,4 @@ class SnapshotRepository:
         total=self.session.scalar(select(func.count()).select_from(RequirementSnapshot).where(*where)) or 0
         rows=self.session.execute(select(RequirementSnapshot,User.display_name).join(User,User.id==RequirementSnapshot.created_by).where(*where).order_by(RequirementSnapshot.created_at.desc(),RequirementSnapshot.id).offset((page-1)*page_size).limit(page_size)).all()
         return rows,total
+    def delete(self,value):self.session.delete(value)

@@ -6,6 +6,9 @@ from app.db.session import engine as process_engine
 from tests.api.requirements.test_requirements_api import auth,fixture
 from app.domains.snapshots.models import RequirementSnapshot,RequirementSnapshotItem
 from app.domains.snapshots.repository import SnapshotRepository
+from app.domains.ingredients.models import Ingredient
+from app.domains.recipes.models import DishIngredient
+from app.domains.menus.models import MenuDish
 
 def create_snapshot(client,headers,menu):
     return client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}})
@@ -69,3 +72,15 @@ def test_item_failure_rolls_back_header_and_all_items(client,db_session,monkeypa
     db_session.expire_all()
     assert db_session.scalar(select(func.count()).select_from(RequirementSnapshot))==0
     assert db_session.scalar(select(func.count()).select_from(RequirementSnapshotItem))==0
+
+def test_same_criteria_content_duplicate_but_source_changes_create_revisions(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers)
+    first=create_snapshot(client,headers,menu);assert first.status_code==201 and first.json()["revision"]==1
+    assert create_snapshot(client,headers,menu).status_code==409
+    ingredient=db_session.scalar(select(Ingredient).where(Ingredient.code=="REQ-I1"));ingredient.current_price=Decimal("201");db_session.commit()
+    second=create_snapshot(client,headers,menu);assert second.status_code==201 and second.json()["revision"]==2
+    recipe=db_session.scalar(select(DishIngredient).where(DishIngredient.ingredient_id==ingredient.id));recipe.quantity=recipe.quantity+Decimal("1");db_session.commit()
+    third=create_snapshot(client,headers,menu);assert third.status_code==201 and third.json()["revision"]==3
+    menu_dish=db_session.scalar(select(MenuDish));menu_dish.diner_count+=1;db_session.commit()
+    fourth=create_snapshot(client,headers,menu);assert fourth.status_code==201 and fourth.json()["revision"]==4
+    assert create_snapshot(client,headers,menu).status_code==409

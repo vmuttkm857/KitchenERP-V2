@@ -8,6 +8,7 @@ from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType
 from app.domains.recipes.models import DishIngredient
 from app.domains.suppliers.models import Supplier
 from app.domains.snapshots.models import RequirementSnapshot, RequirementSnapshotItem
+from app.domains.purchases.models import PurchaseBatch, PurchaseOrder, PurchaseOrderItem
 from app.domains.users.models import User
 
-__all__ = ["Dish", "DishCategory", "DishIngredient", "Ingredient", "IngredientCategory", "IngredientPriceHistory", "Menu", "MenuCategory", "MenuDay", "MenuDish", "MenuMealType", "RefreshSession", "RequirementSnapshot", "RequirementSnapshotItem", "Supplier", "User"]
+__all__ = ["Dish", "DishCategory", "DishIngredient", "Ingredient", "IngredientCategory", "IngredientPriceHistory", "Menu", "MenuCategory", "MenuDay", "MenuDish", "MenuMealType", "PurchaseBatch", "PurchaseOrder", "PurchaseOrderItem", "RefreshSession", "RequirementSnapshot", "RequirementSnapshotItem", "Supplier", "User"]
