@@ -119,6 +119,12 @@ class AuthService:
             raise InvalidAccessTokenError("Invalid access token")
         return user
 
+    def verify_current_password(self, user_id: uuid.UUID, password: str) -> User:
+        user = self.users.get_by_id(user_id)
+        if user is None or not user.is_active or not verify_password(password, user.password_hash):
+            raise InvalidCredentialsError("Password verification failed")
+        return user
+
     def revoke_all_sessions(self, user_id: uuid.UUID) -> int:
         count = self.refresh_sessions.revoke_all_for_user(user_id, datetime.now(UTC))
         self.session.commit()

@@ -20,3 +20,16 @@ input:focus { outline: 3px solid rgb(57 114 74 / 18%); border-color: #39724a; }
 button { width: fit-content; padding: .75rem 1.1rem; border: 0; border-radius: .55rem; color: #fff; background: #2f6840; font: inherit; font-weight: 700; cursor: pointer; }
 button:disabled { cursor: wait; opacity: .65; }
 .error { margin: 0; color: #a12626; }
+.app-shell { min-height: 100vh; padding: 1.5rem; }
+.app-header, .app-nav, .toolbar, .actions { display: flex; gap: .6rem; align-items: center; }
+.app-header { justify-content: space-between; max-width: 90rem; margin: 0 auto 1rem; }
+.app-nav, .workspace { max-width: 90rem; margin: 0 auto 1rem; }
+.workspace { padding: 1.5rem; border: 1px solid #d8e2d7; border-radius: 1rem; background: white; overflow-x: auto; }
+.panel-form { display: flex; flex-wrap: wrap; gap: .8rem; align-items: end; padding: 1rem; margin-bottom: 1rem; background: #f3f6f2; border-radius: .7rem; }
+.panel-form label { min-width: 10rem; flex: 1; }
+select { padding: .8rem; border: 1px solid #b9c9ba; border-radius: .55rem; font: inherit; background: white; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: .7rem; text-align: left; border-bottom: 1px solid #e4e9e3; vertical-align: top; }
+.actions { flex-wrap: wrap; }
+.actions button { padding: .45rem .65rem; font-size: .9rem; }
+button.danger { background: #9f3030; }

@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 2－Authentication 與 Users 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 3－Categories、Suppliers、Ingredients 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -30,7 +30,7 @@
 
 完成條件：每位使用者以獨立帳密登入；停用、權限與安全回歸測試通過。
 
-## Phase 3：基礎主檔
+## Phase 3：基礎主檔（已完成）
 
 依序實作：
 
