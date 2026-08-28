@@ -2,7 +2,7 @@ import uuid
 from collections import defaultdict
 from decimal import Decimal
 
-from app.shared.domain.quantities import convert_quantity
+from app.shared.domain.quantities import calculate_required_quantity,convert_quantity
 
 
 def anomaly(code,severity,message,entity_id,entity_name,**context):
@@ -29,8 +29,7 @@ def calculate_requirement_rows(source_rows):
             missing_supplier_seen.add(source["ingredient_id"]); anomalies.append(anomaly("MISSING_SUPPLIER","warning","Ingredient has no primary supplier",source["ingredient_id"],source["ingredient_name"]))
         elif source["supplier_id"] is not None and source["supplier_is_active"] is False and ("supplier",source["supplier_id"]) not in inactive_seen:
             inactive_seen.add(("supplier",source["supplier_id"])); anomalies.append(anomaly("INACTIVE_SOURCE","warning","Inactive supplier is retained for historical display",source["supplier_id"],source["supplier_name"],entity_type="supplier"))
-        raw=source["recipe_quantity"]*Decimal(source["diner_count"])
-        with_loss=raw*(Decimal("1")+source["loss_rate"]/Decimal("100"))
+        with_loss=calculate_required_quantity(source["recipe_quantity"],source["diner_count"],source["loss_rate"])
         converted=convert_quantity(with_loss,source["recipe_unit"],source["base_unit"])
         convertible=converted.convertible and converted.quantity is not None
         final_unit=source["base_unit"] if convertible else source["recipe_unit"]

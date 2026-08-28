@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 9－Purchases（不含配送）已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 6－Kitchen Operations 與 Phase 9－Purchases（不含配送）已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -59,7 +59,7 @@
 
 重點：aggregate API、真正 ID、單一 transaction、避免每格/每列 N+1。
 
-## Phase 6：廚房作業／備料
+## Phase 6：廚房作業／備料（查詢與 Web 視圖已完成；Excel 尚未開始）
 
 - 單餐、單日、整張菜單三種範圍。
 - 依菜色、食材、供應商 view。

@@ -67,3 +67,10 @@ small { display: block; color: #607065; }
 @media (max-width:900px) { .requirements-form { grid-template-columns:1fr; } }
 .snapshot-action { display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin:1rem 0; padding:1rem; background:#eef4ed; border-radius:.7rem; }
 .snapshot-delete { display:flex; align-items:end; gap:1rem; flex-wrap:wrap; margin-top:1rem; padding:1rem; border:1px solid #e1b8b8; border-radius:.7rem; }
+.kitchen-filter { display:grid; grid-template-columns:repeat(4,minmax(10rem,1fr)); gap:.8rem; align-items:end; padding:1rem; background:#f3f6f2; border-radius:.7rem; }
+.kitchen-filter fieldset { border:1px solid #b9c9ba; border-radius:.55rem; }
+.kitchen-day { margin:1.5rem 0; padding:1rem; border-left:4px solid #39724a; background:#f8faf7; }
+.kitchen-meal { margin:1rem 0; }
+.kitchen-dish { margin:.8rem 0; padding:1rem; border:1px solid #d8e2d7; border-radius:.7rem; background:white; }
+.kitchen-dish.not-ready { border-color:#d99; }
+@media (max-width:900px) { .kitchen-filter { grid-template-columns:1fr; } }

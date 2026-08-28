@@ -11,6 +11,7 @@ from app.api.v1.routes.requirements import router as requirements_router
 from app.api.v1.routes.suppliers import router as suppliers_router
 from app.api.v1.routes.snapshots import router as snapshots_router
 from app.api.v1.routes.purchases import router as purchases_router
+from app.api.v1.routes.kitchen_operations import router as kitchen_operations_router
 
 
 api_v1_router = APIRouter()
@@ -25,3 +26,4 @@ api_v1_router.include_router(menus_router)
 api_v1_router.include_router(requirements_router)
 api_v1_router.include_router(snapshots_router)
 api_v1_router.include_router(purchases_router)
+api_v1_router.include_router(kitchen_operations_router)

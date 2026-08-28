@@ -1,0 +1,1 @@
+class KitchenMenuNotFoundError(Exception):pass

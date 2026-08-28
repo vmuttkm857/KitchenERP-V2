@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal,ROUND_HALF_UP
 
 
 _UNIT_ALIASES = {"l": "L", "ml": "ml", "g": "g", "kg": "kg", "斤": "斤"}
@@ -44,3 +44,16 @@ def calculate_recipe_cost(
     if not converted.convertible or converted.quantity is None:
         return None
     return converted.quantity * current_price
+
+
+def calculate_required_quantity(quantity_per_person:Decimal,diner_count:int,loss_rate:Decimal)->Decimal:
+    """V1 preparation/requirement formula, shared by read-model domains."""
+    return quantity_per_person*Decimal(diner_count)*(Decimal("1")+loss_rate/Decimal("100"))
+
+
+def preparation_display(quantity:Decimal,unit:str,automatic:bool=True)->tuple[Decimal,str]:
+    normalized=normalize_unit(unit)
+    displayed,display_unit=quantity,normalized
+    if automatic and normalized=="g" and quantity>=1000:displayed,display_unit=quantity/Decimal("1000"),"kg"
+    elif automatic and normalized=="ml" and quantity>=1000:displayed,display_unit=quantity/Decimal("1000"),"L"
+    return displayed.quantize(Decimal("0.01"),rounding=ROUND_HALF_UP).normalize(),display_unit
