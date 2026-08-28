@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     app_name: str = "KitchenERP V2 API"
     app_env: str = "development"
     database_url: str = "postgresql+psycopg://kitchenerp@localhost:5432/kitchenerp_v2"
+    test_database_url: str | None = None
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=5, ge=0)
     db_pool_timeout_seconds: int = Field(default=30, ge=1)

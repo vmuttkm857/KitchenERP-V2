@@ -1,12 +1,12 @@
-import os
-
 import pytest
 from sqlalchemy import create_engine, text
+
+from app.core.config import settings
 
 
 @pytest.mark.integration
 def test_postgresql_connection() -> None:
-    database_url = os.getenv("TEST_DATABASE_URL")
+    database_url = settings.test_database_url
     if not database_url:
         pytest.skip("TEST_DATABASE_URL is required for PostgreSQL integration tests")
     if not database_url.startswith(("postgresql+psycopg://", "postgresql://")):
