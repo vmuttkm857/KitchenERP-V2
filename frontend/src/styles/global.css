@@ -56,3 +56,12 @@ small { display: block; color: #607065; }
 .scheduled-dish input { padding:.45rem; }
 .editor-save { position:sticky; bottom:0; z-index:5; display:flex; justify-content:flex-end; padding:1rem; background:rgb(255 255 255 / 92%); }
 .copy-form label { min-width:12rem; }
+.requirements-form { display:grid; grid-template-columns:minmax(18rem,2fr) repeat(2,minmax(10rem,1fr)) auto; gap:.8rem; align-items:end; padding:1rem; background:#f3f6f2; border-radius:.7rem; }
+.requirements-form fieldset { border:1px solid #b9c9ba; border-radius:.55rem; }
+.menu-choices { display:grid; gap:.4rem; max-height:12rem; overflow:auto; }
+.requirement-summary { display:flex; flex-wrap:wrap; gap:1rem; align-items:center; margin:1rem 0; padding:1rem; border:1px solid #d8e2d7; border-radius:.7rem; }
+.anomaly-list { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #b7791f; background:#fff8e7; }
+.anomaly-list li.error { color:#a12626; }
+.requirements-table { overflow:auto; margin-bottom:1.5rem; }
+.requirements-table table { min-width:70rem; }
+@media (max-width:900px) { .requirements-form { grid-template-columns:1fr; } }

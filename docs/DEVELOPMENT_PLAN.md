@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 5－Menus 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 7－Requirements Preview 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -68,7 +68,7 @@
 
 重點：只讀菜單與配方，不讀採購量；Web 與 Excel 共用 Backend quantity formatter/輸出規則。
 
-## Phase 7：食材需求
+## Phase 7：食材需求（即時計算 Preview 已完成）
 
 - 多分類/菜單/日期候選與快速加入。
 - requirement preview、彙總/明細、成本及待確認警示。
