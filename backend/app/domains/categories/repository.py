@@ -55,6 +55,9 @@ class CategoryRepository:
         elif kind == "dish":
             from app.domains.dishes.models import Dish
             statement = select(Dish.id).where(Dish.category_id == category_id)
+        elif kind == "menu":
+            from app.domains.menus.models import Menu
+            statement = select(Menu.id).where(Menu.category_id == category_id)
         else:
             return False
         return self.session.scalar(statement.limit(1)) is not None

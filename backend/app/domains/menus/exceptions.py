@@ -1,0 +1,11 @@
+class MenuError(Exception): pass
+class MenuNotFoundError(MenuError): pass
+class InvalidMenuCategoryError(MenuError): pass
+class InvalidMenuDateRangeError(MenuError): pass
+class MenuInUseError(MenuError): pass
+class MealTypeNotFoundError(MenuError): pass
+class MealTypeNameExistsError(MenuError): pass
+class MealTypeInUseError(MenuError): pass
+class InvalidMenuStructureError(MenuError): pass
+class DuplicateMenuDishError(MenuError): pass
+class InvalidMenuCopyError(MenuError): pass

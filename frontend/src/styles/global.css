@@ -33,9 +33,26 @@ th, td { padding: .7rem; text-align: left; border-bottom: 1px solid #e4e9e3; ver
 .actions { flex-wrap: wrap; }
 .actions button { padding: .45rem .65rem; font-size: .9rem; }
 button.danger { background: #9f3030; }
+button.secondary { background: #65746a; }
 .section-heading, .recipe-summary { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
 .recipe-picker { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(18rem, 2fr) auto; gap: .8rem; align-items: end; padding: 1rem; margin-bottom: 1rem; background: #f3f6f2; border-radius: .7rem; }
 .recipe-summary { position: sticky; bottom: 0; margin-top: 1rem; padding: 1rem; border-top: 1px solid #d8e2d7; background: #fff; }
 .success { color: #236337; font-weight: 700; }
 small { display: block; color: #607065; }
 @media (max-width: 760px) { .recipe-picker { grid-template-columns: 1fr; } }
+.inline-form, .copy-form, .meal-list > div { display:flex; gap:.5rem; align-items:end; flex-wrap:wrap; }
+.inline-check { display:flex; grid-template-columns:auto 1fr; align-items:center; }
+.inline-check input { min-width:auto; width:auto; }
+.menu-tools { margin:1rem 0; padding:1rem; border:1px solid #d8e2d7; border-radius:.7rem; background:#f8faf7; }
+.meal-list { display:grid; gap:.5rem; margin-top:.75rem; }
+.meal-list > div.inactive { opacity:.6; }
+.menu-matrix { overflow:auto; max-height:65vh; border:1px solid #d8e2d7; }
+.menu-matrix table { min-width:max-content; }
+.menu-matrix th { position:sticky; top:0; z-index:2; background:#eef4ed; }
+.menu-matrix .sticky-col { position:sticky; left:0; z-index:3; min-width:7rem; background:#eef4ed; }
+.meal-cell { width:20rem; min-width:20rem; background:#fff; }
+.scheduled-dish { display:grid; gap:.35rem; margin:.65rem 0; padding:.65rem; border:1px solid #d8e2d7; border-radius:.5rem; }
+.scheduled-dish label { font-size:.8rem; }
+.scheduled-dish input { padding:.45rem; }
+.editor-save { position:sticky; bottom:0; z-index:5; display:flex; justify-content:flex-end; padding:1rem; background:rgb(255 255 255 / 92%); }
+.copy-form label { min-width:12rem; }

@@ -75,7 +75,7 @@ class DishService:
     def hard_delete(self, dish_id: uuid.UUID, actor_id: uuid.UUID, password: str) -> None:
         AuthService(self.session).verify_current_password(actor_id, password)
         dish = self.get_model(dish_id)
-        if self.repository.has_recipe(dish_id):
+        if self.repository.has_recipe(dish_id) or self.repository.has_menu_references(dish_id):
             raise DishInUseError()
         self.repository.delete(dish)
         try:

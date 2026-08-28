@@ -67,5 +67,9 @@ class DishRepository:
             select(DishIngredient.id).where(DishIngredient.dish_id == dish_id).limit(1)
         ) is not None
 
+    def has_menu_references(self, dish_id: uuid.UUID) -> bool:
+        from app.domains.menus.models import MenuDish
+        return self.session.scalar(select(MenuDish.id).where(MenuDish.dish_id == dish_id).limit(1)) is not None
+
     def delete(self, dish: Dish) -> None:
         self.session.delete(dish)

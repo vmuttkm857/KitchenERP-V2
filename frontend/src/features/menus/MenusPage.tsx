@@ -1,0 +1,28 @@
+import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { apiRequest } from '../../api/client'
+import { Menu, List } from './types'
+
+interface Category { id:string; name:string }
+interface Paged<T> { items:T[]; pagination:{page:number;page_size:number;total:number} }
+
+export function MenusPage({onOpen}:{onOpen:(menu:Menu)=>void}) {
+  const [items,setItems]=useState<Menu[]>([]); const [categories,setCategories]=useState<Category[]>([])
+  const [name,setName]=useState(''); const [startDate,setStartDate]=useState(''); const [endDate,setEndDate]=useState('')
+  const [categoryId,setCategoryId]=useState(''); const [notes,setNotes]=useState(''); const [search,setSearch]=useState('')
+  const [page,setPage]=useState(1); const [total,setTotal]=useState(0)
+  const [editing,setEditing]=useState<Menu|null>(null); const [password,setPassword]=useState('')
+  const [loading,setLoading]=useState(true); const [error,setError]=useState(''); const [message,setMessage]=useState('')
+  const load=useCallback(async()=>{setLoading(true);try{const [menus,cats]=await Promise.all([apiRequest<Paged<Menu>>(`/menus?page=${page}&page_size=25&search=${encodeURIComponent(search)}`),apiRequest<List<Category>>('/categories/menu?active=true&page_size=100')]);setItems(menus.items);setTotal(menus.pagination.total);setCategories(cats.items);setError('')}catch{setError('菜單資料載入失敗')}finally{setLoading(false)}},[search,page])
+  useEffect(()=>{void load()},[load])
+  async function create(event:FormEvent){event.preventDefault();setMessage('');try{await apiRequest('/menus',{method:'POST',body:JSON.stringify({name,start_date:startDate,end_date:endDate,category_id:categoryId||null,notes:notes||null})});setName('');setNotes('');setMessage('菜單已建立');await load()}catch{setError('菜單建立失敗，請檢查日期與分類')}}
+  async function saveEdit(event:FormEvent){event.preventDefault();if(!editing)return;try{await apiRequest(`/menus/${editing.id}`,{method:'PATCH',body:JSON.stringify({name:editing.name,start_date:editing.start_date,end_date:editing.end_date,category_id:editing.category_id,notes:editing.notes})});setEditing(null);setMessage('菜單已更新');await load()}catch{setError('菜單更新失敗；已有餐格時不可縮小到排除餐格的日期範圍')}}
+  async function toggle(menu:Menu){try{await apiRequest(`/menus/${menu.id}/${menu.is_active?'deactivate':'reactivate'}`,{method:'POST'});await load()}catch{setError('菜單狀態更新失敗')}}
+  async function hardDelete(menu:Menu){if(!password){setError('永久刪除前請輸入目前帳號密碼');return}try{await apiRequest(`/menus/${menu.id}/hard-delete`,{method:'POST',body:JSON.stringify({password})});setPassword('');setMessage('未被引用的空菜單已永久刪除');await load()}catch{setError('密碼錯誤，或菜單已有餐別／餐格而不可永久刪除')}}
+  return <section><h2>菜單管理</h2>
+    <form className="panel-form" onSubmit={create}><label>名稱<input value={name} onChange={e=>setName(e.target.value)} required/></label><label>開始日期<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} required/></label><label>結束日期<input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} required/></label><label>分類<select value={categoryId} onChange={e=>setCategoryId(e.target.value)}><option value="">未分類</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>備註<input value={notes} onChange={e=>setNotes(e.target.value)}/></label><button>建立菜單</button></form>
+    <div className="toolbar"><label>搜尋<input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}}/></label><label>頁碼<input type="number" min="1" max={Math.max(1,Math.ceil(total/25))} value={page} onChange={e=>setPage(Math.max(1,Number(e.target.value)))}/></label><span>共 {total} 筆／{Math.max(1,Math.ceil(total/25))} 頁</span><button type="button" disabled={page<=1} onClick={()=>setPage(value=>value-1)}>上一頁</button><button type="button" disabled={page>=Math.ceil(total/25)} onClick={()=>setPage(value=>value+1)}>下一頁</button><label>永久刪除密碼<input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password"/></label></div>
+    {error&&<p className="error">{error}</p>}{message&&<p className="success">{message}</p>}
+    {editing&&<form className="panel-form" onSubmit={saveEdit}><h3>修改菜單</h3><label>名稱<input value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})}/></label><label>開始<input type="date" value={editing.start_date} onChange={e=>setEditing({...editing,start_date:e.target.value})}/></label><label>結束<input type="date" value={editing.end_date} onChange={e=>setEditing({...editing,end_date:e.target.value})}/></label><label>分類<select value={editing.category_id??''} onChange={e=>setEditing({...editing,category_id:e.target.value||null})}><option value="">未分類</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>備註<input value={editing.notes??''} onChange={e=>setEditing({...editing,notes:e.target.value||null})}/></label><button>儲存修改</button><button type="button" className="secondary" onClick={()=>setEditing(null)}>取消</button></form>}
+    {loading?<p>載入中…</p>:<table><thead><tr><th>名稱</th><th>日期</th><th>分類</th><th>狀態</th><th>操作</th></tr></thead><tbody>{items.map(item=><tr key={item.id}><td>{item.name}</td><td>{item.start_date} ～ {item.end_date}</td><td>{item.category_name??'未分類'}</td><td>{item.is_active?'啟用':'停用'}</td><td className="actions"><button onClick={()=>onOpen(item)}>開啟編輯器</button><button onClick={()=>setEditing(item)}>修改</button><button onClick={()=>void toggle(item)}>{item.is_active?'停用':'恢復'}</button><button className="danger" onClick={()=>void hardDelete(item)}>永久刪除</button></td></tr>)}</tbody></table>}
+  </section>
+}

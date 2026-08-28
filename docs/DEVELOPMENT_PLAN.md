@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 4－Dishes、Recipes 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 5－Menus 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -50,7 +50,7 @@
 
 重點：Decimal、不可換算即待確認、同菜色食材唯一、批次 rollback、lazy preview 與 query budget。
 
-## Phase 5：菜單與週排餐
+## Phase 5：菜單與週排餐（已完成）
 
 - menus、動態餐別、日期餐格 lazy materialization。
 - 餐格 basket、批次加菜、人數、備註、連續排序。
