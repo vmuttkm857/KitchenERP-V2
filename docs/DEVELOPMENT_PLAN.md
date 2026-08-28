@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 1－最小可運行工程骨架已完成**。下一階段為 Phase 2，但必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 2－Authentication 與 Users 已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -22,7 +22,7 @@
 
 完成條件：空 schema 可由 Alembic 建立；健康檢查、測試與 query telemetry 可運作；尚無 ERP domain 功能。
 
-## Phase 2：Authentication 與 Users
+## Phase 2：Authentication 與 Users（已完成）
 
 - users schema、password hashing、登入/登出/refresh 或 session lifecycle。
 - Backend authorization enforcement 與前端登入/route guard。

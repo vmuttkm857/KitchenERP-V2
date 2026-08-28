@@ -1,1 +1,65 @@
-"""Shared pytest fixtures will be added as domains are implemented."""
+import os
+from collections.abc import Generator
+from pathlib import Path
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from dotenv import dotenv_values
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = BACKEND_ROOT.parent
+dotenv = dotenv_values(PROJECT_ROOT / ".env")
+test_database_url = os.getenv("TEST_DATABASE_URL") or dotenv.get("TEST_DATABASE_URL")
+if test_database_url:
+    os.environ["TEST_DATABASE_URL"] = test_database_url
+    os.environ["DATABASE_URL"] = test_database_url
+os.environ.setdefault("JWT_SECRET", "pytest-only-secret-with-at-least-32-characters")
+
+from app.db.session import SessionLocal  # noqa: E402
+from app.main import app  # noqa: E402
+
+
+@pytest.fixture(scope="session", autouse=True)
+def migrated_test_database() -> Generator[Engine, None, None]:
+    if not test_database_url:
+        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL tests")
+    if not test_database_url.startswith(("postgresql+psycopg://", "postgresql://")):
+        pytest.fail("TEST_DATABASE_URL must point to PostgreSQL; SQLite is forbidden")
+
+    alembic_config = Config(str(BACKEND_ROOT / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(test_database_url, pool_pre_ping=True)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def clean_auth_tables(migrated_test_database: Engine) -> Generator[None, None, None]:
+    yield
+    with migrated_test_database.begin() as connection:
+        connection.execute(text("DELETE FROM refresh_sessions"))
+        connection.execute(text("DELETE FROM users"))
+
+
+@pytest.fixture
+def db_session() -> Generator[Session, None, None]:
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
+
+
+@pytest.fixture
+def client() -> Generator[TestClient, None, None]:
+    with TestClient(app) as test_client:
+        yield test_client

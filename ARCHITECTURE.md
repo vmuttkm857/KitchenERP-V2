@@ -173,7 +173,8 @@ exceptions.py      # domain-specific errors
 
 - `auth` 與 `users` 是獨立但相鄰 domain：`auth` 驗證 credentials 與建立 principal，`users` 管理帳號資料與狀態。
 - 密碼只保存強式 password hash；不記錄 plaintext、可逆密碼或密碼內容。
-- Web 與未來 Mobile 固定採 Access Token + Refresh Token 架構；具體有效期、rotation、撤銷與儲存安全細節於 auth domain 實作時依安全威脅模型定義。
+- Web 與未來 Mobile 固定採 Access Token + Refresh Token 架構。Access Token 是 15 分鐘 JWT；Refresh Token 是 7 天高熵 opaque token，資料庫只存 hash，且每次使用必須 rotation 並立即撤銷舊 token。
+- Web Access Token 只存記憶體；Refresh Token 只以 HttpOnly cookie 傳送，production 必須 `Secure`，預設 `SameSite=Lax`。React 不得讀取或保存 Refresh Token，任何 token 都不得放入 localStorage。
 - 初期角色固定為 `admin`、`user`，暫不建立複雜 RBAC；授權永遠由 Backend enforcement，React route guard 只改善 UX。
 - API dependency 解析 current principal；Service 再檢查 use-case permission，避免只靠 route 或前端按鈕。
 - 重要主表預留 `created_by`、`updated_by`，但目前不建立完整 audit-log subsystem。
@@ -301,15 +302,14 @@ Repository 只執行 Service 已授權的 delete operation，不判斷刪除政�
 
 以下細節不阻擋最小骨架，但不得在後續 domain 實作時自行猜測：
 
-1. Access/Refresh Token 的有效期、refresh rotation、撤銷與 Web 安全儲存方式。
-2. 哪些未被引用的主檔實際開放 Hard Delete，以及各 domain 的永久刪除 warning 文案。
-3. Recipe 的草稿/正式狀態如何建模，以及從草稿轉正式的完整驗證時點。
-4. Snapshot deterministic fingerprint 的精確欄位、排序/正規化方式與使用者明確重建策略。
-5. `created_by`、`updated_by` 適用的「重要主表」逐表清單。
-6. SQLite 現場資料的 migration、歷史 NULL/舊單位實況，留待 read-only audit。
-7. V1 A/B 未列入 regression checklist 的微小 UI 差異。
-8. 預設餐別的實際名稱集合。
-9. 非七日菜單的「整週複製」邊界行為。
+1. 哪些未被引用的主檔實際開放 Hard Delete，以及各 domain 的永久刪除 warning 文案。
+2. Recipe 的草稿/正式狀態如何建模，以及從草稿轉正式的完整驗證時點。
+3. Snapshot deterministic fingerprint 的精確欄位、排序/正規化方式與使用者明確重建策略。
+4. `created_by`、`updated_by` 適用的「重要主表」逐表清單。
+5. SQLite 現場資料的 migration、歷史 NULL/舊單位實況，留待 read-only audit。
+6. V1 A/B 未列入 regression checklist 的微小 UI 差異。
+7. 預設餐別的實際名稱集合。
+8. 非七日菜單的「整週複製」邊界行為。
 
 ## 16. 架構變更程序
 
