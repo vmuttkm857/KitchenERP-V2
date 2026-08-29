@@ -1,78 +1,37 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react'
-import { apiRequest } from '../../api/client'
+import { FormEvent,useCallback,useEffect,useState } from 'react'
+import { ApiError,apiRequest } from '../../api/client'
+import { Feedback } from '../../components/ui/Page'
 
-interface Category { id: string; name: string; is_active: boolean }
-export interface Dish { id: string; code: string; name: string; category_id: string | null; category_name: string | null; notes: string | null; is_active: boolean }
-interface List<T> { items: T[] }
+interface Category{id:string;name:string;is_active:boolean}
+export interface Dish{id:string;code:string;name:string;category_id:string|null;category_name:string|null;notes:string|null;is_active:boolean}
+interface List<T>{items:T[]}
 
-export function DishesPage({ onEditRecipe }: { onEditRecipe: (dish: Dish) => void }) {
-  const [items, setItems] = useState<Dish[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
-  const [code, setCode] = useState('')
-  const [name, setName] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [notes, setNotes] = useState('')
-  const [search, setSearch] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+function dishError(error:unknown,fallback:string){
+  if(error instanceof ApiError&&error.status===409)return error.message.toLowerCase().includes('code')?'菜色代碼已存在，請使用其他代碼。':'菜色已有配方或其他引用，無法永久刪除。'
+  if(error instanceof ApiError&&error.status===401)return '目前密碼不正確，請重新輸入。'
+  return fallback
+}
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [dishes, dishCategories] = await Promise.all([
-        apiRequest<List<Dish>>(`/dishes?page_size=100&search=${encodeURIComponent(search)}`),
-        apiRequest<List<Category>>('/categories/dish?active=true&page_size=100'),
-      ])
-      setItems(dishes.items)
-      setCategories(dishCategories.items)
-      setError('')
-    } catch { setError('菜色資料載入失敗') }
-    finally { setLoading(false) }
-  }, [search])
+function DishEditDialog({dish,categories,busy,error,onClose,onSave}:{dish:Dish;categories:Category[];busy:boolean;error:string;onClose:()=>void;onSave:(values:{code:string;name:string;category_id:string|null;notes:string|null})=>Promise<void>}){
+  const [code,setCode]=useState(dish.code),[name,setName]=useState(dish.name),[categoryId,setCategoryId]=useState(dish.category_id??''),[notes,setNotes]=useState(dish.notes??'')
+  useEffect(()=>{const close=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!busy)onClose()};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close)},[busy,onClose])
+  return <div className="modal-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget&&!busy)onClose()}}><section className="modal-panel dish-dialog" role="dialog" aria-modal="true" aria-labelledby="dish-edit-title"><header><div><h2 id="dish-edit-title">編輯菜色</h2><p>更新菜色主檔資料。</p></div></header><form onSubmit={event=>{event.preventDefault();void onSave({code:code.trim(),name:name.trim(),category_id:categoryId||null,notes:notes.trim()||null})}}><div className="dish-edit-fields"><label>代碼<input autoFocus required maxLength={50} value={code} onChange={event=>setCode(event.target.value)}/></label><label>名稱<input required maxLength={150} value={name} onChange={event=>setName(event.target.value)}/></label><label>分類<select value={categoryId} onChange={event=>setCategoryId(event.target.value)}><option value="">未分類</option>{categories.map(item=><option key={item.id} value={item.id} disabled={!item.is_active&&item.id!==dish.category_id}>{item.name}{item.is_active?'':'（已停用）'}</option>)}</select></label><label className="dish-notes-field">備註<textarea maxLength={1000} value={notes} onChange={event=>setNotes(event.target.value)}/></label></div>{error&&<Feedback type="error">{error}</Feedback>}<footer><button type="button" className="secondary" disabled={busy} onClick={onClose}>取消</button><button disabled={busy||!code.trim()||!name.trim()}>{busy?'儲存中…':'儲存'}</button></footer></form></section></div>
+}
 
-  useEffect(() => { void load() }, [load])
+function DishDeleteDialog({dish,busy,error,onClose,onDelete}:{dish:Dish;busy:boolean;error:string;onClose:()=>void;onDelete:(password:string)=>Promise<void>}){
+  const [password,setPassword]=useState('')
+  useEffect(()=>{const close=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!busy)onClose()};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close)},[busy,onClose])
+  return <div className="modal-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget&&!busy)onClose()}}><section className="modal-panel dish-dialog" role="dialog" aria-modal="true" aria-labelledby="dish-delete-title"><header><div><h2 id="dish-delete-title">永久刪除「{dish.name}」</h2><p>此操作無法復原。已有配方或其他引用時，系統會拒絕刪除。</p></div></header><form onSubmit={event=>{event.preventDefault();void onDelete(password)}}><label>目前密碼<input autoFocus required type="password" autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)}/></label>{error&&<Feedback type="error">{error}</Feedback>}<footer><button type="button" className="secondary" disabled={busy} onClick={onClose}>取消</button><button className="danger" disabled={busy||!password}>{busy?'刪除中…':'永久刪除'}</button></footer></form></section></div>
+}
 
-  async function create(event: FormEvent) {
-    event.preventDefault()
-    try {
-      await apiRequest('/dishes', { method: 'POST', body: JSON.stringify({ code, name, category_id: categoryId || null, notes: notes || null }) })
-      setCode(''); setName(''); setNotes(''); await load()
-    } catch { setError('菜色新增失敗，請確認代碼、名稱與分類') }
-  }
-
-  async function edit(item: Dish) {
-    const nextName = window.prompt('菜色名稱', item.name)
-    if (!nextName) return
-    const nextNotes = window.prompt('備註', item.notes ?? '')
-    if (nextNotes === null) return
-    try { await apiRequest(`/dishes/${item.id}`, { method: 'PATCH', body: JSON.stringify({ name: nextName, notes: nextNotes || null }) }); await load() }
-    catch { setError('菜色修改失敗') }
-  }
-
-  async function toggle(item: Dish) {
-    try { await apiRequest(`/dishes/${item.id}/${item.is_active ? 'deactivate' : 'reactivate'}`, { method: 'POST' }); await load() }
-    catch { setError('菜色狀態更新失敗') }
-  }
-
-  async function hardDelete(item: Dish) {
-    if (!window.confirm('永久刪除菜色後無法復原；已有配方或其他引用時會拒絕')) return
-    const password = window.prompt('請重新輸入目前帳號密碼')
-    if (!password) return
-    try { await apiRequest(`/dishes/${item.id}/hard-delete`, { method: 'POST', body: JSON.stringify({ password }) }); await load() }
-    catch { setError('菜色已有配方或其他引用，無法永久刪除') }
-  }
-
-  return <section>
-    <h2>菜色管理</h2>
-    <form className="panel-form" onSubmit={create}>
-      <label>代碼<input value={code} onChange={event => setCode(event.target.value)} required /></label>
-      <label>名稱<input value={name} onChange={event => setName(event.target.value)} required /></label>
-      <label>分類<select value={categoryId} onChange={event => setCategoryId(event.target.value)}><option value="">未分類</option>{categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-      <label>備註<input value={notes} onChange={event => setNotes(event.target.value)} /></label>
-      <button>新增菜色</button>
-    </form>
-    <div className="toolbar"><label>搜尋<input value={search} onChange={event => setSearch(event.target.value)} /></label><button type="button" onClick={() => void load()}>重新整理</button></div>
-    {error && <p className="error">{error}</p>}
-    {loading ? <p>載入中…</p> : <table><thead><tr><th>代碼</th><th>名稱</th><th>分類</th><th>狀態</th><th>操作</th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.code}</td><td>{item.name}</td><td>{item.category_name ?? '未分類'}</td><td>{item.is_active ? '啟用' : '停用'}</td><td className="actions"><button onClick={() => onEditRecipe(item)}>標準配方</button><button onClick={() => void edit(item)}>修改</button><button onClick={() => void toggle(item)}>{item.is_active ? '停用' : '恢復'}</button><button className="danger" onClick={() => void hardDelete(item)}>永久刪除</button></td></tr>)}</tbody></table>}
-  </section>
+export function DishesPage({onEditRecipe}:{onEditRecipe:(dish:Dish)=>void}){
+  const [items,setItems]=useState<Dish[]>([]),[categories,setCategories]=useState<Category[]>([]),[code,setCode]=useState(''),[name,setName]=useState(''),[categoryId,setCategoryId]=useState(''),[notes,setNotes]=useState(''),[search,setSearch]=useState(''),[loading,setLoading]=useState(true),[error,setError]=useState(''),[busy,setBusy]=useState(false)
+  const [editing,setEditing]=useState<Dish|null>(null),[deleting,setDeleting]=useState<Dish|null>(null),[dialogError,setDialogError]=useState('')
+  const load=useCallback(async()=>{setLoading(true);try{const [dishes,dishCategories]=await Promise.all([apiRequest<List<Dish>>(`/dishes?page_size=100&search=${encodeURIComponent(search)}`),apiRequest<List<Category>>('/categories/dish?page_size=100')]);setItems(dishes.items);setCategories(dishCategories.items);setError('')}catch{setError('菜色資料載入失敗')}finally{setLoading(false)}},[search])
+  useEffect(()=>{void load()},[load])
+  async function create(event:FormEvent){event.preventDefault();try{await apiRequest('/dishes',{method:'POST',body:JSON.stringify({code,name,category_id:categoryId||null,notes:notes||null})});setCode('');setName('');setNotes('');await load()}catch{setError('菜色新增失敗，請確認代碼、名稱與分類')}}
+  async function saveEdit(values:{code:string;name:string;category_id:string|null;notes:string|null}){if(!editing)return;setBusy(true);setDialogError('');try{await apiRequest(`/dishes/${editing.id}`,{method:'PATCH',body:JSON.stringify(values)});setEditing(null);await load()}catch(cause){setDialogError(dishError(cause,'菜色修改失敗，請稍後重試。'))}finally{setBusy(false)}}
+  async function toggle(item:Dish){try{await apiRequest(`/dishes/${item.id}/${item.is_active?'deactivate':'reactivate'}`,{method:'POST'});await load()}catch{setError('菜色狀態更新失敗')}}
+  async function hardDelete(password:string){if(!deleting)return;setBusy(true);setDialogError('');try{await apiRequest(`/dishes/${deleting.id}/hard-delete`,{method:'POST',body:JSON.stringify({password})});setDeleting(null);await load()}catch(cause){setDialogError(dishError(cause,'菜色無法永久刪除，請稍後重試。'))}finally{setBusy(false)}}
+  return <section><h2>菜色管理</h2><form className="panel-form" onSubmit={create}><label>代碼<input value={code} onChange={event=>setCode(event.target.value)} required/></label><label>名稱<input value={name} onChange={event=>setName(event.target.value)} required/></label><label>分類<select value={categoryId} onChange={event=>setCategoryId(event.target.value)}><option value="">未分類</option>{categories.filter(item=>item.is_active).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>備註<input value={notes} onChange={event=>setNotes(event.target.value)}/></label><button>新增菜色</button></form><div className="toolbar"><label>搜尋<input value={search} onChange={event=>setSearch(event.target.value)}/></label><button type="button" onClick={()=>void load()}>重新整理</button></div>{error&&<p className="error">{error}</p>}{loading?<p>載入中…</p>:<table><thead><tr><th>代碼</th><th>名稱</th><th>分類</th><th>狀態</th><th>操作</th></tr></thead><tbody>{items.map(item=><tr key={item.id}><td>{item.code}</td><td>{item.name}</td><td>{item.category_name??'未分類'}</td><td>{item.is_active?'啟用':'停用'}</td><td className="actions"><button onClick={()=>onEditRecipe(item)}>標準配方</button><button onClick={()=>{setDialogError('');setEditing(item)}}>修改</button><button onClick={()=>void toggle(item)}>{item.is_active?'停用':'恢復'}</button><button className="danger" onClick={()=>{setDialogError('');setDeleting(item)}}>永久刪除</button></td></tr>)}</tbody></table>}{editing&&<DishEditDialog dish={editing} categories={categories} busy={busy} error={dialogError} onClose={()=>setEditing(null)} onSave={saveEdit}/>} {deleting&&<DishDeleteDialog dish={deleting} busy={busy} error={dialogError} onClose={()=>setDeleting(null)} onDelete={hardDelete}/>}</section>
 }
