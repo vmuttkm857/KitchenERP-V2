@@ -69,6 +69,34 @@ def test_menu_crud_category_dates_actors_and_activation(client,db_session):
     assert client.post(f"/api/v1/menus/{created['id']}/reactivate",headers=headers).json()["is_active"] is True
 
 
+def test_menu_list_date_overlap_keyword_pagination_and_validation(client,db_session):
+    headers,_=auth(client,db_session)
+    category=client.post("/api/v1/categories/menu",headers=headers,json={"name":"日期篩選"}).json()
+    values=[
+        menu(client,headers,category["id"],"住院甲","2026-08-01","2026-08-07"),
+        menu(client,headers,category["id"],"住院乙","2026-08-17","2026-08-23"),
+        menu(client,headers,category["id"],"門診甲","2026-08-24","2026-08-30"),
+        menu(client,headers,category["id"],"九月菜單","2026-09-01","2026-09-07"),
+    ]
+
+    unfiltered=client.get("/api/v1/menus?page_size=100",headers=headers)
+    assert unfiltered.status_code==200 and unfiltered.json()["pagination"]["total"]==4
+    start_only=client.get("/api/v1/menus?start_date=2026-08-20&page_size=100",headers=headers).json()
+    assert [item["id"] for item in start_only["items"]]==[values[3]["id"],values[2]["id"],values[1]["id"]]
+    end_only=client.get("/api/v1/menus?end_date=2026-08-20&page_size=100",headers=headers).json()
+    assert {item["id"] for item in end_only["items"]}=={values[0]["id"],values[1]["id"]}
+    overlap=client.get("/api/v1/menus?start_date=2026-08-20&end_date=2026-08-25&page_size=100",headers=headers).json()
+    assert {item["id"] for item in overlap["items"]}=={values[1]["id"],values[2]["id"]}
+    no_overlap=client.get("/api/v1/menus?start_date=2026-10-01&end_date=2026-10-31",headers=headers).json()
+    assert no_overlap["items"]==[] and no_overlap["pagination"]["total"]==0
+    combined=client.get("/api/v1/menus?search=住院&start_date=2026-08-20&end_date=2026-08-25",headers=headers).json()
+    assert [item["id"] for item in combined["items"]]==[values[1]["id"]]
+    paged=client.get("/api/v1/menus?start_date=2026-08-01&end_date=2026-09-30&page=2&page_size=1",headers=headers).json()
+    assert paged["pagination"]=={"page":2,"page_size":1,"total":4} and len(paged["items"])==1
+    invalid=client.get("/api/v1/menus?start_date=2026-09-01&end_date=2026-08-01",headers=headers)
+    assert invalid.status_code==422 and invalid.json()["detail"]=="Start date cannot be later than end date"
+
+
 def test_inactive_menu_category_rejected(client,db_session):
     headers,_=auth(client,db_session)
     category=client.post("/api/v1/categories/menu",headers=headers,json={"name":"停用菜單分類"}).json()

@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -40,9 +41,11 @@ def error(exc):
 
 
 @router.get("",response_model=MenuList)
-def menu_list(session:Annotated[Session,Depends(get_db_session)],page:int=Query(1,ge=1),page_size:int=Query(25,ge=1,le=100),active:bool|None=None,search:str|None=None,category_id:uuid.UUID|None=None):
-    items,total=MenuService(session).list(page,page_size,active,search,category_id)
-    return MenuList(items=[MenuPublic.model_validate(item) for item in items],pagination=PaginationMeta(page=page,page_size=page_size,total=total))
+def menu_list(session:Annotated[Session,Depends(get_db_session)],page:int=Query(1,ge=1),page_size:int=Query(25,ge=1,le=100),active:bool|None=None,search:str|None=None,category_id:uuid.UUID|None=None,start_date:date|None=None,end_date:date|None=None):
+    try:
+        items,total=MenuService(session).list(page,page_size,active,search,category_id,start_date,end_date)
+        return MenuList(items=[MenuPublic.model_validate(item) for item in items],pagination=PaginationMeta(page=page,page_size=page_size,total=total))
+    except Exception as exc:raise error(exc) from exc
 
 
 @router.post("",response_model=MenuPublic,status_code=201)

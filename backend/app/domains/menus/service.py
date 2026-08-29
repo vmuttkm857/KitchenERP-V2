@@ -32,8 +32,10 @@ class MenuService:
         if row is None: raise MenuNotFoundError()
         return dict(row)
 
-    def list(self, page, page_size, active, search, category_id):
-        return self.repository.list(page,page_size,active,search,category_id)
+    def list(self, page, page_size, active, search, category_id, start_date=None, end_date=None):
+        if start_date is not None and end_date is not None and start_date > end_date:
+            raise InvalidMenuDateRangeError("Start date cannot be later than end date")
+        return self.repository.list(page,page_size,active,search,category_id,start_date,end_date)
 
     def _category(self, category_id):
         if category_id is None: return

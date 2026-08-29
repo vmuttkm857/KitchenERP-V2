@@ -24,11 +24,13 @@ class MenuRepository:
                       MenuCategory.name.label("category_name"), Menu.notes, Menu.is_active,
                       Menu.created_at, Menu.updated_at, Menu.created_by, Menu.updated_by).outerjoin(MenuCategory, MenuCategory.id == Menu.category_id)
     def menu_view(self, menu_id): return self.session.execute(self._menu_view().where(Menu.id == menu_id)).mappings().one_or_none()
-    def list(self, page, page_size, active, search, category_id):
+    def list(self, page, page_size, active, search, category_id, start_date=None, end_date=None):
         filters=[]
         if active is not None: filters.append(Menu.is_active == active)
         if category_id: filters.append(Menu.category_id == category_id)
         if search: filters.append(func.lower(Menu.name).like(f"%{search.strip().lower()}%"))
+        if start_date is not None: filters.append(Menu.end_date >= start_date)
+        if end_date is not None: filters.append(Menu.start_date <= end_date)
         total=self.session.scalar(select(func.count()).select_from(Menu).where(*filters)) or 0
         rows=self.session.execute(self._menu_view().where(*filters).order_by(Menu.start_date.desc(), func.lower(Menu.name), Menu.id).offset((page-1)*page_size).limit(page_size)).mappings()
         return [dict(row) for row in rows], total
