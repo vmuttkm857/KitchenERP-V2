@@ -168,3 +168,25 @@ button.compact { min-height:2rem; padding:.3rem .45rem; font-size:.76rem; }
   .menu-editor-drawer { position:fixed; top:3.5rem; right:0; bottom:0; width:100%; max-height:none; border-radius:0; }
   .dish-fields { grid-template-columns:1fr; }
 }
+
+/* Category management keeps type, ordering and destructive actions explicit. */
+.category-tabs { display:flex; gap:.35rem; width:fit-content; margin-bottom:1rem; padding:.25rem; background:#edf2ee; border:1px solid #d5ded7; border-radius:.65rem; }
+.category-tabs button { min-width:8rem; color:#405047; background:transparent; }
+.category-tabs button:hover { background:#f8faf8; }
+.category-tabs button.is-active { color:#17472a; background:#fff; box-shadow:0 1px 4px rgb(24 48 31 / 12%),inset 0 -3px #39724a; }
+.category-context { margin-bottom:.75rem; }
+.category-context h2 { margin:0 0 .25rem; font-size:1.15rem; }
+.category-context p { margin:0; color:#637168; }
+.category-create-form { display:flex; align-items:end; gap:.65rem; max-width:32rem; margin-bottom:1rem; padding:.85rem; background:#f5f8f5; border:1px solid #e0e7e1; border-radius:.6rem; }
+.category-create-form label { flex:1; }
+.category-table th:nth-child(1) { width:32%; }.category-table th:nth-child(2) { width:10rem; }.category-table th:nth-child(3) { width:13rem; }.category-table th:nth-child(4) { width:22rem; }
+.category-order-actions { display:flex; gap:.35rem; }
+.category-dialog { width:min(30rem,100%); }
+.category-dialog form>footer { display:flex; justify-content:flex-end; gap:.55rem; padding-top:1rem; margin-top:1rem; border-top:1px solid #e2e8e3; }
+.supplier-dialog { width:min(34rem,100%); }
+.supplier-edit-fields { display:grid; gap:.75rem; }
+.supplier-dialog form>footer { display:flex; justify-content:flex-end; gap:.55rem; padding-top:1rem; margin-top:1rem; border-top:1px solid #e2e8e3; }
+@media(max-width:700px){
+  .category-tabs { width:100%; overflow-x:auto; }.category-tabs button { flex:1; min-width:7rem; }
+  .category-create-form { align-items:stretch; flex-direction:column; }.category-create-form button { width:100%; }
+}
