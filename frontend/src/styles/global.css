@@ -186,6 +186,10 @@ button.compact { min-height:2rem; padding:.3rem .45rem; font-size:.76rem; }
 .supplier-dialog { width:min(34rem,100%); }
 .supplier-edit-fields { display:grid; gap:.75rem; }
 .supplier-dialog form>footer { display:flex; justify-content:flex-end; gap:.55rem; padding-top:1rem; margin-top:1rem; border-top:1px solid #e2e8e3; }
+.ingredient-dialog { width:min(42rem,100%); }
+.ingredient-edit-fields { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
+.ingredient-dialog form>footer { display:flex; justify-content:flex-end; gap:.55rem; padding-top:1rem; margin-top:1rem; border-top:1px solid #e2e8e3; }
+@media(max-width:620px){.ingredient-edit-fields{grid-template-columns:1fr}}
 @media(max-width:700px){
   .category-tabs { width:100%; overflow-x:auto; }.category-tabs button { flex:1; min-width:7rem; }
   .category-create-form { align-items:stretch; flex-direction:column; }.category-create-form button { width:100%; }
