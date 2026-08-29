@@ -173,6 +173,17 @@ button.compact { min-height:2rem; padding:.3rem .45rem; font-size:.76rem; }
 .dish-result small { margin-top:.15rem; color:#657269; }
 .dish-result-pages { display:flex; align-items:center; gap:.5rem; margin-top:.45rem; font-size:.82rem; }
 .danger-dialog { width:min(32rem,100%); }
+.copy-menu-dialog { width:min(50rem,100%); }
+.copy-menu-dialog fieldset { padding:.7rem; border:1px solid #cbd8ce; border-radius:.6rem; }
+.copy-menu-dialog legend { padding:0 .35rem; color:#425148; font-weight:750; }
+.copy-scope,.copy-conflict-mode { display:flex; gap:.6rem; margin-bottom:1rem; }
+.copy-scope label,.copy-conflict-mode label { display:flex; flex-direction:row; align-items:center; gap:.4rem; padding:.55rem .75rem; background:#f6f9f6; border:1px solid #d7e0d8; border-radius:.45rem; }
+.copy-scope input,.copy-conflict-mode input { width:auto; }
+.copy-direction { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:stretch; gap:.8rem; margin-bottom:1rem; }
+.copy-direction section { display:grid; align-content:start; gap:.65rem; padding:.85rem; background:#f8faf8; border:1px solid #d9e2db; border-radius:.6rem; }
+.copy-direction h3,.copy-direction p { margin:0; }
+.copy-direction p span { display:block; margin-top:.25rem; color:#5d6a61; }
+.copy-arrow { align-self:center; color:#477354; font-size:1.5rem; font-weight:800; }
 
 @media(max-width:1500px){
   .menu-editor-workspace .meal-cell { width:9.75rem; min-width:9.75rem; }
@@ -188,6 +199,9 @@ button.compact { min-height:2rem; padding:.3rem .45rem; font-size:.76rem; }
   .dish-fields { grid-template-columns:1fr; }
   .dish-fields label:last-child { width:auto; }
   .remove-dish-button { justify-self:end; }
+  .copy-scope,.copy-conflict-mode { align-items:stretch; flex-direction:column; }
+  .copy-direction { grid-template-columns:1fr; }
+  .copy-arrow { transform:rotate(90deg); justify-self:center; }
 }
 
 /* Category management keeps type, ordering and destructive actions explicit. */

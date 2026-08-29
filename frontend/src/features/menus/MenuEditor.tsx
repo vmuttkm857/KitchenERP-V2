@@ -43,8 +43,11 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const [sourceMenu, setSourceMenu] = useState(menu.id)
   const [sourceDate, setSourceDate] = useState(menu.start_date)
   const [destinationDate, setDestinationDate] = useState(menu.start_date)
+  const [copyScope, setCopyScope] = useState<'day' | 'week'>('day')
   const [copyMode, setCopyMode] = useState<'add' | 'replace'>('add')
   const [confirmReplace, setConfirmReplace] = useState(false)
+  const [copySaving, setCopySaving] = useState(false)
+  const [copyError, setCopyError] = useState('')
 
   const applyAggregate = useCallback((aggregate: MenuAggregate) => {
     setData(aggregate)
@@ -118,6 +121,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   }
   function requestCloseMeal() { if (saving) return; if (mealDraft && JSON.stringify(mealDraft) !== mealInitial) setConfirmation({ kind: 'discard-meal' }); else closeMealEditor() }
   function openDialog(next: 'meal' | 'copy') {
+    if (next === 'copy') setCopyError('')
     setDialog(next)
   }
 
@@ -144,12 +148,21 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
     ;[ordered[index], ordered[target]] = [ordered[target], ordered[index]]
     await apiRequest(`/menus/${menu.id}/meal-types/reorder`, { method: 'PUT', body: JSON.stringify({ ordered_ids: ordered.map(item => item.id) }) }); await load()
   }
-  async function copy(kind: 'day' | 'week') {
+  function copyErrorMessage(cause: unknown) {
+    if (!(cause instanceof ApiError)) return '複製失敗，請稍後再試。'
+    if (cause.message.includes('Destination menu is missing meal types:')) return `目的菜單缺少啟用中的餐別：${cause.message.split(':').slice(1).join(':').trim()}`
+    if (cause.message.includes('Destination meal types are inactive:')) return `目的菜單的餐別「${cause.message.split(':').slice(1).join(':').trim()}」目前已停用，請先啟用後再複製。`
+    if (cause.message.includes('seven-day')) return '複製整週要求來源與目的菜單都必須剛好是七天。'
+    return `複製失敗：${cause.message}`
+  }
+  async function copy() {
+    setCopySaving(true); setCopyError('')
     try {
-      const body = kind === 'day' ? { source_menu_id: sourceMenu, source_date: sourceDate, destination_date: destinationDate, mode: copyMode, confirm_replace: confirmReplace } : { source_menu_id: sourceMenu, mode: copyMode, confirm_replace: confirmReplace }
-      applyAggregate(await apiRequest<MenuAggregate>(`/menus/${menu.id}/copy-${kind}`, { method: 'POST', body: JSON.stringify(body) }))
-      setMessage(kind === 'day' ? '日期複製完成' : '完整七日複製完成'); setDialog(null)
-    } catch { setError('複製失敗；請確認日期、餐別與覆蓋確認') }
+      const body = copyScope === 'day' ? { source_menu_id: sourceMenu, source_date: sourceDate, destination_date: destinationDate, mode: copyMode, confirm_replace: confirmReplace } : { source_menu_id: sourceMenu, mode: copyMode, confirm_replace: confirmReplace }
+      applyAggregate(await apiRequest<MenuAggregate>(`/menus/${menu.id}/copy-${copyScope}`, { method: 'POST', body: JSON.stringify(body) }))
+      setMessage(copyScope === 'day' ? '日期複製完成' : '完整七日複製完成'); setDialog(null)
+    } catch (cause) { setCopyError(copyErrorMessage(cause)) }
+    finally { setCopySaving(false) }
   }
 
   if (loading || !data) return <section><button className="secondary" onClick={onClose}>返回菜單</button>{loading ? <LoadingState label="菜單工作區載入中…"/> : <Feedback type="error">{error}</Feedback>}</section>
@@ -157,6 +170,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const confirmationContent = confirmation?.kind === 'discard-meal' ? { title: '放棄本餐修改？', description: '尚未儲存的本餐內容將會遺失。', label: '放棄修改', action: closeMealEditor }
     : confirmation?.kind === 'remove-dish' && editing ? { title: '移除菜色？', description: `只會從本餐移除「${editing.slot.dishes[confirmation.index]?.dish_name ?? '此菜色'}」，不會刪除菜色主檔。`, label: '確認移除', action: () => { removeDish(editing.slot, confirmation.index); setConfirmation(null) } }
     : null
+  const selectedSourceMenu = menus.find(item => item.id === sourceMenu)
 
   return <section className="menu-editor-page">
     <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={onClose}>返回</button></div></header>
@@ -164,7 +178,14 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
     {!meals.length ? <div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div> : <div className="menu-editor-workspace"><MenuWeekGrid dates={data.dates} meals={meals} selectedKey={editingKey} slotFor={slotFor} onSelect={selectCell}/></div>}
     {editing && <MenuEditorPanel date={editing.date} meal={editing.meal} slot={editing.slot} search={dishSearch} categoryId={dishCategoryId} categories={dishCategories} results={dishResults} searchTotal={dishTotal} searchPage={dishPage} searchLoading={dishLoading} searchInputRef={searchInputRef} onClose={requestCloseMeal} onSave={saveMealDraft} saving={saving} saveError={mealSaveError} onSlotNotes={notes => setMealDraftSlot({ ...editing.slot, notes })} onDishChange={(index, changes) => updateDish(editing.slot, index, changes)} onMove={(index, direction) => moveDish(editing.slot, index, direction)} onRemove={index => setConfirmation({ kind: 'remove-dish', index })} onSearch={value => { setDishSearch(value); setDishPage(1) }} onCategory={value => { setDishCategoryId(value); setDishPage(1) }} onSearchPage={setDishPage} onAdd={dish => addDish(editing.slot, dish)}/>}
     {dialog === 'meal' && <div className="modal-backdrop" onMouseDown={() => setDialog(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="meal-title" onMouseDown={event => event.stopPropagation()}><header><h2 id="meal-title">餐別設定</h2><button className="secondary" onClick={() => setDialog(null)}>關閉</button></header><form className="inline-form" onSubmit={addMeal}><label>新餐別名稱<input autoFocus value={mealName} onChange={event => setMealName(event.target.value)} required/></label><button>新增餐別</button></form><div className="meal-list">{data.meal_types.map(meal => <div key={meal.id} className={!meal.is_active ? 'inactive' : ''}><label>名稱<input value={mealDrafts[meal.id] ?? meal.name} onChange={event => setMealDrafts({ ...mealDrafts, [meal.id]: event.target.value })}/></label><button className="secondary" aria-label={`${meal.name} 上移`} onClick={() => void moveMeal(meal, -1)}>上移</button><button className="secondary" aria-label={`${meal.name} 下移`} onClick={() => void moveMeal(meal, 1)}>下移</button><button onClick={() => void saveMeal(meal)}>儲存</button><button className="secondary" onClick={() => void toggleMeal(meal)}>{meal.is_active ? '停用' : '恢復'}</button></div>)}</div></section></div>}
-    {dialog === 'copy' && <div className="modal-backdrop" onMouseDown={() => setDialog(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="copy-title" onMouseDown={event => event.stopPropagation()}><header><div><h2 id="copy-title">複製菜單</h2><p>可複製單日或完整七日；覆蓋模式會先要求確認。</p></div><button className="secondary" onClick={() => setDialog(null)}>關閉</button></header><div className="form-grid"><label>來源菜單<select autoFocus value={sourceMenu} onChange={event => setSourceMenu(event.target.value)}>{menus.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>來源日期<input type="date" value={sourceDate} onChange={event => setSourceDate(event.target.value)}/></label><label>目的日期<input type="date" value={destinationDate} onChange={event => setDestinationDate(event.target.value)}/></label><label>模式<select value={copyMode} onChange={event => { setCopyMode(event.target.value as 'add' | 'replace'); setConfirmReplace(false) }}><option value="add">加入（跳過重複）</option><option value="replace">覆蓋目的資料</option></select></label></div>{copyMode === 'replace' && <label className="confirm-box"><input type="checkbox" checked={confirmReplace} onChange={event => setConfirmReplace(event.target.checked)}/>我了解目的日期原有餐格內容將被覆蓋。</label>}<footer><button className="secondary" disabled={copyMode === 'replace' && !confirmReplace} onClick={() => void copy('day')}>複製一天</button><button disabled={copyMode === 'replace' && !confirmReplace} onClick={() => void copy('week')}>複製完整七日</button></footer></section></div>}
+    {dialog === 'copy' && <div className="modal-backdrop" onMouseDown={() => { if (!copySaving) setDialog(null) }}><section className="modal-panel copy-menu-dialog" role="dialog" aria-modal="true" aria-labelledby="copy-title" onMouseDown={event => event.stopPropagation()}><header><div><h2 id="copy-title">複製菜單</h2><p>清楚選擇要複製一天或整週，再決定目的已有內容時的處理方式。</p></div><button className="secondary" disabled={copySaving} onClick={() => setDialog(null)}>關閉</button></header>
+      <fieldset className="copy-scope"><legend>複製範圍</legend><label><input autoFocus type="radio" name="copy-scope" value="day" checked={copyScope === 'day'} onChange={() => { setCopyScope('day'); setCopyError('') }}/>複製一天</label><label><input type="radio" name="copy-scope" value="week" checked={copyScope === 'week'} onChange={() => { setCopyScope('week'); setCopyError('') }}/>複製整週</label></fieldset>
+      <div className="copy-direction"><section><h3>來源</h3><label>來源菜單<select value={sourceMenu} onChange={event => { const value=event.target.value; const source=menus.find(item => item.id===value); setSourceMenu(value); if(source)setSourceDate(source.start_date); setCopyError('') }}>{menus.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>{copyScope === 'day' ? <label>來源日期<input type="date" value={sourceDate} onChange={event => setSourceDate(event.target.value)}/></label> : <p><strong>來源週</strong><span>{selectedSourceMenu?.start_date} ～ {selectedSourceMenu?.end_date}</span></p>}</section><span className="copy-arrow" aria-hidden="true">→</span><section><h3>複製到</h3><p><strong>{data.menu.name}</strong></p>{copyScope === 'day' ? <label>目的日期<input type="date" value={destinationDate} onChange={event => setDestinationDate(event.target.value)}/></label> : <p><strong>目的週</strong><span>{data.menu.start_date} ～ {data.menu.end_date}</span></p>}</section></div>
+      {copyScope === 'week' && <Feedback type="info">複製整週時，目的菜單缺少的啟用餐別會自動建立；目的既有的額外餐別會保留。</Feedback>}
+      <fieldset className="copy-conflict-mode"><legend>目的已有內容時</legend><label><input type="radio" name="copy-mode" checked={copyMode === 'add'} onChange={() => { setCopyMode('add'); setConfirmReplace(false) }}/>加入並跳過重複</label><label><input type="radio" name="copy-mode" checked={copyMode === 'replace'} onChange={() => setCopyMode('replace')}/>覆蓋目的內容</label></fieldset>
+      {copyMode === 'replace' && <label className="confirm-box"><input type="checkbox" checked={confirmReplace} onChange={event => setConfirmReplace(event.target.checked)}/>我了解目的{copyScope === 'day' ? '日期' : '整週'}原有餐格內容將被覆蓋。</label>}{copyError && <Feedback type="error">{copyError}</Feedback>}
+      <footer><button className="secondary" disabled={copySaving} onClick={() => setDialog(null)}>取消</button><button disabled={copySaving || (copyMode === 'replace' && !confirmReplace)} onClick={() => void copy()}>{copySaving ? '複製中…' : copyScope === 'day' ? '複製這一天' : '複製整週'}</button></footer>
+    </section></div>}
     {confirmationContent && <MenuConfirmDialog title={confirmationContent.title} description={confirmationContent.description} confirmLabel={confirmationContent.label} onCancel={() => setConfirmation(null)} onConfirm={confirmationContent.action}/>}
   </section>
 }
