@@ -54,6 +54,8 @@ def kitchen_workbook(result):
 def requirements_workbook(result,title="需求量報表"):
     wb=Workbook()
     _sheet(wb,"需求彙總",["食材代碼","食材","供應商","需求量","需求單位","建議採購量","採購單位","現價","預估成本","需確認"],[[x["ingredient_code"],x["ingredient_name"],x["supplier_name"] or "未指定",x["requirement_quantity"],x["requirement_unit"],x["suggested_purchase_quantity"],x["suggested_purchase_unit"],x["current_price"],x["estimated_cost"],"是" if x["needs_review"] else "否"] for x in result["rows"]])
+    daily=sorted(result["daily_rows"],key=lambda x:(x["requirement_date"],x["supplier_name"] or "未指定供應商",x["menu_name"],x["ingredient_code"],x["unit"],str(x["menu_id"]),str(x["ingredient_id"])))
+    _sheet(wb,"每日採購需求",["使用日期","菜單","供應商","食材編號","食材名稱","需求量","單位"],[[x["requirement_date"],x["menu_name"],x["supplier_name"] or "未指定供應商",x["ingredient_code"],x["ingredient_name"],x["quantity"],x["unit"]] for x in daily])
     groups=[]
     by_key={x["row_key"]:x for x in result["rows"]}
     for group in result["supplier_groups"]:

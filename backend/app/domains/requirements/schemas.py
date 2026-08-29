@@ -58,6 +58,23 @@ class RequirementRow(BaseModel):
     def decimal_string(self, value: Decimal | None): return None if value is None else format(value,"f")
 
 
+class DailyRequirementRow(BaseModel):
+    requirement_date: date
+    menu_id: uuid.UUID
+    menu_name: str
+    supplier_id: uuid.UUID | None
+    supplier_code: str | None
+    supplier_name: str | None
+    ingredient_id: uuid.UUID
+    ingredient_code: str
+    ingredient_name: str
+    quantity: Decimal
+    unit: str
+
+    @field_serializer("quantity")
+    def decimal_string(self,value:Decimal): return format(value,"f")
+
+
 class SupplierGroup(BaseModel):
     supplier_id: uuid.UUID | None
     supplier_name: str
@@ -88,6 +105,7 @@ class RequirementResult(BaseModel):
     criteria: RequirementCriteria
     source_menus: list[RequirementSourceMenu]
     rows: list[RequirementRow]
+    daily_rows: list[DailyRequirementRow]
     supplier_groups: list[SupplierGroup]
     known_estimated_cost: Decimal
     total_estimated_cost: Decimal | None

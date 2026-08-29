@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date,datetime
 from decimal import Decimal
 from io import BytesIO
 from openpyxl import load_workbook
@@ -10,16 +10,31 @@ from app.domains.exports.safety import content_disposition,safe_cell_text,safe_f
 
 def requirement_result(name="繁體食材"):
     row={"row_key":"1","ingredient_code":"I01","ingredient_name":name,"supplier_name":"台灣供應商","requirement_quantity":Decimal("0.12345678"),"requirement_unit":"kg","suggested_purchase_quantity":Decimal("0.2"),"suggested_purchase_unit":"kg","current_price":Decimal("12.34"),"estimated_cost":Decimal("2.468"),"needs_review":False}
-    return {"rows":[row],"supplier_groups":[{"supplier_name":"台灣供應商","row_keys":["1"]}],"anomalies":[]}
+    daily=[
+        {"requirement_date":date(2026,10,6),"menu_id":"m2","menu_name":"菜單乙","supplier_name":"台灣供應商","ingredient_id":"i1","ingredient_code":"I01","ingredient_name":name,"quantity":Decimal("2.5"),"unit":"kg"},
+        {"requirement_date":date(2026,10,5),"menu_id":"m1","menu_name":"菜單甲","supplier_name":"台灣供應商","ingredient_id":"i1","ingredient_code":"I01","ingredient_name":name,"quantity":Decimal("1.25"),"unit":"kg"},
+    ]
+    return {"rows":[row],"daily_rows":daily,"supplier_groups":[{"supplier_name":"台灣供應商","row_keys":["1"]}],"anomalies":[]}
 def kitchen_result():
     anomaly={"severity":"warning","code":"CHECK","message":"請確認異常","related_entity_name":"食材"}
     line={"ingredient_code":"I01","ingredient_name":"紅蘿蔔","display_quantity":Decimal("1.25"),"display_unit":"kg","notes":"備料","anomalies":[anomaly]}
     dish={"dish_code":"D01","dish_name":"燉菜","diner_count":10,"ingredients":[line]}
     return {"menu":{"menu_name":"中文菜單"},"days":[{"menu_date":date(2026,8,28),"meals":[{"meal_type_name":"午餐","dishes":[dish]}]}],"ingredient_summary":[{"ingredient_code":"I01","ingredient_name":"紅蘿蔔","supplier_name":"供應商甲","display_quantity":Decimal("1.25"),"display_unit":"kg","source_count":1,"anomalies":[]}],"anomalies":[anomaly]}
 def test_excel_keeps_chinese_numeric_precision_and_escapes_formulas():
-    ws=load_workbook(BytesIO(requirements_workbook(requirement_result("=HYPERLINK(\"bad\")"))))["需求彙總"]
+    wb=load_workbook(BytesIO(requirements_workbook(requirement_result("=HYPERLINK(\"bad\")"))));ws=wb["需求彙總"]
     assert ws["B2"].value.startswith("'=");assert ws["C2"].value=="台灣供應商"
     assert Decimal(str(ws["D2"].value))==Decimal("0.12345678");assert isinstance(ws["D2"].value,(int,float))
+    daily=wb["每日採購需求"]
+    assert [cell.value for cell in daily[1]]==["使用日期","菜單","供應商","食材編號","食材名稱","需求量","單位"]
+    assert daily["A2"].value.date()==date(2026,10,5) and daily["B2"].value=="菜單甲"
+    assert isinstance(daily["F2"].value,(int,float)) and Decimal(str(daily["F2"].value))==Decimal("1.25")
+    assert daily["E2"].value.startswith("'=")
+
+def test_daily_requirement_excel_preserves_supplier_and_menu_attribution():
+    result=requirement_result();result["daily_rows"].append({"requirement_date":date(2026,10,5),"menu_id":"m3","menu_name":"同日另一菜單","supplier_name":"另一供應商","ingredient_id":"i2","ingredient_code":"I02","ingredient_name":"青江菜","quantity":Decimal("3"),"unit":"kg"})
+    ws=load_workbook(BytesIO(requirements_workbook(result)))["每日採購需求"]
+    values=[tuple(cell.value for cell in row) for row in ws.iter_rows(min_row=2)]
+    assert (datetime(2026,10,5),"同日另一菜單","另一供應商","I02","青江菜",3,"kg") in values
 def test_kitchen_excel_has_all_sections():
     wb=load_workbook(BytesIO(kitchen_workbook(kitchen_result())))
     assert wb.sheetnames==["備料明細","食材彙總","異常"];assert wb["備料明細"]["D2"].value=="燉菜"

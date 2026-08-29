@@ -110,6 +110,8 @@ def test_inactive_meal_types_are_excluded_before_requirement_calculation(client,
     rows={row["ingredient_code"]:row for row in body["rows"]}
     assert Decimal(rows["REQ-I1"]["requirement_quantity"])==Decimal("12.6")
     assert all(schedule["meal_type_name"]!="晚餐" for row in body["rows"] for schedule in row["schedules"])
+    assert {row["menu_id"] for row in body["daily_rows"]}=={menu["id"]}
+    assert all(row["requirement_date"] in {"2026-09-01","2026-09-02","2026-09-03"} for row in body["daily_rows"])
     assert not any(item["code"]=="INACTIVE_SOURCE" and item["context"].get("entity_type")=="meal_type" for item in body["anomalies"])
 
 
@@ -118,6 +120,7 @@ def test_all_inactive_meal_types_return_empty_requirements_and_no_scheduled_warn
     for meal in meals:assert client.post(f"/api/v1/menus/{menu['id']}/meal-types/{meal['id']}/deactivate",headers=headers).status_code==200
     body=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu["id"]]}).json()
     assert body["rows"]==[]
+    assert body["daily_rows"]==[]
     assert any(item["code"]=="NO_SCHEDULED_DISHES" for item in body["anomalies"])
     assert not any(item["code"]=="INACTIVE_SOURCE" and item["context"].get("entity_type")=="meal_type" for item in body["anomalies"])
 
@@ -133,4 +136,5 @@ def test_same_named_meal_type_is_filtered_per_menu_active_state(client,db_sessio
     chicken=next(row for row in body["rows"] if row["ingredient_code"]=="REQ-I1")
     assert Decimal(chicken["requirement_quantity"])==Decimal("1.1")
     assert {schedule["menu_id"] for schedule in chicken["schedules"]}=={menu_b["id"]}
+    assert {row["menu_id"] for row in body["daily_rows"]}=={menu_b["id"]}
     assert any(item["code"]=="NO_SCHEDULED_DISHES" and item["related_entity_id"]==menu_a["id"] for item in body["anomalies"])
