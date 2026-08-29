@@ -1,9 +1,12 @@
+import uuid
 from decimal import Decimal
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event,select
 from sqlalchemy.orm import Session
 
 from app.db.session import engine as process_engine
+from app.domains.recipes.models import DishIngredient
+from app.domains.users.models import User
 from app.domains.users.schemas import CreateUserCommand
 from app.domains.users.service import UserService
 
@@ -75,7 +78,9 @@ def test_missing_recipe_zero_quantity_incompatible_unit_missing_supplier_and_ina
     no_recipe=client.post("/api/v1/dishes",headers=headers,json={"code":"REQ-MISS","name":"無配方","category_id":client.get("/api/v1/categories/dish?active=true",headers=headers).json()["items"][0]["id"]}).json()
     bad_ingredient=client.post("/api/v1/ingredients",headers=headers,json={"code":"REQ-BAD","name":"無供應商食材","category_id":client.get("/api/v1/categories/ingredient?active=true",headers=headers).json()["items"][0]["id"],"unit":"kg","current_price":"10"}).json()
     bad_dish=client.post("/api/v1/dishes",headers=headers,json={"code":"REQ-BAD-D","name":"壞單位菜色"}).json()
-    client.put(f"/api/v1/dishes/{bad_dish['id']}/recipe",headers=headers,json={"items":[{"ingredient_id":bad_ingredient["id"],"quantity":"1","unit":"個","loss_rate":"0","sort_order":1}]})
+    actor_id=db_session.scalar(select(User.id))
+    db_session.add(DishIngredient(id=uuid.uuid4(),dish_id=uuid.UUID(bad_dish["id"]),ingredient_id=uuid.UUID(bad_ingredient["id"]),quantity=Decimal("1"),unit="個",loss_rate=Decimal("0"),sort_order=1,created_by=actor_id,updated_by=actor_id))
+    db_session.commit()
     aggregate=client.get(f"/api/v1/menus/{menu['id']}/editor",headers=headers).json();slot=aggregate["slots"][0]
     slot["dishes"].extend([{"dish_id":no_recipe["id"],"diner_count":1,"sort_order":3},{"dish_id":bad_dish["id"],"diner_count":1,"sort_order":4}])
     payload={"slots":[{"menu_day_id":s["menu_day_id"],"menu_date":s["menu_date"],"menu_meal_type_id":s["menu_meal_type_id"],"notes":s["notes"],"dishes":[{"id":d.get("id"),"dish_id":d["dish_id"],"diner_count":d["diner_count"],"notes":d.get("notes"),"sort_order":d["sort_order"]} for d in s["dishes"]]} for s in aggregate["slots"]]}
@@ -96,3 +101,36 @@ def test_requirement_query_count_is_constant_and_read_only(client,db_session):
     assert response.status_code==200
     assert len([value for value in statements if value.lstrip().upper().startswith("SELECT")])<=3
     assert not [value for value in statements if value.lstrip().upper().startswith(("INSERT","UPDATE","DELETE"))]
+
+
+def test_inactive_meal_types_are_excluded_before_requirement_calculation(client,db_session):
+    headers=auth(client,db_session);menu,meals,*_=fixture(client,headers)
+    assert client.post(f"/api/v1/menus/{menu['id']}/meal-types/{meals[2]['id']}/deactivate",headers=headers).status_code==200
+    body=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu["id"]]}).json()
+    rows={row["ingredient_code"]:row for row in body["rows"]}
+    assert Decimal(rows["REQ-I1"]["requirement_quantity"])==Decimal("12.6")
+    assert all(schedule["meal_type_name"]!="晚餐" for row in body["rows"] for schedule in row["schedules"])
+    assert not any(item["code"]=="INACTIVE_SOURCE" and item["context"].get("entity_type")=="meal_type" for item in body["anomalies"])
+
+
+def test_all_inactive_meal_types_return_empty_requirements_and_no_scheduled_warning(client,db_session):
+    headers=auth(client,db_session);menu,meals,*_=fixture(client,headers)
+    for meal in meals:assert client.post(f"/api/v1/menus/{menu['id']}/meal-types/{meal['id']}/deactivate",headers=headers).status_code==200
+    body=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu["id"]]}).json()
+    assert body["rows"]==[]
+    assert any(item["code"]=="NO_SCHEDULED_DISHES" for item in body["anomalies"])
+    assert not any(item["code"]=="INACTIVE_SOURCE" and item["context"].get("entity_type")=="meal_type" for item in body["anomalies"])
+
+
+def test_same_named_meal_type_is_filtered_per_menu_active_state(client,db_session):
+    headers=auth(client,db_session);menu_a,meals,dishes,*_=fixture(client,headers)
+    for meal in meals:assert client.post(f"/api/v1/menus/{menu_a['id']}/meal-types/{meal['id']}/deactivate",headers=headers).status_code==200
+    menu_b=client.post("/api/v1/menus",headers=headers,json={"name":"第二份需求菜單","start_date":"2026-09-01","end_date":"2026-09-01"}).json()
+    breakfast_b=client.post(f"/api/v1/menus/{menu_b['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
+    slots=[{"menu_date":"2026-09-01","menu_meal_type_id":breakfast_b["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]}]
+    assert client.put(f"/api/v1/menus/{menu_b['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
+    body=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu_a["id"],menu_b["id"]]}).json()
+    chicken=next(row for row in body["rows"] if row["ingredient_code"]=="REQ-I1")
+    assert Decimal(chicken["requirement_quantity"])==Decimal("1.1")
+    assert {schedule["menu_id"] for schedule in chicken["schedules"]}=={menu_b["id"]}
+    assert any(item["code"]=="NO_SCHEDULED_DISHES" and item["related_entity_id"]==menu_a["id"] for item in body["anomalies"])

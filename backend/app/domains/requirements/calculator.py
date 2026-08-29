@@ -14,7 +14,7 @@ def calculate_requirement_rows(source_rows):
     inactive_seen=set(); missing_supplier_seen=set()
     for source in source_rows:
         source_context={"menu_id":str(source["menu_id"]),"menu_name":source["menu_name"],"menu_date":source["menu_date"].isoformat(),"meal_type":source["meal_type_name"],"dish_id":str(source["dish_id"]),"dish_name":source["dish_name"]}
-        for entity_type,id_key,name_key,active_key in (("menu","menu_id","menu_name","menu_is_active"),("meal_type","meal_type_id","meal_type_name","meal_type_is_active"),("dish","dish_id","dish_name","dish_is_active")):
+        for entity_type,id_key,name_key,active_key in (("menu","menu_id","menu_name","menu_is_active"),("dish","dish_id","dish_name","dish_is_active")):
             if not source[active_key] and (entity_type,source[id_key]) not in inactive_seen:
                 inactive_seen.add((entity_type,source[id_key])); anomalies.append(anomaly("INACTIVE_SOURCE","warning",f"Inactive {entity_type} is retained for historical calculation",source[id_key],source[name_key],entity_type=entity_type))
         if source["recipe_detail_id"] is None:

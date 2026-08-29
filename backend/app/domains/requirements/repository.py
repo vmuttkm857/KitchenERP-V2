@@ -27,7 +27,7 @@ class RequirementRepository:
         ).join(MenuDay,MenuDay.menu_id==Menu.id).join(MenuMealType,MenuMealType.id==MenuDay.menu_meal_type_id)
         statement=statement.join(MenuDish,MenuDish.menu_day_id==MenuDay.id).join(Dish,Dish.id==MenuDish.dish_id)
         statement=statement.outerjoin(DishIngredient,DishIngredient.dish_id==Dish.id).outerjoin(Ingredient,Ingredient.id==DishIngredient.ingredient_id).outerjoin(Supplier,Supplier.id==Ingredient.primary_supplier_id)
-        statement=statement.where(Menu.id.in_(criteria.menu_ids))
+        statement=statement.where(Menu.id.in_(criteria.menu_ids),MenuMealType.is_active.is_(True))
         if criteria.selected_dates is not None: statement=statement.where(MenuDay.menu_date.in_(criteria.selected_dates))
         elif criteria.start_date is not None: statement=statement.where(MenuDay.menu_date>=criteria.start_date,MenuDay.menu_date<=criteria.end_date)
         statement=statement.order_by(Menu.id,MenuDay.menu_date,MenuMealType.sort_order,MenuDish.sort_order,DishIngredient.sort_order,DishIngredient.id)

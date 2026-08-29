@@ -11,7 +11,6 @@ def build_preparation(source_rows,automatic_display=True):
         meal=day["meals"].setdefault(row["meal_type_id"],{"meal_type_id":row["meal_type_id"],"meal_type_name":row["meal_type_name"],"sort_order":row["meal_type_sort_order"],"dishes":OrderedDict(),"anomalies":[]})
         dish=meal["dishes"].setdefault(row["menu_dish_id"],{"dish_id":row["dish_id"],"dish_code":row["dish_code"],"dish_name":row["dish_name"],"diner_count":row["diner_count"],"notes":row["dish_notes"],"sort_order":row["dish_sort_order"],"recipe_ready":True,"ingredients":[],"anomalies":[]})
         context={"menu_date":row["menu_date"].isoformat(),"meal_type_id":str(row["meal_type_id"]),"meal_type_name":row["meal_type_name"],"dish_id":str(row["dish_id"]),"dish_name":row["dish_name"]}
-        if not row["meal_type_is_active"] and not any(a["code"]=="INACTIVE_MEAL_TYPE" for a in meal["anomalies"]):meal["anomalies"].append(anomaly("INACTIVE_MEAL_TYPE","warning","Inactive meal type is retained for scheduled kitchen work",row["meal_type_id"],row["meal_type_name"],**context))
         if not row["dish_is_active"] and not any(a["code"]=="INACTIVE_DISH" for a in dish["anomalies"]):dish["anomalies"].append(anomaly("INACTIVE_DISH","warning","Inactive dish is retained for scheduled kitchen work",row["dish_id"],row["dish_name"],**context))
         if row["recipe_line_id"] is None:
             issue=anomaly("MISSING_RECIPE","error","Scheduled dish has no recipe",row["dish_id"],row["dish_name"],**context);dish["recipe_ready"]=False;dish["anomalies"].append(issue);continue

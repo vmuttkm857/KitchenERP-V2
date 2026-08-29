@@ -72,3 +72,21 @@ def test_auth_query_budget_read_only_and_no_snapshot_purchase_dependency(client,
     selects=[sql for sql in statements if sql.lstrip().upper().startswith("SELECT")];assert len(selects)<=3
     assert not [sql for sql in statements if sql.lstrip().upper().startswith(("INSERT","UPDATE","DELETE"))]
     combined=" ".join(selects).lower();assert "requirement_snapshot" not in combined and "purchase_" not in combined
+
+
+def test_inactive_meal_type_is_excluded_from_kitchen_preparation(client,db_session):
+    headers=auth(client,db_session);menu,lunch,dinner,_,_=kitchen_fixture(client,headers,db_session)
+    assert client.post(f"/api/v1/menus/{menu['id']}/meal-types/{dinner['id']}/deactivate",headers=headers).status_code==200
+    body=client.post("/api/v1/kitchen-operations/calculate",headers=headers,json={"menu_id":menu["id"],"selected_dates":["2026-10-01"]}).json()
+    assert [meal["meal_type_id"] for meal in body["days"][0]["meals"]]==[lunch["id"]]
+    assert not any(item["code"]=="INACTIVE_MEAL_TYPE" for item in body["anomalies"])
+    assert "K-I3" not in {item["ingredient_code"] for item in body["ingredient_summary"]}
+
+
+def test_all_inactive_meal_types_return_empty_kitchen_preparation(client,db_session):
+    headers=auth(client,db_session);menu,lunch,dinner,_,_=kitchen_fixture(client,headers,db_session)
+    for meal in (lunch,dinner):assert client.post(f"/api/v1/menus/{menu['id']}/meal-types/{meal['id']}/deactivate",headers=headers).status_code==200
+    body=client.post("/api/v1/kitchen-operations/calculate",headers=headers,json={"menu_id":menu["id"]}).json()
+    assert body["days"]==[] and body["ingredient_summary"]==[] and body["supplier_summary"]==[]
+    assert any(item["code"]=="NO_SCHEDULED_DISHES" for item in body["anomalies"])
+    assert not any(item["code"]=="INACTIVE_MEAL_TYPE" for item in body["anomalies"])
