@@ -29,10 +29,19 @@ class DishRepository:
         return self.session.scalar(statement.limit(1)) is not None
 
     def _view_statement(self):
+        from app.domains.recipes.models import DishIngredient
+
+        recipe_ingredient_count = (
+            select(func.count(DishIngredient.id))
+            .where(DishIngredient.dish_id == Dish.id)
+            .correlate(Dish)
+            .scalar_subquery()
+        )
         return (
             select(
                 Dish.id, Dish.code, Dish.name, Dish.category_id,
-                DishCategory.name.label("category_name"), Dish.notes, Dish.is_active,
+                DishCategory.name.label("category_name"), Dish.notes,
+                recipe_ingredient_count.label("recipe_ingredient_count"), Dish.is_active,
                 Dish.created_at, Dish.updated_at, Dish.created_by, Dish.updated_by,
             )
             .outerjoin(DishCategory, DishCategory.id == Dish.category_id)

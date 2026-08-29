@@ -27,6 +27,7 @@ class DishPublic(BaseModel):
     category_id: uuid.UUID | None
     category_name: str | None
     notes: str | None
+    recipe_ingredient_count: int = 0
     is_active: bool
     created_at: datetime
     updated_at: datetime

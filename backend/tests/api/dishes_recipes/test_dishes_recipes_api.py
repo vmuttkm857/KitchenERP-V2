@@ -164,6 +164,36 @@ def test_recipe_aggregate_query_count_is_constant(client: TestClient, db_session
     assert "password_hash" not in response.text
 
 
+def test_dish_list_includes_recipe_ingredient_count_with_fixed_query_budget(
+    client: TestClient, db_session: Session,
+) -> None:
+    headers, _ = auth_headers(client, db_session)
+    category, ingredients = foundations(client, headers)
+    empty_dish = create_dish(client, headers, category["id"])
+    recipe_dish = client.post("/api/v1/dishes", headers=headers, json={
+        "code": "D-002", "name": "有配方菜色", "category_id": category["id"],
+    }).json()
+    client.put(f"/api/v1/dishes/{recipe_dish['id']}/recipe", headers=headers, json=recipe_payload(ingredients))
+
+    statements: list[str] = []
+
+    def record_query(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(process_engine, "before_cursor_execute", record_query)
+    try:
+        response = client.get("/api/v1/dishes?page_size=100", headers=headers)
+    finally:
+        event.remove(process_engine, "before_cursor_execute", record_query)
+
+    assert response.status_code == 200
+    dishes = {item["id"]: item for item in response.json()["items"]}
+    assert dishes[empty_dish["id"]]["recipe_ingredient_count"] == 0
+    assert dishes[recipe_dish["id"]]["recipe_ingredient_count"] == 2
+    selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
+    assert len(selects) <= 3  # current user + pagination total + one projected dish list query
+
+
 def test_database_fk_restricts_recipe_ingredient_deletion(client: TestClient, db_session: Session) -> None:
     headers, _ = auth_headers(client, db_session)
     category, ingredients = foundations(client, headers)
