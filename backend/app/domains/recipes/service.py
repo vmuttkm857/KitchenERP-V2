@@ -11,7 +11,7 @@ from app.domains.recipes.exceptions import (
 from app.domains.recipes.models import DishIngredient
 from app.domains.recipes.repository import RecipeRepository
 from app.domains.recipes.schemas import RecipeReplace
-from app.shared.domain.quantities import calculate_recipe_cost, normalize_unit
+from app.shared.domain.quantities import calculate_recipe_cost, convert_quantity, normalize_unit
 
 
 class RecipeService:
@@ -54,11 +54,17 @@ class RecipeService:
         ingredients = self.repository.ingredient_models(set(ingredient_ids))
         if len(ingredients) != len(set(ingredient_ids)) or any(not item.is_active for item in ingredients.values()):
             raise InvalidRecipeIngredientError("Every recipe ingredient must exist and be active")
-        existing = {item.id: item for item in self.repository.details(dish_id)}
-        retained: set[uuid.UUID] = set()
         for payload in data.items:
             if payload.unit.strip() == "mL":
                 raise InvalidRecipeIngredientError("Use ml for new recipe data; legacy mL is not accepted at runtime")
+            ingredient = ingredients[payload.ingredient_id]
+            if not convert_quantity(Decimal("1"), payload.unit, ingredient.unit).convertible:
+                raise InvalidRecipeIngredientError(
+                    f"配方單位「{payload.unit.strip()}」無法換算為食材「{ingredient.name}」的基本單位「{ingredient.unit}」。"
+                )
+        existing = {item.id: item for item in self.repository.details(dish_id)}
+        retained: set[uuid.UUID] = set()
+        for payload in data.items:
             if payload.id is None:
                 detail = DishIngredient(dish_id=dish_id, ingredient_id=payload.ingredient_id,
                                         created_by=actor_id, updated_by=actor_id)

@@ -121,6 +121,70 @@ def test_recipe_duplicate_invalid_values_and_inactive_ingredient_are_rejected(cl
     assert client.put(f"/api/v1/dishes/{dish['id']}/recipe", headers=headers, json={"items": [{"ingredient_id": ingredients[0]["id"], "quantity": "1", "unit": "kg", "loss_rate": "0"}]}).status_code == 422
 
 
+def test_recipe_unit_compatibility_accepts_supported_dimensions_and_exact_units(client: TestClient, db_session: Session) -> None:
+    headers, _ = auth_headers(client, db_session)
+    dish_category, _ = foundations(client, headers)
+    ingredient_category = client.get("/api/v1/categories/ingredient?active=true", headers=headers).json()["items"][0]
+    cases = (("g", "g"), ("g", "kg"), ("kg", "斤"), ("L", "ml"), ("ml", "L"), ("個", "個"), ("片", "片"), ("盒", "盒"))
+    ingredients = []
+    for index, (base_unit, recipe_unit) in enumerate(cases, 1):
+        response = client.post("/api/v1/ingredients", headers=headers, json={
+            "code": f"COMP-{index}", "name": f"相容食材{index}", "category_id": ingredient_category["id"],
+            "unit": base_unit, "current_price": "1",
+        })
+        assert response.status_code == 201, response.text
+        ingredients.append((response.json(), recipe_unit))
+    dish = client.post("/api/v1/dishes", headers=headers, json={
+        "code": "COMP-D", "name": "相容單位菜色", "category_id": dish_category["id"],
+    }).json()
+    payload = {"items": [{
+        "ingredient_id": ingredient["id"], "quantity": "1", "unit": recipe_unit,
+        "loss_rate": "0", "sort_order": index,
+    } for index, (ingredient, recipe_unit) in enumerate(ingredients, 1)]}
+
+    response = client.put(f"/api/v1/dishes/{dish['id']}/recipe", headers=headers, json=payload)
+    assert response.status_code == 200, response.text
+    assert len(response.json()["items"]) == len(cases)
+
+
+def test_recipe_unit_compatibility_rejects_create_and_update(client: TestClient, db_session: Session) -> None:
+    headers, _ = auth_headers(client, db_session)
+    dish_category, _ = foundations(client, headers)
+    ingredient_category = client.get("/api/v1/categories/ingredient?active=true", headers=headers).json()["items"][0]
+    cases = (("個", "g"), ("盒", "kg"), ("片", "斤"), ("片", "KG"), ("ml", "g"), ("g", "L"))
+    ingredients = []
+    for index, (recipe_unit, base_unit) in enumerate(cases, 1):
+        response = client.post("/api/v1/ingredients", headers=headers, json={
+            "code": f"BAD-COMP-{index}", "name": f"不相容食材{index}", "category_id": ingredient_category["id"],
+            "unit": base_unit, "current_price": "1",
+        })
+        assert response.status_code == 201, response.text
+        ingredients.append(response.json())
+    dish = client.post("/api/v1/dishes", headers=headers, json={
+        "code": "BAD-COMP-D", "name": "不相容單位菜色", "category_id": dish_category["id"],
+    }).json()
+
+    for ingredient, (recipe_unit, base_unit) in zip(ingredients, cases):
+        response = client.put(f"/api/v1/dishes/{dish['id']}/recipe", headers=headers, json={"items": [{
+            "ingredient_id": ingredient["id"], "quantity": "1", "unit": recipe_unit, "loss_rate": "0",
+        }]})
+        assert response.status_code == 422
+        assert response.json()["detail"] == f"配方單位「{recipe_unit}」無法換算為食材「{ingredient['name']}」的基本單位「{base_unit}」。"
+        assert client.get(f"/api/v1/dishes/{dish['id']}/recipe", headers=headers).json()["items"] == []
+
+    created = client.put(f"/api/v1/dishes/{dish['id']}/recipe", headers=headers, json={"items": [{
+        "ingredient_id": ingredients[0]["id"], "quantity": "1", "unit": "g", "loss_rate": "0",
+    }]})
+    assert created.status_code == 200, created.text
+    retained = created.json()["items"][0]
+    update = client.put(f"/api/v1/dishes/{dish['id']}/recipe", headers=headers, json={"items": [{
+        "id": retained["id"], "ingredient_id": retained["ingredient_id"], "quantity": "1", "unit": "個", "loss_rate": "0",
+    }]})
+    assert update.status_code == 422
+    current = client.get(f"/api/v1/dishes/{dish['id']}/recipe", headers=headers).json()["items"][0]
+    assert current["id"] == retained["id"] and current["unit"] == "g"
+
+
 def test_recipe_draft_zero_is_saved_but_not_requirement_ready(client: TestClient, db_session: Session) -> None:
     headers, _ = auth_headers(client, db_session)
     category, ingredients = foundations(client, headers)

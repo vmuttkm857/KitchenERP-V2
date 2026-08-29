@@ -62,9 +62,26 @@ small { display: block; color: #607065; }
 .requirement-summary { display:flex; flex-wrap:wrap; gap:1rem; align-items:center; margin:1rem 0; padding:1rem; border:1px solid #d8e2d7; border-radius:.7rem; }
 .anomaly-list { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #b7791f; background:#fff8e7; }
 .anomaly-list li.error { color:#a12626; }
+.calculation-workflow { display:grid; grid-template-columns:minmax(20rem,2fr) minmax(18rem,1fr) auto; gap:.8rem; align-items:stretch; padding:1rem; background:#f3f6f2; border-radius:.7rem; }
+.workflow-step { min-width:0; border:1px solid #b9c9ba; border-radius:.55rem; }
+.workflow-submit { display:grid; align-content:end; gap:.5rem; }
+.range-options { display:flex; flex-wrap:wrap; gap:.45rem 1rem; }
+.range-options input { width:auto; min-width:auto; }
+.date-range-fields { display:grid; grid-template-columns:1fr 1fr; gap:.6rem; margin-top:.7rem; }
+.inline-validation { margin:.45rem 0 0; font-size:.88rem; }
+.summary-cards>div { display:grid; gap:.15rem; min-width:10rem; padding:.55rem .7rem; background:#f5f8f5; border-radius:.5rem; }
+.summary-cards>div strong { font-size:1.12rem; }
+.summary-cards>div span,.summary-cards>div small { color:#5c6960; }
+.anomaly-list-compact { margin:.55rem 0; padding:.45rem .75rem; }
+.anomaly-list-compact h3 { margin:.05rem 0 .3rem; font-size:1rem; }
+.anomaly-list-compact ul { margin:0; padding-left:1.15rem; }
+.anomaly-list-compact li { padding:.25rem 0; line-height:1.3; }
+.anomaly-list-compact li+li { border-top:1px solid rgb(183 121 31 / 18%); }
+.anomaly-list-compact p { margin:.1rem 0; }
 .requirements-table { overflow:auto; margin-bottom:1.5rem; }
 .requirements-table table { min-width:70rem; }
 @media (max-width:900px) { .requirements-form { grid-template-columns:1fr; } }
+@media (max-width:900px) { .calculation-workflow,.date-range-fields { grid-template-columns:1fr; } }
 .snapshot-action { display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin:1rem 0; padding:1rem; background:#eef4ed; border-radius:.7rem; }
 .snapshot-delete { display:flex; align-items:end; gap:1rem; flex-wrap:wrap; margin-top:1rem; padding:1rem; border:1px solid #e1b8b8; border-radius:.7rem; }
 .kitchen-filter { display:grid; grid-template-columns:repeat(4,minmax(10rem,1fr)); gap:.8rem; align-items:end; padding:1rem; background:#f3f6f2; border-radius:.7rem; }
