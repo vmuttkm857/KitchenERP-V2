@@ -25,7 +25,7 @@ export function MenuWeekGrid({ dates, meals, selectedKey, slotFor, onSelect }: P
           const cellKey = `${date}:${meal.id}`
           return <td className={`meal-cell${selectedKey === cellKey ? ' is-selected' : ''}`} key={date}>
             <button className="meal-cell-button" onClick={() => onSelect(date, meal)} aria-label={`編輯 ${date} ${meal.name}`} aria-pressed={selectedKey === cellKey}>
-              {slot.dishes.length ? <div className="cell-dishes">{slot.dishes.map(dish => <div className="cell-dish" key={dish.id ?? dish.dish_id}><strong>{dish.dish_name}</strong><span>{dish.diner_count} 人</span></div>)}</div> : <span className="cell-empty">＋ 新增菜色</span>}
+              {slot.dishes.length ? <div className="cell-dishes">{slot.dishes.map(dish => <div className="cell-dish" key={dish.id ?? dish.dish_id}><strong title={dish.dish_name}>{dish.dish_name}</strong><span>{dish.diner_count} 人</span></div>)}</div> : <span className="cell-empty">＋ 新增菜色</span>}
               {slot.notes && <small className="cell-note">本餐有備註</small>}
             </button>
           </td>
