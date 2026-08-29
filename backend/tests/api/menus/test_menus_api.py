@@ -145,9 +145,50 @@ def test_copy_day_preserves_values_and_is_atomic(client,db_session):
     copied_slots=[slot for slot in copied.json()["slots"] if slot["menu_date"]=="2026-09-02"]
     assert len(copied_slots)==3 and all([d["diner_count"] for d in slot["dishes"]]==[80,100] for slot in copied_slots)
     client.post(f"/api/v1/menus/{target['id']}/meal-types/{target_meals[2]['id']}/deactivate",headers=headers)
-    failed=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-03","mode":"replace","confirm_replace":True})
-    assert failed.status_code==422
-    assert not [slot for slot in client.get(f"/api/v1/menus/{target['id']}/editor",headers=headers).json()["slots"] if slot["menu_date"]=="2026-09-03"]
+    copied_again=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-03","mode":"replace","confirm_replace":True})
+    assert copied_again.status_code==200,copied_again.text
+    preserved=next(meal for meal in copied_again.json()["meal_types"] if meal["id"]==target_meals[2]["id"])
+    assert preserved["is_active"] is False
+
+
+def test_copy_day_creates_dynamic_and_inactive_source_meal_types(client,db_session):
+    headers,_=auth(client,db_session); category,dishes=foundations(client,headers)
+    source=menu(client,headers,category["id"],"動態單日來源"); target=menu(client,headers,category["id"],"動態單日目的")
+    names=("第一餐","下午點心","夜班餐")
+    source_meals=meals(client,headers,source["id"],names)
+    existing=meals(client,headers,target["id"],("第一餐",))[0]
+    payload=full_structure(source["id"],source_meals,dishes,days=1)
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    assert client.post(f"/api/v1/menus/{source['id']}/meal-types/{source_meals[2]['id']}/deactivate",headers=headers).status_code==200
+
+    response=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
+    assert response.status_code==200,response.text
+    by_name={meal["name"]:meal for meal in response.json()["meal_types"]}
+    assert by_name["第一餐"]["id"]==existing["id"]
+    assert by_name["下午點心"]["is_active"] is True
+    assert by_name["夜班餐"]["is_active"] is False
+    copied_slot=next(slot for slot in response.json()["slots"] if slot["menu_meal_type_id"]==by_name["夜班餐"]["id"])
+    assert copied_slot["menu_meal_type_id"]!=source_meals[2]["id"]
+
+
+def test_copy_day_add_skips_duplicate_dish_assignment(client,db_session):
+    headers,_=auth(client,db_session); category,dishes=foundations(client,headers)
+    source=menu(client,headers,category["id"],"單日加入來源"); target=menu(client,headers,category["id"],"單日加入目的")
+    source_meal=meals(client,headers,source["id"],("輪班餐",))[0]
+    target_meal=meals(client,headers,target["id"],("輪班餐",))[0]
+    source_payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":source_meal["id"],"dishes":[
+        {"dish_id":dishes[0]["id"],"diner_count":100,"sort_order":1},{"dish_id":dishes[1]["id"],"diner_count":80,"sort_order":2}]}]}
+    target_payload={"slots":[{"menu_date":"2026-09-02","menu_meal_type_id":target_meal["id"],"dishes":[
+        {"dish_id":dishes[0]["id"],"diner_count":5,"sort_order":1}]}]}
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=source_payload).status_code==200
+    assert client.put(f"/api/v1/menus/{target['id']}/editor",headers=headers,json=target_payload).status_code==200
+
+    response=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
+    assert response.status_code==200,response.text
+    copied=response.json()["slots"][0]["dishes"]
+    assert [dish["dish_id"] for dish in copied].count(dishes[0]["id"])==1
+    assert next(dish for dish in copied if dish["dish_id"]==dishes[0]["id"])["diner_count"]==5
+    assert next(dish for dish in copied if dish["dish_id"]==dishes[1]["id"])["diner_count"]==80
 
 
 def test_exact_seven_day_week_copy(client,db_session):
@@ -194,16 +235,95 @@ def test_week_copy_preserves_existing_case_insensitive_match_and_extra_meal(clie
     assert "午餐" in by_name and by_name["目的額外餐"]["id"]==existing[1]["id"]
 
 
-def test_week_copy_rejects_inactive_match_without_reactivation(client,db_session):
+def test_week_copy_with_many_meals_preserves_partial_target_and_copies_all_days(client,db_session):
+    headers,_=auth(client,db_session); category,dishes=foundations(client,headers)
+    source=menu(client,headers,category["id"],"六餐來源","2026-09-01","2026-09-07")
+    target=menu(client,headers,category["id"],"部分六餐目的","2026-09-08","2026-09-14")
+    names=("第一餐","下午點心","夜班餐","特殊餐A","員工餐B","臨時餐C")
+    source_meals=meals(client,headers,source["id"],names)
+    target_meals=meals(client,headers,target["id"],names[:3])
+    payload=full_structure(source["id"],source_meals,dishes,days=7)
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+
+    response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
+    assert response.status_code==200,response.text
+    aggregate=response.json()
+    by_name={meal["name"]:meal for meal in aggregate["meal_types"]}
+    assert [by_name[name]["id"] for name in names[:3]]==[meal["id"] for meal in target_meals]
+    assert all(name in by_name for name in names)
+    assert len(aggregate["slots"])==42
+    assert all(len(slot["dishes"])==2 for slot in aggregate["slots"])
+
+
+def test_week_copy_same_dates_mixed_active_meals_add_and_replace(client,db_session):
+    headers,actor_id=auth(client,db_session); category,dishes=foundations(client,headers)
+    source=menu(client,headers,category["id"],"同週六餐來源","2026-08-17","2026-08-23")
+    add_target=menu(client,headers,category["id"],"同週加入目的","2026-08-17","2026-08-23")
+    replace_target=menu(client,headers,category["id"],"同週覆蓋目的","2026-08-17","2026-08-23")
+    names=("第一餐","下午點心","夜班餐","特殊餐A","員工餐B","臨時餐C")
+    source_meals=meals(client,headers,source["id"],names)
+    add_existing=meals(client,headers,add_target["id"],names[:3])
+    replace_existing=meals(client,headers,replace_target["id"],names[:3])
+    slots=[]
+    for offset in range(7):
+        for meal_type in source_meals:
+            slots.append({"menu_date":str(date(2026,8,17)+timedelta(days=offset)),"menu_meal_type_id":meal_type["id"],"notes":f"餐次備註-{offset}","dishes":[
+                {"dish_id":dishes[0]["id"],"diner_count":100+offset,"notes":"菜色一","sort_order":1},
+                {"dish_id":dishes[1]["id"],"diner_count":80+offset,"notes":"菜色二","sort_order":2},
+            ]})
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
+    for meal_type in source_meals[3:]:
+        assert client.post(f"/api/v1/menus/{source['id']}/meal-types/{meal_type['id']}/deactivate",headers=headers).status_code==200
+    existing_slot={"slots":[{"menu_date":"2026-08-17","menu_meal_type_id":replace_existing[0]["id"],"notes":"將被覆蓋","dishes":[{"dish_id":dishes[2]["id"],"diner_count":1,"sort_order":1}]}]}
+    assert client.put(f"/api/v1/menus/{replace_target['id']}/editor",headers=headers,json=existing_slot).status_code==200
+
+    add_response=client.post(f"/api/v1/menus/{add_target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
+    replace_response=client.post(f"/api/v1/menus/{replace_target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"replace","confirm_replace":True})
+    assert add_response.status_code==200,add_response.text
+    assert replace_response.status_code==200,replace_response.text
+    for aggregate,existing in ((add_response.json(),add_existing),(replace_response.json(),replace_existing)):
+        by_name={meal["name"]:meal for meal in aggregate["meal_types"]}
+        assert [by_name[name]["id"] for name in names[:3]]==[meal["id"] for meal in existing]
+        assert all(by_name[name]["is_active"] is True for name in names[:3])
+        assert all(by_name[name]["is_active"] is False for name in names[3:])
+        assert len(aggregate["slots"])==42
+        assert all(len(slot["dishes"])==2 for slot in aggregate["slots"])
+        assert all(slot["dishes"][0]["diner_count"]>=80 for slot in aggregate["slots"])
+        target_ids={meal["id"] for meal in aggregate["meal_types"]}
+        assert all(slot["menu_meal_type_id"] in target_ids for slot in aggregate["slots"])
+        assert all(slot["notes"].startswith("餐次備註-") for slot in aggregate["slots"])
+        assert all([dish["sort_order"] for dish in slot["dishes"]]==[1,2] for slot in aggregate["slots"])
+        assert all([dish["notes"] for dish in slot["dishes"]]==["菜色一","菜色二"] for slot in aggregate["slots"])
+
+
+def test_week_copy_copies_source_meal_deactivated_after_assignment(client,db_session):
+    headers,_=auth(client,db_session); category,dishes=foundations(client,headers)
+    source=menu(client,headers,category["id"],"停用自訂餐別來源","2026-08-17","2026-08-23")
+    target=menu(client,headers,category["id"],"停用自訂餐別目的","2026-08-17","2026-08-23")
+    source_meal=meals(client,headers,source["id"],("夜班專用餐",))[0]
+    payload={"slots":[{"menu_date":"2026-08-17","menu_meal_type_id":source_meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":25,"sort_order":1}]}]}
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    assert client.post(f"/api/v1/menus/{source['id']}/meal-types/{source_meal['id']}/deactivate",headers=headers).status_code==200
+
+    response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
+    assert response.status_code==200,response.text
+    target_meal=next(meal for meal in response.json()["meal_types"] if meal["name"]=="夜班專用餐")
+    assert target_meal["is_active"] is False and target_meal["id"]!=source_meal["id"]
+    assert response.json()["slots"][0]["menu_meal_type_id"]==target_meal["id"]
+
+
+def test_week_copy_preserves_existing_destination_active_state(client,db_session):
     headers,_=auth(client,db_session); category,_=foundations(client,headers)
     source=menu(client,headers,category["id"],"停用來源","2026-09-01","2026-09-07")
     target=menu(client,headers,category["id"],"停用目的","2026-09-08","2026-09-14")
-    meals(client,headers,source["id"],("早餐","午餐")); target_meals=meals(client,headers,target["id"],("早餐",))
-    client.post(f"/api/v1/menus/{target['id']}/meal-types/{target_meals[0]['id']}/deactivate",headers=headers)
+    source_meals=meals(client,headers,source["id"],("夜班餐",)); target_meals=meals(client,headers,target["id"],("夜班餐",))
+    payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":source_meals[0]["id"],"dishes":[]}]}
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    client.post(f"/api/v1/menus/{source['id']}/meal-types/{source_meals[0]['id']}/deactivate",headers=headers)
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
-    assert response.status_code==422 and "inactive" in response.json()["detail"].lower()
-    current=client.get(f"/api/v1/menus/{target['id']}/meal-types",headers=headers).json()
-    assert len(current)==1 and current[0]["is_active"] is False
+    assert response.status_code==200,response.text
+    current=response.json()["meal_types"]
+    assert len(current)==1 and current[0]["id"]==target_meals[0]["id"] and current[0]["is_active"] is True
 
 
 def test_week_copy_rolls_back_created_meals_when_dish_copy_fails(client,db_session):
@@ -220,14 +340,14 @@ def test_week_copy_rolls_back_created_meals_when_dish_copy_fails(client,db_sessi
     assert client.get(f"/api/v1/menus/{target['id']}/editor",headers=headers).json()["slots"]==[]
 
 
-def test_copy_day_still_requires_existing_active_target_meal(client,db_session):
+def test_copy_day_creates_missing_target_meals(client,db_session):
     headers,_=auth(client,db_session); category,dishes=foundations(client,headers)
     source=menu(client,headers,category["id"],"單日來源"); target=menu(client,headers,category["id"],"單日空白目的")
-    source_meals=meals(client,headers,source["id"],("早餐","午餐"))
+    source_meals=meals(client,headers,source["id"],("第一餐","下午點心"))
     client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=full_structure(source["id"],source_meals,dishes,days=1))
     response=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
-    assert response.status_code==422 and "早餐" in response.json()["detail"] and "午餐" in response.json()["detail"]
-    assert client.get(f"/api/v1/menus/{target['id']}/meal-types",headers=headers).json()==[]
+    assert response.status_code==200,response.text
+    assert [meal["name"] for meal in response.json()["meal_types"]]==["第一餐","下午點心"]
 
 
 def test_week_copy_rolls_back_when_later_day_is_invalid(client,db_session):

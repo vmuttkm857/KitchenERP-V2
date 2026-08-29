@@ -192,22 +192,36 @@ class MenuService:
         except Exception: self.session.rollback(); raise
         return self.aggregate(destination_menu_id)
 
-    def _copy_day(self,destination_menu_id,source_menu_id,source_date,destination_date,mode,actor_id):
+    def _prepare_destination_meal_mapping(self,destination_menu_id,source_meals,actor_id):
+        destination_meals=self.repository.meal_types(destination_menu_id)
+        destination_by_name={meal.name.lower():meal for meal in destination_meals}
+        source_by_name={meal.name.lower():meal for meal in source_meals}
+        for name,source_meal in source_by_name.items():
+            if name in destination_by_name: continue
+            meal=MenuMealType(menu_id=destination_menu_id,name=source_meal.name,
+                sort_order=source_meal.sort_order,is_active=source_meal.is_active,
+                created_by=actor_id,updated_by=actor_id)
+            self.repository.add(meal); destination_by_name[name]=meal
+        self.session.flush()
+        return destination_by_name
+
+    def _copy_day(self,destination_menu_id,source_menu_id,source_date,destination_date,mode,actor_id,
+                  destination_meals_by_name=None):
         source=self.model(source_menu_id); destination=self.model(destination_menu_id)
         if not (source.start_date<=source_date<=source.end_date and destination.start_date<=destination_date<=destination.end_date):
             raise InvalidMenuCopyError("Copy dates must fall within their menu ranges")
         source_rows=self.repository.source_rows(source_menu_id,source_date)
         source_meals={row[1].name.lower():row[1] for row in source_rows}
-        destination_meals={item.name.lower():item for item in self.repository.meal_types(destination_menu_id)}
-        missing=[meal.name for name,meal in source_meals.items() if name not in destination_meals]
-        inactive=[meal.name for name,meal in source_meals.items() if name in destination_meals and not destination_meals[name].is_active]
-        if missing: raise InvalidMenuCopyError(f"Destination menu is missing meal types: {', '.join(missing)}")
-        if inactive: raise InvalidMenuCopyError(f"Destination meal types are inactive: {', '.join(inactive)}")
+        destination_meals=destination_meals_by_name
+        if destination_meals is None:
+            destination_meals=self._prepare_destination_meal_mapping(
+                destination_menu_id,source_meals.values(),actor_id)
         for _,_,detail,dish in source_rows:
             if detail is not None and (dish is None or not dish.is_active): raise InvalidMenuCopyError("Inactive dish cannot be copied as a new assignment")
         destination_days=[day for day in self.repository.days(destination_menu_id) if day.menu_date==destination_date]
         if mode=="replace":
             for detail in self.repository.details({day.id for day in destination_days}): self.repository.delete(detail)
+            self.session.flush()
             for day in destination_days: self.repository.delete(day)
             self.session.flush(); destination_days=[]
         day_by_meal={day.menu_meal_type_id:day for day in destination_days}
@@ -216,7 +230,9 @@ class MenuService:
         next_orders={day.id:len(details_by_day.get(day.id,set())) for day in destination_days}
         source_days={}
         for source_day,source_meal,detail,dish in source_rows:
-            dest_meal=destination_meals[source_meal.name.lower()]
+            dest_meal=destination_meals.get(source_meal.name.lower())
+            if dest_meal is None:
+                raise InvalidMenuCopyError(f"Source meal type has no destination mapping: {source_meal.name}")
             dest_day=day_by_meal.get(dest_meal.id)
             if dest_day is None:
                 dest_day=MenuDay(menu_id=destination_menu_id,menu_date=destination_date,menu_meal_type_id=dest_meal.id,
@@ -235,20 +251,9 @@ class MenuService:
         if (source.end_date-source.start_date).days != 6 or (destination.end_date-destination.start_date).days != 6:
             raise InvalidMenuCopyError("Whole-week copy requires two exact seven-day menus")
         try:
-            source_meals=[meal for meal in self.repository.meal_types(source.id) if meal.is_active]
-            destination_meals=self.repository.meal_types(destination.id)
-            destination_by_name={meal.name.lower():meal for meal in destination_meals}
-            inactive=[meal.name for meal in source_meals if meal.name.lower() in destination_by_name and not destination_by_name[meal.name.lower()].is_active]
-            if inactive: raise InvalidMenuCopyError(f"Destination meal types are inactive: {', '.join(inactive)}")
-            next_order=max((meal.sort_order for meal in destination_meals),default=0)
-            for source_meal in source_meals:
-                if source_meal.name.lower() in destination_by_name: continue
-                next_order+=1
-                meal=MenuMealType(menu_id=destination.id,name=source_meal.name,sort_order=next_order,
-                    created_by=actor_id,updated_by=actor_id)
-                self.repository.add(meal); destination_by_name[source_meal.name.lower()]=meal
-            self.session.flush()
-            for offset in range(7): self._copy_day(destination_menu_id,source.id,source.start_date+timedelta(days=offset),destination.start_date+timedelta(days=offset),command.mode,actor_id)
+            destination_by_name=self._prepare_destination_meal_mapping(
+                destination.id,self.repository.meal_types(source.id),actor_id)
+            for offset in range(7): self._copy_day(destination_menu_id,source.id,source.start_date+timedelta(days=offset),destination.start_date+timedelta(days=offset),command.mode,actor_id,destination_by_name)
             self.session.commit()
         except Exception: self.session.rollback(); raise
         return self.aggregate(destination_menu_id)

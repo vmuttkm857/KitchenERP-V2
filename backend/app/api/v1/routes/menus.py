@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Annotated
 
@@ -21,6 +22,7 @@ from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta, PasswordConfirmation
 
 router=APIRouter(prefix="/menus",tags=["menus"],dependencies=[Depends(get_current_user)])
+logger=logging.getLogger("kitchenerp.menus")
 
 
 def error(exc):
@@ -33,6 +35,7 @@ def error(exc):
     if isinstance(exc,DuplicateMenuDishError): return HTTPException(409,"A dish may appear only once in a meal slot")
     if isinstance(exc,(InvalidMenuStructureError,InvalidMenuCopyError)): return HTTPException(422,str(exc))
     if isinstance(exc,InvalidCredentialsError): return HTTPException(401,"Password verification failed")
+    logger.exception("Unhandled menu operation error")
     return HTTPException(400,"Menu operation failed")
 
 
