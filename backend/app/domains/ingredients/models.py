@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,6 +15,7 @@ class Ingredient(Base):
         CheckConstraint("current_price >= 0", name="ck_ingredients_current_price_nonnegative"),
         CheckConstraint("package_size >= 0", name="ck_ingredients_package_size_nonnegative"),
         CheckConstraint("minimum_order_quantity >= 0", name="ck_ingredients_minimum_order_nonnegative"),
+        Index("uq_ingredients_name_normalized", text("lower(btrim(name))"), unique=True),
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)

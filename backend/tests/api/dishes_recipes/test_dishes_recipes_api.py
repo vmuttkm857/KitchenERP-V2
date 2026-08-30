@@ -1,10 +1,15 @@
+import uuid
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import engine as process_engine
+from app.domains.dishes.models import Dish
+from app.domains.dishes.repository import DishRepository
 from app.domains.users.schemas import CreateUserCommand
 from app.domains.users.service import UserService
 
@@ -69,6 +74,60 @@ def test_dish_crud_validation_activation_and_delete_policy(client: TestClient, d
     client.put(f"/api/v1/dishes/{dish['id']}/recipe", headers=headers, json=recipe_payload(ingredients))
     assert client.post(f"/api/v1/dishes/{dish['id']}/hard-delete", headers=headers, json={"password": PASSWORD}).status_code == 409
     assert client.post(f"/api/v1/categories/dish/{category['id']}/hard-delete", headers=headers, json={"password": PASSWORD}).status_code == 409
+
+
+def test_dish_name_uniqueness_create_update_inactive_code_database_and_recipe(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers, actor_id = auth_headers(client, db_session)
+    category, ingredients = foundations(client, headers)
+    first = create_dish(client, headers, category["id"])
+    second = client.post("/api/v1/dishes", headers=headers, json={
+        "code": "D-002", "name": "滷豬肉", "category_id": category["id"],
+    })
+    assert second.status_code == 201, second.text
+
+    duplicate_name = client.post("/api/v1/dishes", headers=headers, json={
+        "code": "D-003", "name": " 香煎雞肉 ", "category_id": category["id"],
+    })
+    assert duplicate_name.status_code == 409
+    assert duplicate_name.json()["detail"] == "菜色名稱已存在"
+    assert client.patch(f"/api/v1/dishes/{first['id']}", headers=headers, json={"name": "香煎雞肉"}).status_code == 200
+    update_to_existing = client.patch(f"/api/v1/dishes/{first['id']}", headers=headers, json={"name": "滷豬肉"})
+    assert update_to_existing.status_code == 409
+    assert update_to_existing.json()["detail"] == "菜色名稱已存在"
+
+    assert client.post(f"/api/v1/dishes/{first['id']}/deactivate", headers=headers).status_code == 200
+    inactive_duplicate = client.post("/api/v1/dishes", headers=headers, json={
+        "code": "D-004", "name": "香煎雞肉", "category_id": category["id"],
+    })
+    assert inactive_duplicate.status_code == 409
+    duplicate_code = client.post("/api/v1/dishes", headers=headers, json={
+        "code": "d-002", "name": "不同菜色", "category_id": category["id"],
+    })
+    assert duplicate_code.status_code == 409
+    assert duplicate_code.json()["detail"] == "Dish code already exists"
+
+    monkeypatch.setattr(DishRepository, "name_exists", lambda self, name, exclude_id=None: False)
+    race_duplicate = client.post("/api/v1/dishes", headers=headers, json={
+        "code": "D-RACE", "name": "滷豬肉", "category_id": category["id"],
+    })
+    assert race_duplicate.status_code == 409
+    assert race_duplicate.json()["detail"] == "菜色名稱已存在"
+
+    recipe = client.put(f"/api/v1/dishes/{second.json()['id']}/recipe", headers=headers, json=recipe_payload(ingredients))
+    assert recipe.status_code == 200
+    keep_name = client.patch(f"/api/v1/dishes/{second.json()['id']}", headers=headers, json={"name": "滷豬肉"})
+    assert keep_name.status_code == 200
+    current_recipe = client.get(f"/api/v1/dishes/{second.json()['id']}/recipe", headers=headers)
+    assert current_recipe.status_code == 200
+    assert len(current_recipe.json()["items"]) == 2
+
+    db_session.add(Dish(
+        code="D-DB", name=" 滷豬肉 ", category_id=uuid.UUID(category["id"]),
+        created_by=uuid.UUID(actor_id), updated_by=uuid.UUID(actor_id),
+    ))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    db_session.rollback()
 
 
 def test_inactive_dish_category_is_rejected(client: TestClient, db_session: Session) -> None:

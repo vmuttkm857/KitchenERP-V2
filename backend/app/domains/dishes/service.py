@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.domains.auth.service import AuthService
 from app.domains.dishes.exceptions import (
-    DishIdentityExistsError, DishInUseError, DishNotFoundError, InvalidDishCategoryError,
+    DishCodeExistsError, DishIdentityExistsError, DishInUseError, DishNameExistsError,
+    DishNotFoundError, InvalidDishCategoryError,
 )
 from app.domains.dishes.models import Dish
 from app.domains.dishes.repository import DishRepository
@@ -41,8 +42,8 @@ class DishService:
 
     def create(self, data: DishCreate, actor_id: uuid.UUID):
         code, name = data.code.strip().upper(), data.name.strip()
-        if self.repository.identity_exists(code, name):
-            raise DishIdentityExistsError()
+        if self.repository.code_exists(code): raise DishCodeExistsError()
+        if self.repository.name_exists(name): raise DishNameExistsError()
         self._validate_category(data.category_id)
         dish = Dish(code=code, name=name, category_id=data.category_id, notes=data.notes,
                     created_by=actor_id, updated_by=actor_id)
@@ -55,8 +56,8 @@ class DishService:
         changes = data.model_dump(exclude_unset=True)
         code = changes.get("code", dish.code).strip().upper()
         name = changes.get("name", dish.name).strip()
-        if self.repository.identity_exists(code, name, dish_id):
-            raise DishIdentityExistsError()
+        if self.repository.code_exists(code, dish_id): raise DishCodeExistsError()
+        if self.repository.name_exists(name, dish_id): raise DishNameExistsError()
         if "category_id" in changes:
             self._validate_category(changes["category_id"])
         changes["code"], changes["name"] = code, name
@@ -89,4 +90,7 @@ class DishService:
             self.session.commit()
         except IntegrityError as exc:
             self.session.rollback()
+            constraint = getattr(getattr(getattr(exc, "orig", None), "diag", None), "constraint_name", None)
+            if constraint == "uq_dishes_code": raise DishCodeExistsError() from exc
+            if constraint in {"uq_dishes_name", "uq_dishes_name_normalized"}: raise DishNameExistsError() from exc
             raise DishIdentityExistsError() from exc

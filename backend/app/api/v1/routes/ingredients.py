@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user
 from app.domains.auth.exceptions import InvalidCredentialsError
-from app.domains.ingredients.exceptions import IngredientCodeExistsError, IngredientInUseError, IngredientNotFoundError, InvalidIngredientReferenceError
+from app.domains.ingredients.exceptions import IngredientCodeExistsError, IngredientInUseError, IngredientNameExistsError, IngredientNotFoundError, InvalidIngredientReferenceError
 from app.domains.ingredients.schemas import IngredientCreate, IngredientList, IngredientPublic, IngredientUpdate, PriceHistoryPublic
 from app.domains.ingredients.service import IngredientService
 from app.domains.users.models import User
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/ingredients", tags=["ingredients"], dependencies=[De
 def map_error(exc: Exception) -> HTTPException:
     if isinstance(exc, IngredientNotFoundError): return HTTPException(404, "Ingredient not found")
     if isinstance(exc, IngredientCodeExistsError): return HTTPException(409, "Ingredient code already exists")
+    if isinstance(exc, IngredientNameExistsError): return HTTPException(409, "食材名稱已存在")
     if isinstance(exc, InvalidIngredientReferenceError): return HTTPException(422, str(exc))
     if isinstance(exc, IngredientInUseError): return HTTPException(409, "Ingredient has price or business history and cannot be permanently deleted")
     if isinstance(exc, InvalidCredentialsError): return HTTPException(401, "Password verification failed")
@@ -27,8 +28,8 @@ def map_error(exc: Exception) -> HTTPException:
 
 
 @router.get("", response_model=IngredientList)
-def list_ingredients(session: Annotated[Session, Depends(get_db_session)], page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), active: bool | None = None, search: str | None = None, category_id: uuid.UUID | None = None) -> IngredientList:
-    items, total = IngredientService(session).list(page, page_size, active, search, category_id)
+def list_ingredients(session: Annotated[Session, Depends(get_db_session)], page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), active: bool | None = None, search: str | None = None, category_id: uuid.UUID | None = None, supplier_id: uuid.UUID | None = None) -> IngredientList:
+    items, total = IngredientService(session).list(page, page_size, active, search, category_id, supplier_id)
     return IngredientList(items=[IngredientPublic.model_validate(item) for item in items], pagination=PaginationMeta(page=page, page_size=page_size, total=total))
 
 

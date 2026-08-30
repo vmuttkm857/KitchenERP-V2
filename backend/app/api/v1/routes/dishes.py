@@ -8,7 +8,8 @@ from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.dishes.exceptions import (
-    DishIdentityExistsError, DishInUseError, DishNotFoundError, InvalidDishCategoryError,
+    DishCodeExistsError, DishIdentityExistsError, DishInUseError, DishNameExistsError,
+    DishNotFoundError, InvalidDishCategoryError,
 )
 from app.domains.dishes.schemas import DishCreate, DishList, DishPublic, DishUpdate
 from app.domains.dishes.service import DishService
@@ -22,6 +23,10 @@ router = APIRouter(prefix="/dishes", tags=["dishes"], dependencies=[Depends(get_
 def map_error(exc: Exception) -> HTTPException:
     if isinstance(exc, DishNotFoundError):
         return HTTPException(404, "Dish not found")
+    if isinstance(exc, DishCodeExistsError):
+        return HTTPException(409, "Dish code already exists")
+    if isinstance(exc, DishNameExistsError):
+        return HTTPException(409, "菜色名稱已存在")
     if isinstance(exc, DishIdentityExistsError):
         return HTTPException(409, "Dish code or name already exists")
     if isinstance(exc, InvalidDishCategoryError):

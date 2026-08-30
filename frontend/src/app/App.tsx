@@ -14,6 +14,7 @@ import { RecipeEditor } from '../features/recipes/RecipeEditor'
 import { RequirementsPage } from '../features/requirements/RequirementsPage'
 import { SnapshotsPage } from '../features/snapshots/SnapshotsPage'
 import { SuppliersPage } from '../features/suppliers/SuppliersPage'
+import { NavigationBlockerProvider, useNavigationBlocker } from './NavigationBlocker'
 
 type Page='categories'|'suppliers'|'ingredients'|'dishes'|'recipe'|'menus'|'menu-editor'|'requirements'|'snapshots'|'purchases'|'kitchen'
 const groups=[
@@ -40,8 +41,9 @@ function NavIcon({page}:{page:NavPage}){
   return <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={paths[page]}/></svg>
 }
 
-export function App(){
+function Application(){
   const {user,isLoading,logout}=useAuth();const [page,setPage]=useState<Page>('categories');const [navOpen,setNavOpen]=useState(false)
+  const {requestNavigation}=useNavigationBlocker()
   const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>{
     try{const saved=localStorage.getItem(sidebarPreferenceKey);return saved===null?window.matchMedia('(max-width: 1100px)').matches:saved==='true'}catch{return false}
   })
@@ -54,10 +56,10 @@ export function App(){
   },[navOpen])
   if(isLoading)return <main className="shell"><LoadingState label="系統載入中…"/></main>
   if(!user)return <LoginPage/>
-  function navigate(next:Page){setPage(next);setNavOpen(false)}
+  function navigate(next:Page){requestNavigation(()=>{setPage(next);setNavOpen(false)})}
   const isActive=(id:NavPage)=>page===id||(id==='dishes'&&page==='recipe')||(id==='menus'&&page==='menu-editor')
   return <div className={`app-layout ${sidebarCollapsed?'sidebar-collapsed':''}`}>
-    <header className="topbar"><button className="nav-toggle secondary" aria-label={navOpen?'關閉導覽':'開啟導覽'} aria-expanded={navOpen} onClick={()=>setNavOpen(v=>!v)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div><span className="brand">KitchenERP</span><small>廚房營運管理</small></div><div className="account"><span>{user.display_name}</span><button className="secondary" onClick={()=>void logout()}>登出</button></div></header>
+    <header className="topbar"><button className="nav-toggle secondary" aria-label={navOpen?'關閉導覽':'開啟導覽'} aria-expanded={navOpen} onClick={()=>setNavOpen(v=>!v)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div><span className="brand">KitchenERP</span><small>廚房營運管理</small></div><div className="account"><span>{user.display_name}</span><button className="secondary" onClick={()=>requestNavigation(()=>void logout())}>登出</button></div></header>
     <aside className={`sidebar ${navOpen?'is-open':''}`} aria-label="主要導覽">
       <div className="sidebar-controls"><button className="sidebar-toggle" aria-label={sidebarCollapsed?'展開側邊導覽':'收合側邊導覽'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed?'展開側邊導覽':'收合側邊導覽'} onClick={()=>setSidebarCollapsed(value=>!value)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={sidebarCollapsed?'m9 5 7 7-7 7':'m15 5-7 7 7 7'}/></svg><span>收合</span></button></div>
       <nav>{groups.map(group=><section className="nav-group" key={group.label}><h2>{group.label}</h2>{group.items.map(([id,label])=><button key={id} className={isActive(id)?'active':''} aria-current={isActive(id)?'page':undefined} aria-label={sidebarCollapsed?label:undefined} title={sidebarCollapsed?label:undefined} onClick={()=>navigate(id)}><NavIcon page={id}/><span>{label}</span></button>)}</section>)}</nav>
@@ -71,3 +73,5 @@ export function App(){
     </main>
   </div>
 }
+
+export function App(){return <NavigationBlockerProvider><Application/></NavigationBlockerProvider>}

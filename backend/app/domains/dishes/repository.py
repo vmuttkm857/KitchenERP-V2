@@ -20,10 +20,14 @@ class DishRepository:
     def category(self, category_id: uuid.UUID) -> DishCategory | None:
         return self.session.get(DishCategory, category_id)
 
-    def identity_exists(self, code: str, name: str, exclude_id: uuid.UUID | None = None) -> bool:
-        statement = select(Dish.id).where(
-            or_(func.lower(Dish.code) == code.lower(), func.lower(Dish.name) == name.lower())
-        )
+    def code_exists(self, code: str, exclude_id: uuid.UUID | None = None) -> bool:
+        statement = select(Dish.id).where(func.lower(Dish.code) == code.lower())
+        if exclude_id:
+            statement = statement.where(Dish.id != exclude_id)
+        return self.session.scalar(statement.limit(1)) is not None
+
+    def name_exists(self, name: str, exclude_id: uuid.UUID | None = None) -> bool:
+        statement = select(Dish.id).where(func.lower(func.btrim(Dish.name)) == name.strip().lower())
         if exclude_id:
             statement = statement.where(Dish.id != exclude_id)
         return self.session.scalar(statement.limit(1)) is not None

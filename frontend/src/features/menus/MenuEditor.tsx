@@ -4,6 +4,9 @@ import { Feedback, LoadingState } from '../../components/ui/Page'
 import { MenuEditorPanel } from './MenuEditorPanel'
 import { MenuWeekGrid } from './MenuWeekGrid'
 import { DishCategoryOption, DishOption, List, MealType, Menu, MenuAggregate, MenuDish, MenuSlot } from './types'
+import { useEditorDirty } from '../../app/NavigationBlocker'
+import { PaginationControls } from '../../components/ui/PaginationControls'
+import { useMenuCandidates } from './useMenuCandidates'
 
 const slotKey = (date: string, mealId: string) => `${date}:${mealId}`
 const displayDate = (value: string) => value.replaceAll('-', '/')
@@ -22,7 +25,6 @@ function MenuConfirmDialog({ title, description, confirmLabel, onCancel, onConfi
 
 export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void }) {
   const [data, setData] = useState<MenuAggregate | null>(null)
-  const [menus, setMenus] = useState<Menu[]>([])
   const [dishCategories, setDishCategories] = useState<DishCategoryOption[]>([])
   const [slots, setSlots] = useState<Record<string, MenuSlot>>({})
   const [mealName, setMealName] = useState('')
@@ -56,6 +58,9 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const [confirmReplace, setConfirmReplace] = useState(false)
   const [copySaving, setCopySaving] = useState(false)
   const [copyError, setCopyError] = useState<{ scope: 'day' | 'week'; message: string } | null>(null)
+  const mealDraftDirty = Boolean(mealDraft && JSON.stringify(mealDraft) !== mealInitial)
+  const mealTypeDirty = Boolean(mealName.trim()) || Boolean(data?.meal_types.some(meal => (mealDrafts[meal.id] ?? meal.name) !== meal.name))
+  useEditorDirty(mealDraftDirty || mealTypeDirty)
 
   const applyAggregate = useCallback((aggregate: MenuAggregate) => {
     setData(aggregate)
@@ -66,12 +71,11 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [aggregate, list, categories] = await Promise.all([
+      const [aggregate, categories] = await Promise.all([
         apiRequest<MenuAggregate>(`/menus/${menu.id}/editor`),
-        apiRequest<List<Menu>>('/menus?active=true&page_size=100'),
         apiRequest<List<DishCategoryOption>>('/categories/dish?page_size=100'),
       ])
-      applyAggregate(aggregate); setMenus(list.items); setDishCategories(categories.items); setError('')
+      applyAggregate(aggregate); setDishCategories(categories.items); setError('')
     } catch { setError('菜單工作區載入失敗') }
     finally { setLoading(false) }
   }, [applyAggregate, menu.id])
@@ -105,10 +109,8 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const meals = useMemo(() => data?.meal_types.filter(meal => meal.is_active || Object.values(slots).some(slot => slot.menu_meal_type_id === meal.id)) ?? [], [data, slots])
   const incompleteSourceRange = !sourceFilterStart || !sourceFilterEnd
   const invalidSourceRange = !incompleteSourceRange && sourceFilterStart > sourceFilterEnd
-  const sourceMenus = useMemo(() => incompleteSourceRange || invalidSourceRange ? [] : menus
-    .filter(item => item.id !== menu.id && item.start_date <= sourceFilterEnd && item.end_date >= sourceFilterStart)
-    .sort((left, right) => right.start_date.localeCompare(left.start_date) || right.end_date.localeCompare(left.end_date) || left.name.localeCompare(right.name)),
-  [incompleteSourceRange, invalidSourceRange, menu.id, menus, sourceFilterEnd, sourceFilterStart])
+  const sourceCandidates = useMenuCandidates({active:'true',startDate:sourceFilterStart,endDate:sourceFilterEnd,pageSize:20,enabled:!incompleteSourceRange&&!invalidSourceRange})
+  const sourceMenus = useMemo(() => sourceCandidates.items.filter(item => item.id !== menu.id), [menu.id,sourceCandidates.items])
   useEffect(() => {
     const first=sourceMenus[0]
     setSourceMenu(first?.id ?? '')
@@ -198,7 +200,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
     {dialog === 'meal' && <div className="modal-backdrop" onMouseDown={() => setDialog(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="meal-title" onMouseDown={event => event.stopPropagation()}><header><h2 id="meal-title">餐別設定</h2><button className="secondary" onClick={() => setDialog(null)}>關閉</button></header><form className="inline-form" onSubmit={addMeal}><label>新餐別名稱<input autoFocus value={mealName} onChange={event => setMealName(event.target.value)} required/></label><button>新增餐別</button></form><div className="meal-list">{data.meal_types.map(meal => <div key={meal.id} className={!meal.is_active ? 'inactive' : ''}><label>名稱<input value={mealDrafts[meal.id] ?? meal.name} onChange={event => setMealDrafts({ ...mealDrafts, [meal.id]: event.target.value })}/></label><button className="secondary" aria-label={`${meal.name} 上移`} onClick={() => void moveMeal(meal, -1)}>上移</button><button className="secondary" aria-label={`${meal.name} 下移`} onClick={() => void moveMeal(meal, 1)}>下移</button><button onClick={() => void saveMeal(meal)}>儲存</button><button className="secondary" onClick={() => void toggleMeal(meal)}>{meal.is_active ? '停用' : '恢復'}</button></div>)}</div></section></div>}
     {dialog === 'copy' && <div className="modal-backdrop" onMouseDown={() => { if (!copySaving) setDialog(null) }}><section className="modal-panel copy-menu-dialog" role="dialog" aria-modal="true" aria-labelledby="copy-title" onMouseDown={event => event.stopPropagation()}><header><div><h2 id="copy-title">複製菜單</h2><p>清楚選擇要複製一天或整週，再決定目的已有內容時的處理方式。</p></div><button className="secondary" disabled={copySaving} onClick={() => setDialog(null)}>關閉</button></header>
       <fieldset className="copy-scope" disabled={copySaving}><legend>複製範圍</legend><label><input autoFocus type="radio" name="copy-scope" value="day" checked={copyScope === 'day'} onChange={() => { setCopyScope('day'); setCopyError(null) }}/>複製一天</label><label><input type="radio" name="copy-scope" value="week" checked={copyScope === 'week'} onChange={() => { setCopyScope('week'); setCopyError(null) }}/>複製整週</label></fieldset>
-      <div className="copy-direction"><section><h3>來源</h3><div><strong>來源日期範圍</strong><label>開始日期<input disabled={copySaving} type="date" value={sourceFilterStart} onChange={event => { setSourceFilterStart(event.target.value); setCopyError(null) }}/></label><label>結束日期<input disabled={copySaving} type="date" value={sourceFilterEnd} onChange={event => { setSourceFilterEnd(event.target.value); setCopyError(null) }}/></label></div>{incompleteSourceRange ? <p className="field-hint">請選擇開始與結束日期。</p> : invalidSourceRange ? <p className="field-hint">開始日期不可晚於結束日期。</p> : null}<label>來源菜單<select disabled={copySaving || incompleteSourceRange || invalidSourceRange || !sourceMenus.length} value={sourceMenu} onChange={event => { const value=event.target.value; const source=sourceMenus.find(item => item.id===value); setSourceMenu(value); if(source)setSourceDate(source.start_date); setCopyError(null) }}>{sourceMenus.map(item => <option key={item.id} value={item.id}>{item.name}（{displayDate(item.start_date)}～{displayDate(item.end_date)}）</option>)}</select></label>{!incompleteSourceRange && !invalidSourceRange && !sourceMenus.length ? <p className="field-hint">這個日期範圍沒有可複製的菜單。</p> : selectedSourceMenu && copyScope === 'day' ? <label>來源日期<input disabled={copySaving} type="date" min={selectedSourceMenu.start_date} max={selectedSourceMenu.end_date} value={sourceDate} onChange={event => { setSourceDate(event.target.value); setCopyError(null) }}/></label> : selectedSourceMenu ? <p><strong>來源週</strong><span>{displayDate(selectedSourceMenu.start_date)} ～ {displayDate(selectedSourceMenu.end_date)}</span></p> : null}</section><span className="copy-arrow" aria-hidden="true">→</span><section><h3>複製到</h3><p><strong>{data.menu.name}</strong></p>{copyScope === 'day' ? <label>目的日期<input disabled={copySaving} type="date" value={destinationDate} onChange={event => { setDestinationDate(event.target.value); setCopyError(null) }}/></label> : <p><strong>目的週</strong><span>{displayDate(data.menu.start_date)} ～ {displayDate(data.menu.end_date)}</span></p>}</section></div>
+      <div className="copy-direction"><section><h3>來源</h3><div><strong>來源日期範圍</strong><label>開始日期<input disabled={copySaving} type="date" value={sourceFilterStart} onChange={event => { setSourceFilterStart(event.target.value); setCopyError(null) }}/></label><label>結束日期<input disabled={copySaving} type="date" value={sourceFilterEnd} onChange={event => { setSourceFilterEnd(event.target.value); setCopyError(null) }}/></label></div>{incompleteSourceRange ? <p className="field-hint">請選擇開始與結束日期。</p> : invalidSourceRange ? <p className="field-hint">開始日期不可晚於結束日期。</p> : null}<label>搜尋來源菜單<input disabled={copySaving||incompleteSourceRange||invalidSourceRange} value={sourceCandidates.search} onChange={event=>sourceCandidates.setSearch(event.target.value)}/></label><label>來源菜單<select disabled={copySaving || incompleteSourceRange || invalidSourceRange || sourceCandidates.loading || !sourceMenus.length} value={sourceMenu} onChange={event => { const value=event.target.value; const source=sourceMenus.find(item => item.id===value); setSourceMenu(value); if(source)setSourceDate(source.start_date); setCopyError(null) }}>{sourceMenus.map(item => <option key={item.id} value={item.id}>{item.name}（{displayDate(item.start_date)}～{displayDate(item.end_date)}）</option>)}</select></label>{sourceCandidates.error&&<p className="field-hint error">{sourceCandidates.error}</p>}{!incompleteSourceRange && !invalidSourceRange && !sourceCandidates.loading && !sourceMenus.length ? <p className="field-hint">這個日期範圍沒有可複製的菜單。</p> : selectedSourceMenu && copyScope === 'day' ? <label>來源日期<input disabled={copySaving} type="date" min={selectedSourceMenu.start_date} max={selectedSourceMenu.end_date} value={sourceDate} onChange={event => { setSourceDate(event.target.value); setCopyError(null) }}/></label> : selectedSourceMenu ? <p><strong>來源週</strong><span>{displayDate(selectedSourceMenu.start_date)} ～ {displayDate(selectedSourceMenu.end_date)}</span></p> : null}<PaginationControls page={sourceCandidates.page} pageSize={sourceCandidates.pageSize} total={sourceCandidates.total} onPage={sourceCandidates.setPage}/></section><span className="copy-arrow" aria-hidden="true">→</span><section><h3>複製到</h3><p><strong>{data.menu.name}</strong></p>{copyScope === 'day' ? <label>目的日期<input disabled={copySaving} type="date" value={destinationDate} onChange={event => { setDestinationDate(event.target.value); setCopyError(null) }}/></label> : <p><strong>目的週</strong><span>{displayDate(data.menu.start_date)} ～ {displayDate(data.menu.end_date)}</span></p>}</section></div>
       <Feedback type="info">複製時，目的菜單缺少的餐別會自動建立；目的既有的額外餐別會保留。</Feedback>
       <fieldset className="copy-conflict-mode" disabled={copySaving}><legend>目的已有內容時</legend><label><input type="radio" name="copy-mode" checked={copyMode === 'add'} onChange={() => { setCopyMode('add'); setConfirmReplace(false); setCopyError(null) }}/>加入並跳過重複</label><label><input type="radio" name="copy-mode" checked={copyMode === 'replace'} onChange={() => { setCopyMode('replace'); setCopyError(null) }}/>覆蓋目的內容</label></fieldset>
       {copyMode === 'replace' && <label className="confirm-box"><input disabled={copySaving} type="checkbox" checked={confirmReplace} onChange={event => setConfirmReplace(event.target.checked)}/>我了解目的{copyScope === 'day' ? '日期' : '整週'}原有餐格內容將被覆蓋。</label>}{copyError?.scope === copyScope && <Feedback type="error">{copyError.message}</Feedback>}

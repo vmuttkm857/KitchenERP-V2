@@ -19,6 +19,10 @@ class IngredientRepository:
         statement = select(Ingredient.id).where(func.lower(Ingredient.code) == code.lower())
         if exclude_id: statement = statement.where(Ingredient.id != exclude_id)
         return self.session.scalar(statement.limit(1)) is not None
+    def name_exists(self, name: str, exclude_id: uuid.UUID | None = None) -> bool:
+        statement = select(Ingredient.id).where(func.lower(func.btrim(Ingredient.name)) == name.strip().lower())
+        if exclude_id: statement = statement.where(Ingredient.id != exclude_id)
+        return self.session.scalar(statement.limit(1)) is not None
     def category(self, category_id: uuid.UUID) -> IngredientCategory | None: return self.session.get(IngredientCategory, category_id)
     def supplier(self, supplier_id: uuid.UUID) -> Supplier | None: return self.session.get(Supplier, supplier_id)
     def _view_statement(self):
@@ -33,10 +37,11 @@ class IngredientRepository:
         ).join(IngredientCategory, IngredientCategory.id == Ingredient.category_id).outerjoin(Supplier, Supplier.id == Ingredient.primary_supplier_id)
     def get_view(self, ingredient_id: uuid.UUID):
         return self.session.execute(self._view_statement().where(Ingredient.id == ingredient_id)).mappings().one_or_none()
-    def list(self, page: int, page_size: int, active: bool | None, search: str | None, category_id: uuid.UUID | None) -> tuple[list[dict], int]:
+    def list(self, page: int, page_size: int, active: bool | None, search: str | None, category_id: uuid.UUID | None, supplier_id: uuid.UUID | None = None) -> tuple[list[dict], int]:
         filters = []
         if active is not None: filters.append(Ingredient.is_active == active)
         if category_id: filters.append(Ingredient.category_id == category_id)
+        if supplier_id: filters.append(Ingredient.primary_supplier_id == supplier_id)
         if search:
             term = f"%{search.strip().lower()}%"
             filters.append(or_(func.lower(Ingredient.code).like(term), func.lower(Ingredient.name).like(term)))
