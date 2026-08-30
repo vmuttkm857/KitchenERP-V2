@@ -21,6 +21,10 @@ def mapped(exc):
     if isinstance(exc,(KitchenMenuNotFoundError,RequirementMenuNotFoundError,SnapshotNotFoundError,PurchaseNotFoundError)):return HTTPException(404,"Export source not found")
     if isinstance(exc,EmptyExportError):return HTTPException(422,detail={"code":"EMPTY_EXPORT","message":str(exc)})
     return HTTPException(400,detail={"code":"EXPORT_FAILED","message":"The export could not be generated"})
+@router.post("/kitchen-operations/a4-xlsx")
+def export_kitchen_a4(criteria:KitchenCriteria,session:Annotated[Session,Depends(get_db_session)]):
+    try:payload,name=ExportService(session).kitchen_a4(criteria);return binary(payload,f"{name}_A4廚房作業表","xlsx")
+    except Exception as exc:raise mapped(exc) from exc
 @router.post("/kitchen-operations/{format}")
 def export_kitchen(format:Literal["xlsx","pdf"],criteria:KitchenCriteria,session:Annotated[Session,Depends(get_db_session)]):
     try:payload,name=ExportService(session).kitchen(criteria,format);return binary(payload,f"{name}_廚房備料",format)

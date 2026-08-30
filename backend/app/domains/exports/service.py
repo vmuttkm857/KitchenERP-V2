@@ -1,5 +1,6 @@
 from app.domains.exports.exceptions import EmptyExportError
 from app.domains.exports.excel import kitchen_workbook,purchase_workbook,requirements_workbook,snapshot_workbook
+from app.domains.exports.kitchen_a4 import kitchen_a4_workbook
 from app.domains.exports.pdf import kitchen_pdf,purchase_pdf
 from app.domains.kitchen_operations.service import KitchenOperationsService
 from app.domains.purchases.service import PurchaseService
@@ -12,6 +13,10 @@ class ExportService:
         result=KitchenOperationsService(self.session).calculate(criteria)
         if not result["days"]:raise EmptyExportError("No kitchen operation rows matched the criteria")
         return (kitchen_workbook if format=="xlsx" else kitchen_pdf)(result),result["menu"]["menu_name"]
+    def kitchen_a4(self,criteria):
+        result=KitchenOperationsService(self.session).calculate(criteria)
+        if not result["days"]:raise EmptyExportError("No kitchen operation rows matched the criteria")
+        return kitchen_a4_workbook(result),result["menu"]["menu_name"]
     def requirements(self,criteria):
         result=RequirementService(self.session).calculate(criteria)
         if not result["rows"]:raise EmptyExportError("No requirement rows matched the criteria")
