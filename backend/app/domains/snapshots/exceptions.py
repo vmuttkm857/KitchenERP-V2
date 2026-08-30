@@ -6,3 +6,4 @@ class EmptySnapshotError(Exception): pass
 class SnapshotLockedError(Exception): pass
 class InvalidPurchaseUnitError(Exception): pass
 class SnapshotInUseError(Exception): pass
+class InvalidSnapshotDateRangeError(Exception): pass

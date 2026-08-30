@@ -1,10 +1,11 @@
 import uuid
+from datetime import date
 from typing import Annotated
 from fastapi import APIRouter,Depends,HTTPException,Query,Response,status
 from sqlalchemy.orm import Session
 from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user
-from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
+from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,InvalidSnapshotDateRangeError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.snapshots.schemas import SnapshotCreate,SnapshotDetail,SnapshotHeaderPublic,SnapshotItemPublic,SnapshotItemUpdate,SnapshotList
 from app.domains.snapshots.service import SnapshotService
@@ -20,6 +21,7 @@ def mapped(exc):
     if isinstance(exc,SnapshotLockedError):return HTTPException(409,detail={"code":"SNAPSHOT_LOCKED"})
     if isinstance(exc,InvalidPurchaseUnitError):return HTTPException(422,detail={"code":"INVALID_PURCHASE_UNIT"})
     if isinstance(exc,SnapshotInUseError):return HTTPException(409,detail={"code":"SNAPSHOT_HAS_PURCHASE"})
+    if isinstance(exc,InvalidSnapshotDateRangeError):return HTTPException(422,"開始日期不可晚於結束日期")
     if isinstance(exc,InvalidCredentialsError):return HTTPException(401,"Password verification failed")
     return HTTPException(400,"Snapshot operation failed")
 
@@ -29,9 +31,11 @@ def create(data:SnapshotCreate,user:Annotated[User,Depends(get_current_user)],se
     except Exception as exc:raise mapped(exc) from exc
 
 @router.get("",response_model=SnapshotList)
-def list_snapshots(session:Annotated[Session,Depends(get_db_session)],user:Annotated[User,Depends(get_current_user)],page:int=Query(1,ge=1),page_size:int=Query(25,ge=1,le=100),created_by:uuid.UUID|None=None):
-    items,total=SnapshotService(session).list(page,page_size,created_by)
-    return SnapshotList(items=[SnapshotHeaderPublic.model_validate(item) for item in items],pagination=PaginationMeta(page=page,page_size=page_size,total=total))
+def list_snapshots(session:Annotated[Session,Depends(get_db_session)],user:Annotated[User,Depends(get_current_user)],page:int=Query(1,ge=1),page_size:int=Query(25,ge=1,le=100),created_by:uuid.UUID|None=None,start_date:date|None=None,end_date:date|None=None):
+    try:
+        items,total=SnapshotService(session).list(page,page_size,created_by,start_date,end_date)
+        return SnapshotList(items=[SnapshotHeaderPublic.model_validate(item) for item in items],pagination=PaginationMeta(page=page,page_size=page_size,total=total))
+    except Exception as exc:raise mapped(exc) from exc
 
 @router.get("/{snapshot_id}",response_model=SnapshotDetail)
 def detail(snapshot_id:uuid.UUID,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):

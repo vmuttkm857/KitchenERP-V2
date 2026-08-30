@@ -244,7 +244,13 @@ button.compact { min-height:2rem; padding:.3rem .45rem; font-size:.76rem; }
 .category-dialog { width:min(30rem,100%); }
 .category-dialog form>footer { display:flex; justify-content:flex-end; gap:.55rem; padding-top:1rem; margin-top:1rem; border-top:1px solid #e2e8e3; }
 .supplier-dialog { width:min(34rem,100%); }
-.supplier-edit-fields { display:grid; gap:.75rem; }
+.supplier-edit-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.8rem; width:100%; }
+.supplier-wide-field { grid-column:1/-1; }
+.supplier-create-form>.supplier-edit-fields { flex:1 1 100%; }
+.supplier-order-cell { white-space:nowrap; }
+.supplier-order-cell span { display:inline-block; min-width:2rem; }
+.supplier-order-cell .compact-button { min-width:2rem; padding:.25rem .45rem; margin-left:.25rem; }
+.supplier-address-cell { max-width:18rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .supplier-dialog form>footer { display:flex; justify-content:flex-end; gap:.55rem; padding-top:1rem; margin-top:1rem; border-top:1px solid #e2e8e3; }
 .ingredient-dialog { width:min(42rem,100%); }
 .ingredient-edit-fields { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }

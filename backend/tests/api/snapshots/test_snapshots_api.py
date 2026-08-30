@@ -1,3 +1,5 @@
+import uuid
+from datetime import UTC,datetime
 from decimal import Decimal
 from sqlalchemy import event
 from sqlalchemy import func,select
@@ -9,6 +11,7 @@ from app.domains.snapshots.repository import SnapshotRepository
 from app.domains.ingredients.models import Ingredient
 from app.domains.recipes.models import DishIngredient
 from app.domains.menus.models import MenuDish
+from app.domains.users.models import User
 
 def create_snapshot(client,headers,menu):
     return client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}})
@@ -44,6 +47,38 @@ def test_duplicate_list_negative_and_unauthorized(client,db_session):
     listed=client.get("/api/v1/requirement-snapshots?page=1&page_size=1",headers=headers).json();assert listed["pagination"]["total"]==1
     item=first.json()["items"][0]
     assert client.patch(f"/api/v1/requirement-snapshots/{first.json()['id']}/items/{item['id']}",headers=headers,json={"adjusted_quantity":"-1"}).status_code==422
+
+def test_snapshot_list_date_filters_end_inclusive_pagination_order_and_query_budget(client,db_session):
+    headers=auth(client,db_session);actor=db_session.scalar(select(User));ids=[]
+    values=[
+        ("before",datetime(2026,8,9,15,59,tzinfo=UTC)),
+        ("start",datetime(2026,8,9,16,0,tzinfo=UTC)),
+        ("end",datetime(2026,8,10,15,59,tzinfo=UTC)),
+        ("after",datetime(2026,8,10,16,0,tzinfo=UTC)),
+    ]
+    for index,(label,created_at) in enumerate(values,1):
+        value=RequirementSnapshot(id=uuid.uuid4(),fingerprint=f"f{index:063d}",criteria_fingerprint=f"c{index:063d}",content_fingerprint=f"x{index:063d}",revision=1,criteria={},source_menus=[],anomaly_snapshot=[],anomaly_summary={"total":0},known_estimated_cost=Decimal("0"),total_estimated_cost=Decimal("0"),created_at=created_at,created_by=actor.id)
+        db_session.add(value);ids.append((label,str(value.id)))
+    db_session.commit();by_label=dict(ids)
+
+    start_only=client.get("/api/v1/requirement-snapshots?start_date=2026-08-10&page_size=100",headers=headers).json()
+    assert start_only["pagination"]["total"]==3
+    end_only=client.get("/api/v1/requirement-snapshots?end_date=2026-08-10&page_size=100",headers=headers).json()
+    assert end_only["pagination"]["total"]==3
+    ranged=client.get("/api/v1/requirement-snapshots?start_date=2026-08-10&end_date=2026-08-10&page=1&page_size=1",headers=headers).json()
+    assert ranged["pagination"]["total"]==2
+    assert ranged["items"][0]["id"]==by_label["end"]
+    second=client.get("/api/v1/requirement-snapshots?start_date=2026-08-10&end_date=2026-08-10&page=2&page_size=1",headers=headers).json()
+    assert second["items"][0]["id"]==by_label["start"]
+    assert client.get("/api/v1/requirement-snapshots?start_date=2026-08-11&end_date=2026-08-10",headers=headers).status_code==422
+
+    statements=[]
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    event.listen(process_engine,"before_cursor_execute",record)
+    try:response=client.get("/api/v1/requirement-snapshots?start_date=2026-08-10&end_date=2026-08-10&page=1&page_size=25",headers=headers)
+    finally:event.remove(process_engine,"before_cursor_execute",record)
+    assert response.status_code==200
+    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=3
 
 def test_detail_query_count_is_constant(client,db_session):
     headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_snapshot(client,headers,menu).json();statements=[]

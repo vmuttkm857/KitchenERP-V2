@@ -17,9 +17,11 @@ class SnapshotRepository:
         if not header:return None,[]
         items=list(self.session.scalars(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id).order_by(RequirementSnapshotItem.supplier_name_snapshot,RequirementSnapshotItem.ingredient_code_snapshot)))
         return header,items
-    def list(self,page,page_size,created_by=None):
+    def list(self,page,page_size,created_by=None,start_at=None,end_before=None):
         where=[]
         if created_by:where.append(RequirementSnapshot.created_by==created_by)
+        if start_at:where.append(RequirementSnapshot.created_at>=start_at)
+        if end_before:where.append(RequirementSnapshot.created_at<end_before)
         total=self.session.scalar(select(func.count()).select_from(RequirementSnapshot).where(*where)) or 0
         rows=self.session.execute(select(RequirementSnapshot,User.display_name).join(User,User.id==RequirementSnapshot.created_by).where(*where).order_by(RequirementSnapshot.created_at.desc(),RequirementSnapshot.id).offset((page-1)*page_size).limit(page_size)).all()
         return rows,total

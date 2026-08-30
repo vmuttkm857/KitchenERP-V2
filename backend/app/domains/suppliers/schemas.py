@@ -11,7 +11,9 @@ class SupplierCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     contact_person: str | None = Field(default=None, max_length=100)
     phone: str | None = Field(default=None, max_length=50)
+    address: str | None = Field(default=None, max_length=500)
     notes: str | None = Field(default=None, max_length=1000)
+    is_active: bool = True
 
 
 class SupplierUpdate(BaseModel):
@@ -19,7 +21,13 @@ class SupplierUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=150)
     contact_person: str | None = Field(default=None, max_length=100)
     phone: str | None = Field(default=None, max_length=50)
+    address: str | None = Field(default=None, max_length=500)
     notes: str | None = Field(default=None, max_length=1000)
+    is_active: bool | None = None
+
+
+class SupplierReorder(BaseModel):
+    supplier_ids: list[uuid.UUID] = Field(min_length=1)
 
 
 class SupplierPublic(BaseModel):
@@ -29,7 +37,9 @@ class SupplierPublic(BaseModel):
     name: str
     contact_person: str | None
     phone: str | None
+    address: str | None
     notes: str | None
+    sort_order: int
     is_active: bool
     created_at: datetime
     updated_at: datetime

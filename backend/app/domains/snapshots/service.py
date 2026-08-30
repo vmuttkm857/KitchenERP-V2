@@ -1,7 +1,9 @@
+from datetime import UTC,date,datetime,time,timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 from sqlalchemy.exc import IntegrityError
 from app.domains.requirements.service import RequirementService
-from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
+from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,InvalidSnapshotDateRangeError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
 from app.domains.snapshots.fingerprint import content_fingerprint,hash_payload,normalize,snapshot_fingerprint
 from app.domains.snapshots.models import RequirementSnapshot,RequirementSnapshotItem
 from app.domains.snapshots.repository import SnapshotRepository
@@ -37,8 +39,12 @@ class SnapshotService:
         purchase=self._purchase(value.id);issues=self.readiness(items)
         data.update(locked=purchase is not None,purchase_id=purchase.id if purchase else None,purchase_number=purchase.purchase_number if purchase else None,purchase_ready=purchase is None and not issues,blocking_issues=issues)
         data["items"]=[self._item_data(item) for item in items];return data
-    def list(self,page,page_size,created_by=None):
-        rows,total=self.repository.list(page,page_size,created_by);return [dict({column.name:getattr(row[0],column.name) for column in row[0].__table__.columns},created_by_name=row[1]) for row in rows],total
+    def list(self,page,page_size,created_by=None,start_date:date|None=None,end_date:date|None=None):
+        if start_date and end_date and start_date>end_date:raise InvalidSnapshotDateRangeError()
+        timezone=ZoneInfo("Asia/Taipei")
+        start_at=datetime.combine(start_date,time.min,timezone).astimezone(UTC) if start_date else None
+        end_before=datetime.combine(end_date+timedelta(days=1),time.min,timezone).astimezone(UTC) if end_date else None
+        rows,total=self.repository.list(page,page_size,created_by,start_at,end_before);return [dict({column.name:getattr(row[0],column.name) for column in row[0].__table__.columns},created_by_name=row[1]) for row in rows],total
     def update_adjusted(self,snapshot_id,item_id,quantity,purchase_unit,actor_id):
         if self._purchase(snapshot_id):raise SnapshotLockedError()
         item=self.repository.item(snapshot_id,item_id)
