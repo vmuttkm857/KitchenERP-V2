@@ -85,6 +85,7 @@ backend/
 │  ├─ domains/
 │  │  ├─ auth/
 │  │  ├─ users/
+│  │  ├─ audit/                # append-only cross-cutting audit infrastructure
 │  │  ├─ categories/
 │  │  ├─ suppliers/
 │  │  ├─ ingredients/
@@ -130,7 +131,8 @@ exceptions.py      # domain-specific errors
 | Domain | 擁有責任與資料 | 不負責 |
 |---|---|---|
 | `auth` | 登入、登出、密碼 hash 驗證、token/session lifecycle、current principal | user 主檔管理、各 domain 規則 |
-| `users` | 帳號、顯示名稱、角色、啟停、管理者操作 | 密碼演算法細節、ERP domain 資料 |
+| `users` | 帳號、顯示名稱、角色、啟停、管理者操作、密碼重設／自行修改 orchestration | 密碼演算法細節、ERP domain 資料 |
+| `audit` | append-only 操作紀錄、actor snapshot、request context、敏感資料清理、管理員查詢 | 業務規則、獨立 commit、紀錄失敗操作 |
 | `categories` | 食材分類、菜色分類、菜單分類及其排序/啟停 | 食材、菜色、菜單生命週期 |
 | `suppliers` | 供應商主檔與啟停 | 採購計算、配方供應商複製 |
 | `ingredients` | 食材主檔、採購規格、目前價格、價格歷史的原子更新 | 配方、需求彙總、正式採購 |
@@ -175,9 +177,14 @@ exceptions.py      # domain-specific errors
 - 密碼只保存強式 password hash；不記錄 plaintext、可逆密碼或密碼內容。
 - Web 與未來 Mobile 固定採 Access Token + Refresh Token 架構。Access Token 是 15 分鐘 JWT；Refresh Token 是 7 天高熵 opaque token，資料庫只存 hash，且每次使用必須 rotation 並立即撤銷舊 token。
 - Web Access Token 只存記憶體；Refresh Token 只以 HttpOnly cookie 傳送，production 必須 `Secure`，預設 `SameSite=Lax`。React 不得讀取或保存 Refresh Token，任何 token 都不得放入 localStorage。
-- 初期角色固定為 `admin`、`user`，暫不建立複雜 RBAC；授權永遠由 Backend enforcement，React route guard 只改善 UX。
+- 角色固定為 `admin`、`user`，不建立複雜 permission framework；授權永遠由 Backend dependency enforcement，React 導覽隱藏只改善 UX。
+- `admin` 專屬 Users Management、Audit Log 與所有 hard-delete；`user` 保留日常 ERP 讀寫、啟停與 workflow 操作，但不得查詢 Users/Audit 或 hard-delete。
 - API dependency 解析 current principal；Service 再檢查 use-case permission，避免只靠 route 或前端按鈕。
-- 重要主表預留 `created_by`、`updated_by`，但目前不建立完整 audit-log subsystem。
+- Users 停用、管理員重設密碼及自行修改密碼均撤銷該使用者全部 refresh sessions；自行改密碼後前端要求重新登入。
+- `created_by`、`updated_by` 與 append-only Audit Log 並存：前者提供目前 actor，後者保存完整歷史與當時 actor snapshot。
+- Audit 必須在業務 Service 的同一 Session／transaction 內新增，Repository 不 commit；業務 rollback 時 Audit 一併 rollback。
+- Audit 的集中 sanitization 必須移除 password、hash、access/refresh token、Authorization、Cookie、DATABASE_URL、JWT secret 等敏感 key。
+- Audit IP 僅取可確認的 request peer IP；在尚未建立 Caddy trusted-proxy 規則前，不信任任意 `X-Forwarded-For`。
 - Hard Delete 的密碼重新驗證使用目前登入帳號密碼，只能由 Backend/Auth Service 驗證；Frontend 不得自行比對密碼。
 - public API contract 必須與特定 React 實作解耦，讓 Mobile 共用相同 authentication 與 authorization。
 
@@ -211,6 +218,7 @@ exceptions.py      # domain-specific errors
 
 ```text
 auth → users
+audit → users（只讀 actor snapshot；由各業務 Service 以同一 Session 寫入）
 ingredients → categories, suppliers
 dishes → categories
 recipes → dishes, ingredients, shared.domain
@@ -225,9 +233,10 @@ purchases → snapshots（建立時的 immutable contract）, shared.domain
 
 1. 依賴 domain 的公開 service/query contract 或 read model，不直接 import 對方 repository 或任意操作對方 table。
 2. 禁止循環依賴。若兩方共享純概念，抽到小型 `shared/domain`；不得把業務 use case 丟入巨大 `common`。
-3. 下游 hard-copy domain 只能在建立時讀上游資料；建立後以自己的 snapshot/order 資料為準。
-4. `requirements` 不依賴 `snapshots`；`snapshots` 不依賴 `purchases` 來決定寫入，但可透過 purchases 提供的存在性 query 判斷生命週期，或由 application query composition 完成，避免逆向 repository import。
-5. `kitchen_operations` 與 `requirements` 共用唯一純計算 primitives，但各自擁有輸出 use case；備料不得讀取 snapshots/purchases。
+3. `audit` 是明確允許的 cross-cutting 依賴；它不得反向呼叫業務 Service，也不得擁有獨立 transaction。
+4. 下游 hard-copy domain 只能在建立時讀上游資料；建立後以自己的 snapshot/order 資料為準。
+5. `requirements` 不依賴 `snapshots`；`snapshots` 不依賴 `purchases` 來決定寫入，但可透過 purchases 提供的存在性 query 判斷生命週期，或由 application query composition 完成，避免逆向 repository import。
+6. `kitchen_operations` 與 `requirements` 共用唯一純計算 primitives，但各自擁有輸出 use case；備料不得讀取 snapshots/purchases。
 
 ## 10. 效能、連線與 V1 問題的預防
 
@@ -284,7 +293,7 @@ DB constraints 是並行寫入的最後防線；Service validation 提供完整�
 
 1. **Relationship Removal / Edit Removal**：移除 owner-child 明細或關聯，例如 menu dish、recipe detail。一般確認即可，不重新驗證密碼；只刪關聯/明細，不刪 master data。
 2. **Soft Delete / Deactivate**：ingredient、supplier、dish、category、meal type、user 等正式主檔以 `is_active=false` 或等價機制停用。一般確認即可；停用後不得供新資料選用，既有歷史與 FK 必須仍可顯示。
-3. **Hard Delete**：只有未被正式業務資料引用、Service policy 允許、使用者已見永久警告，且 Backend 以目前帳號密碼重新驗證成功時才可能執行。密碼正確不凌駕引用限制；禁止以 CASCADE 刪除歷史正式資料。
+3. **Hard Delete**：僅 `admin` 可執行；且資料未被正式業務引用、Service policy 允許、使用者已見永久警告，Backend 以目前帳號密碼重新驗證成功時才可能執行。密碼正確不凌駕引用限制；禁止以 CASCADE 刪除歷史正式資料。
 
 Repository 只執行 Service 已授權的 delete operation，不判斷刪除政策、不驗證密碼、不自行 commit。
 

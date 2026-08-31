@@ -1,7 +1,9 @@
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from sqlalchemy import event,func,select
 from app.db.session import engine as process_engine
+from app.domains.audit.models import AuditLog
 from app.domains.purchases.models import PurchaseBatch,PurchaseOrder,PurchaseOrderItem
 from app.domains.purchases.repository import PurchaseRepository
 from app.domains.snapshots.models import RequirementSnapshotItem
@@ -54,6 +56,8 @@ def test_unknown_cost_known_total_status_duplicate_delete_and_auth(client,db_ses
     confirmed=client.post(f"/api/v1/purchases/{body['id']}/confirm",headers=headers);assert confirmed.status_code==200 and confirmed.json()["status"]=="confirmed"
     assert client.post(f"/api/v1/purchases/{body['id']}/confirm",headers=headers).status_code==409
     cancelled=client.post(f"/api/v1/purchases/{body['id']}/cancel",headers=headers);assert cancelled.status_code==200 and cancelled.json()["status"]=="cancelled"
+    actions=set(db_session.scalars(select(AuditLog.action).where(AuditLog.entity_id==uuid.UUID(body["id"]))))
+    assert {"purchase_create","purchase_confirm","purchase_cancel"}<=actions
     assert client.post(f"/api/v1/requirement-snapshots/{snapshot['id']}/hard-delete",headers=headers,json={"password":"correct horse battery staple"}).status_code==409
 
 def test_unlinked_snapshot_admin_password_delete(client,db_session):

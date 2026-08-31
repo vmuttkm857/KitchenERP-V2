@@ -1,13 +1,17 @@
 # KitchenERP V2 System Regression Matrix
 
-> 狀態日期：2026-08-28。狀態定義：`PASS` 已有 API、UI 與自動測試；`PARTIAL` 核心可用但仍有操作或覆蓋缺口；`MISSING` 尚未實作；`INTENTIONALLY_CHANGED` V2 有意採不同流程。
+> 狀態日期：2026-08-31。狀態定義：`PASS` 已有 API、UI 與自動測試；`PARTIAL` 核心可用但仍有操作或覆蓋缺口；`MISSING` 尚未實作；`INTENTIONALLY_CHANGED` V2 有意採不同流程。
 
 | 分類 | V1 Feature / Business Rule | V2 Domain | API | Frontend Page | Automated Test | Manual Verification | Status |
 |---|---|---|---|---|---|---|---|
 | Auth | 個別帳號密碼登入、登出 | auth/users | `/auth/login`, `/auth/logout`, `/auth/refresh` | Login / App Shell | auth API/unit | Smoke 1, 16 | PASS |
 | Auth | Access token 不落地、refresh rotation | auth | auth endpoints | AuthContext（記憶體） | auth flow/token tests | 重新整理與重新登入 | PASS |
+| Auth | 管理員建立/修改/啟停/重設密碼、使用者自行改密碼 | users | `/users`, `/users/me/change-password` | Users / App Shell | users/audit API | Users manual acceptance | PASS |
+| Auth | admin/user RBAC；Users/Audit/hard-delete 僅 admin | auth/users | role dependencies | admin-only system group | RBAC API/frontend targeted | 兩角色驗收 | PASS |
+| Audit | 同交易 append-only before/after、actor snapshot、敏感資料清理 | audit | `/audit-logs` (GET only) | Audit Logs | audit/migration/query-budget tests | Audit manual acceptance | PASS |
 | Master Data | 三類分類 CRUD、排序、啟停 | categories | `/categories/{kind}` | Categories | master data API | Smoke 2 | PASS |
 | Master Data | 供應商 CRUD、啟停 | suppliers | `/suppliers` | Suppliers | master data API | Smoke 3 | PASS |
+| Master Data | 供應商地址、全域排序與大型列表分頁 | suppliers | supplier list/reorder | Suppliers | supplier enhancement tests | 列表驗收 | PASS |
 | Master Data | 食材、分類、供應商、價格歷史 | ingredients | `/ingredients`, price history | Ingredients | master data API | Smoke 4 | PASS |
 | Master Data | 主檔 hard delete 需密碼且受引用限制 | categories/suppliers/ingredients/dishes/menus | `hard-delete` commands | 各主檔 danger flow | master data/menu API | 以測試資料確認拒絕條件 | PASS |
 | Master Data | 搜尋、狀態篩選、SQL 分頁 | master data | list endpoints | 各列表 | API pagination tests | 列表工具列 | PARTIAL |
@@ -24,11 +28,11 @@
 | Kitchen | 依日期、餐別、菜色產生只讀備料 | kitchen_operations | `/kitchen-operations/calculate` | Kitchen Operations | kitchen API/unit | Smoke 9 | PASS |
 | Kitchen | 菜色／食材／供應商三種 view | kitchen_operations | 同一 aggregate API | Kitchen Operations toggles | kitchen API | 切換不重新計算 | PASS |
 | Kitchen | 備料量 = 人數 × 配方量 × (1+耗損) | kitchen_operations/shared | calculate | Kitchen Operations | known-answer tests | Smoke 9 | PASS |
-| Kitchen | Excel/PDF，文字公式注入防護 | exports | `/exports/kitchen-operations/*` | Header actions | export API/unit | Smoke 15 | PASS |
+| Kitchen | Excel/PDF/A4 現場列印，文字公式注入防護 | exports | `/exports/kitchen-operations/*`, `/a4-xlsx` | Header actions | export API/unit/A4 layout | 列印預覽與實體 A4 | PASS |
 | Requirement | 多菜單與日期 criteria、Decimal 彙總 | requirements | `/requirements/calculate` | Requirements | requirement API/unit | Smoke 10 | PASS |
 | Requirement | 總表／供應商分組、集中異常 | requirements | aggregate result | Requirements | requirement API | Smoke 10 | PASS |
-| Requirement | 依期間、名稱、多分類尋找候選與按日期快速加入 | requirements/menus | — | — | — | — | MISSING |
-| Requirement | 詳細 schedule view | requirements | result 含 schedules | 尚未提供 UI toggle | calculator/snapshot tests | — | PARTIAL |
+| Requirement | 日期 overlap／關鍵字候選、server-side pagination、保留已選菜單 | requirements/menus | `/menus` filters | Requirements candidate selector | frontend/menu API | 候選操作 | PASS |
+| Requirement | 每日需求／依供應商／總需求及來源菜單 attribution | requirements | result 含 daily rows | 三種 result view | calculator/export/frontend tests | 明細切換 | PASS |
 | Snapshot | 建立 immutable-like hard copy、revision、duplicate fingerprint | snapshots | `/requirement-snapshots` | Snapshots | snapshot API/concurrency | Smoke 11 | PASS |
 | Snapshot | 調整採購量／單位且不回寫來源 | snapshots | item PATCH | Snapshot Detail | snapshot/purchase tests | Smoke 12 | PASS |
 | Snapshot | 建採購後鎖定；未建採購可控 hard delete | snapshots | detail/delete | Snapshot Detail | snapshot/purchase tests | Smoke 13 | PASS |
@@ -40,7 +44,7 @@
 | Export | Requirements Excel | exports | `/exports/requirements/xlsx` | Requirements | export/full workflow | Smoke 15 | PASS |
 | Export | Snapshot Excel | exports | `/exports/requirement-snapshots/{id}/xlsx` | Snapshots | export/full workflow | Smoke 15 | PASS |
 | Export | Purchase Excel/PDF、多供應商 | exports | `/exports/purchases/{id}/*` | Purchases | export/full workflow | Smoke 15 | PASS |
-| Technical | PostgreSQL only、Alembic 0006 | db/migrations | — | — | integration/migration | `alembic current` | PASS |
+| Technical | PostgreSQL only、Alembic 0009 | db/migrations | — | — | 0008→0009、base→head migration | `alembic current` | PASS |
 | Technical | API→Service→Repository、request Session/process Engine | all | all | — | full suite/integration | — | PASS |
 | Technical | Query budgets、無逐列 detail fetch | repositories/frontend | aggregate endpoints | all pages | domain query-budget tests | Network smoke | PASS |
 | V1 change | Streamlit rerun/session-state 流程 | all | versioned API | React local state | regression suite | normal navigation | INTENTIONALLY_CHANGED |
@@ -65,7 +69,7 @@
 ### B. 可以之後補
 
 - 週菜單可編輯版／列印版 Excel。
-- Requirement 候選依日期快速選取、多分類進階篩選及詳細 schedule UI。
+- Requirement 更進階的多分類候選篩選（日期 overlap、關鍵字與每日明細已完成）。
 - 每日叫貨表、帳務明細、分帳與進階供應商／日期報表。
 - Purchase 結案／恢復與受控正式單刪除（需先確認新 V2 lifecycle）。
 - 複雜列表的直接頁碼跳轉與更完整 filters。

@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.auth.service import AuthService
+from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.domains.menus.exceptions import (
     DuplicateMenuDishError, InvalidMenuCategoryError, InvalidMenuCopyError,
     InvalidMenuDateRangeError, InvalidMenuStructureError, MealTypeInUseError,
@@ -20,7 +21,7 @@ from app.domains.menus.schemas import (
 
 class MenuService:
     def __init__(self, session: Session):
-        self.session=session; self.repository=MenuRepository(session)
+        self.session=session; self.repository=MenuRepository(session); self.audit=AuditLogService(session)
 
     def model(self, menu_id):
         value=self.repository.menu_model(menu_id)
@@ -44,12 +45,15 @@ class MenuService:
 
     def create(self, data: MenuCreate, actor_id):
         self._category(data.category_id)
-        menu=Menu(name=data.name.strip(),start_date=data.start_date,end_date=data.end_date,
+        menu=Menu(id=uuid.uuid4(),name=data.name.strip(),start_date=data.start_date,end_date=data.end_date,
                   category_id=data.category_id,notes=data.notes,created_by=actor_id,updated_by=actor_id)
-        self.repository.add(menu); self.session.commit(); return self.get(menu.id)
+        self.repository.add(menu)
+        self.audit.record(actor_id=actor_id,action="menu_create",entity_type="menu",entity_id=menu.id,
+            entity_label=menu.name,after_data=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active"))
+        self.session.commit(); return self.get(menu.id)
 
     def update(self, menu_id, data: MenuUpdate, actor_id):
-        menu=self.model(menu_id); changes=data.model_dump(exclude_unset=True)
+        menu=self.model(menu_id); before=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active"); changes=data.model_dump(exclude_unset=True)
         start=changes.get("start_date",menu.start_date); end=changes.get("end_date",menu.end_date)
         if end < start: raise InvalidMenuDateRangeError()
         if "category_id" in changes: self._category(changes["category_id"])
@@ -57,25 +61,37 @@ class MenuService:
             raise InvalidMenuDateRangeError("Existing meal slots fall outside the new date range")
         if "name" in changes: changes["name"]=changes["name"].strip()
         for field,value in changes.items(): setattr(menu,field,value)
-        menu.updated_by=actor_id; self.session.commit(); return self.get(menu_id)
+        menu.updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="menu_update",entity_type="menu",entity_id=menu.id,
+            entity_label=menu.name,before_data=before,after_data=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active"))
+        self.session.commit(); return self.get(menu_id)
 
     def set_active(self, menu_id, active, actor_id):
-        menu=self.model(menu_id); menu.is_active=active; menu.updated_by=actor_id
+        menu=self.model(menu_id); before=audit_snapshot(menu,"name","is_active"); menu.is_active=active; menu.updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="menu_reactivate" if active else "menu_deactivate",entity_type="menu",
+            entity_id=menu.id,entity_label=menu.name,before_data=before,after_data=audit_snapshot(menu,"name","is_active"))
         self.session.commit(); return self.get(menu_id)
 
     def hard_delete(self, menu_id, actor_id, password):
         AuthService(self.session).verify_current_password(actor_id,password)
         menu=self.model(menu_id)
+        before=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active")
         if self.repository.has_children(menu_id): raise MenuInUseError()
-        self.repository.delete(menu); self.session.commit()
+        self.repository.delete(menu)
+        self.audit.record(actor_id=actor_id,action="menu_hard_delete",entity_type="menu",entity_id=menu.id,
+            entity_label=menu.name,before_data=before)
+        self.session.commit()
 
     def meal_types(self, menu_id): self.model(menu_id); return self.repository.meal_types(menu_id)
 
     def create_meal_type(self, menu_id, data: MealTypeCreate, actor_id):
         self.model(menu_id); name=data.name.strip()
         if self.repository.meal_name_exists(menu_id,name): raise MealTypeNameExistsError()
-        value=MenuMealType(menu_id=menu_id,name=name,sort_order=data.sort_order,created_by=actor_id,updated_by=actor_id)
-        self.repository.add(value); self._commit_meal(); return value
+        value=MenuMealType(id=uuid.uuid4(),menu_id=menu_id,name=name,sort_order=data.sort_order,created_by=actor_id,updated_by=actor_id)
+        self.repository.add(value)
+        self.audit.record(actor_id=actor_id,action="meal_type_create",entity_type="menu_meal_type",entity_id=value.id,
+            entity_label=value.name,after_data=audit_snapshot(value,"menu_id","name","sort_order","is_active"))
+        self._commit_meal(); return value
 
     def _meal(self, menu_id, meal_type_id):
         value=self.repository.meal_type(meal_type_id)
@@ -83,16 +99,22 @@ class MenuService:
         return value
 
     def update_meal_type(self, menu_id, meal_type_id, data: MealTypeUpdate, actor_id):
-        value=self._meal(menu_id,meal_type_id)
+        value=self._meal(menu_id,meal_type_id); before=audit_snapshot(value,"menu_id","name","sort_order","is_active")
         if data.name is not None:
             name=data.name.strip()
             if self.repository.meal_name_exists(menu_id,name,meal_type_id): raise MealTypeNameExistsError()
             value.name=name
         if data.sort_order is not None: value.sort_order=data.sort_order
-        value.updated_by=actor_id; self._commit_meal(); return value
+        value.updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="meal_type_update",entity_type="menu_meal_type",entity_id=value.id,
+            entity_label=value.name,before_data=before,after_data=audit_snapshot(value,"menu_id","name","sort_order","is_active"))
+        self._commit_meal(); return value
 
     def set_meal_active(self, menu_id, meal_type_id, active, actor_id):
-        value=self._meal(menu_id,meal_type_id); value.is_active=active; value.updated_by=actor_id
+        value=self._meal(menu_id,meal_type_id); before=audit_snapshot(value,"menu_id","name","sort_order","is_active"); value.is_active=active; value.updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="meal_type_reactivate" if active else "meal_type_deactivate",
+            entity_type="menu_meal_type",entity_id=value.id,entity_label=value.name,before_data=before,
+            after_data=audit_snapshot(value,"menu_id","name","sort_order","is_active"))
         self.session.commit(); return value
 
     def reorder_meal_types(self, menu_id, data: MealTypeReorder, actor_id):
@@ -100,15 +122,23 @@ class MenuService:
         by_id={item.id:item for item in values}
         if len(set(data.ordered_ids)) != len(data.ordered_ids) or set(data.ordered_ids) != set(by_id):
             raise InvalidMenuStructureError("Reorder must contain every meal type exactly once")
+        before=[audit_snapshot(item,"id","name","sort_order") for item in values]
         for order,meal_id in enumerate(data.ordered_ids,1):
             by_id[meal_id].sort_order=order; by_id[meal_id].updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="meal_type_reorder",entity_type="menu",entity_id=menu_id,
+            entity_label=self.model(menu_id).name,before_data={"meal_types":before},
+            after_data={"ordered_ids":data.ordered_ids})
         self.session.commit(); return self.repository.meal_types(menu_id)
 
     def hard_delete_meal(self, menu_id, meal_type_id, actor_id, password):
         AuthService(self.session).verify_current_password(actor_id,password)
         value=self._meal(menu_id,meal_type_id)
+        before=audit_snapshot(value,"menu_id","name","sort_order","is_active")
         if self.repository.meal_type_has_days(meal_type_id): raise MealTypeInUseError()
-        self.repository.delete(value); self.session.commit()
+        self.repository.delete(value)
+        self.audit.record(actor_id=actor_id,action="meal_type_hard_delete",entity_type="menu_meal_type",
+            entity_id=value.id,entity_label=value.name,before_data=before)
+        self.session.commit()
 
     def _commit_meal(self):
         try: self.session.commit()
@@ -133,6 +163,7 @@ class MenuService:
 
     def save_editor(self, menu_id, data: MenuEditorSave, actor_id):
         menu=self.model(menu_id)
+        before=self.aggregate(menu_id)
         meal_types={item.id:item for item in self.repository.meal_types(menu_id)}
         existing_days={item.id:item for item in self.repository.days(menu_id)}
         existing_details={item.id:item for item in self.repository.details(set(existing_days))}
@@ -182,14 +213,23 @@ class MenuService:
                 if detail_id not in retained_details: self.repository.delete(detail)
             for day_id,day in existing_days.items():
                 if day_id not in submitted_existing_day_ids: self.repository.delete(day)
+            after=self.aggregate(menu_id)
+            self.audit.record(actor_id=actor_id,action="menu_editor_save",entity_type="menu",entity_id=menu.id,
+                entity_label=menu.name,before_data=before,after_data=after)
             self.session.commit()
         except Exception:
             self.session.rollback(); raise
         return self.aggregate(menu_id)
 
     def copy_day(self, destination_menu_id, command: CopyDayCommand, actor_id):
+        destination=self.model(destination_menu_id); before=self.aggregate(destination_menu_id)
         try:
             self._copy_day(destination_menu_id,command.source_menu_id,command.source_date,command.destination_date,command.mode,actor_id)
+            after=self.aggregate(destination_menu_id)
+            self.audit.record(actor_id=actor_id,action="copy_day",entity_type="menu",entity_id=destination.id,
+                entity_label=destination.name,before_data=before,after_data=after,
+                metadata={"source_menu_id":command.source_menu_id,"source_date":command.source_date,
+                          "destination_date":command.destination_date,"mode":command.mode})
             self.session.commit()
         except Exception: self.session.rollback(); raise
         return self.aggregate(destination_menu_id)
@@ -250,12 +290,17 @@ class MenuService:
 
     def copy_week(self,destination_menu_id,command: CopyWeekCommand,actor_id):
         source=self.model(command.source_menu_id); destination=self.model(destination_menu_id)
+        before=self.aggregate(destination_menu_id)
         if (source.end_date-source.start_date).days != 6 or (destination.end_date-destination.start_date).days != 6:
             raise InvalidMenuCopyError("Whole-week copy requires two exact seven-day menus")
         try:
             destination_by_name=self._prepare_destination_meal_mapping(
                 destination.id,self.repository.meal_types(source.id),actor_id)
             for offset in range(7): self._copy_day(destination_menu_id,source.id,source.start_date+timedelta(days=offset),destination.start_date+timedelta(days=offset),command.mode,actor_id,destination_by_name)
+            after=self.aggregate(destination_menu_id)
+            self.audit.record(actor_id=actor_id,action="copy_week",entity_type="menu",entity_id=destination.id,
+                entity_label=destination.name,before_data=before,after_data=after,
+                metadata={"source_menu_id":source.id,"mode":command.mode})
             self.session.commit()
         except Exception: self.session.rollback(); raise
         return self.aggregate(destination_menu_id)

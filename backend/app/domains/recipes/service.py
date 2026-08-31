@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.dishes.service import DishService
+from app.domains.audit.service import AuditLogService
 from app.domains.recipes.exceptions import (
     DuplicateRecipeIngredientError, InvalidRecipeIngredientError, RecipeDetailIdentityError,
 )
@@ -19,6 +20,7 @@ class RecipeService:
         self.session = session
         self.repository = RecipeRepository(session)
         self.dishes = DishService(session)
+        self.audit = AuditLogService(session)
 
     def get(self, dish_id: uuid.UUID) -> dict:
         dish = self.dishes.get(dish_id)
@@ -47,7 +49,8 @@ class RecipeService:
         }
 
     def replace(self, dish_id: uuid.UUID, data: RecipeReplace, actor_id: uuid.UUID) -> dict:
-        self.dishes.get_model(dish_id)
+        dish = self.dishes.get_model(dish_id)
+        before = self.get(dish_id)
         ingredient_ids = [item.ingredient_id for item in data.items]
         if len(set(ingredient_ids)) != len(ingredient_ids):
             raise DuplicateRecipeIngredientError()
@@ -84,6 +87,9 @@ class RecipeService:
             if detail_id not in retained:
                 self.repository.delete(detail)
         try:
+            self.audit.record(actor_id=actor_id, action="recipe_replace", entity_type="recipe",
+                              entity_id=dish_id, entity_label=dish.name, before_data=before,
+                              after_data={"items": data.items})
             self.session.commit()
         except IntegrityError as exc:
             self.session.rollback()

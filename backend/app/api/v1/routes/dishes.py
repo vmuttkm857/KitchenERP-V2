@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db_session
-from app.domains.auth.dependencies import get_current_user
+from app.domains.auth.dependencies import get_current_user, require_admin
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.dishes.exceptions import (
     DishCodeExistsError, DishIdentityExistsError, DishInUseError, DishNameExistsError,
@@ -93,7 +93,7 @@ def reactivate_dish(dish_id: uuid.UUID, user: Annotated[User, Depends(get_curren
 
 @router.post("/{dish_id}/hard-delete", status_code=204)
 def hard_delete_dish(dish_id: uuid.UUID, confirmation: PasswordConfirmation,
-                     user: Annotated[User, Depends(get_current_user)],
+                     user: Annotated[User, Depends(require_admin)],
                      session: Annotated[Session, Depends(get_db_session)]) -> Response:
     try:
         DishService(session).hard_delete(dish_id, user.id, confirmation.password)

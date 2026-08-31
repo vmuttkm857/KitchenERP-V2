@@ -1,0 +1,2 @@
+class AuditLogNotFoundError(Exception):
+    pass

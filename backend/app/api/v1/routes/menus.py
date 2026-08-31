@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db_session
-from app.domains.auth.dependencies import get_current_user
+from app.domains.auth.dependencies import get_current_user, require_admin
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.menus.exceptions import (
     DuplicateMenuDishError, InvalidMenuCategoryError, InvalidMenuCopyError,
@@ -79,7 +79,7 @@ def reactivate(menu_id:uuid.UUID,user:Annotated[User,Depends(get_current_user)],
 
 
 @router.post("/{menu_id}/hard-delete",status_code=204)
-def hard_delete(menu_id:uuid.UUID,data:PasswordConfirmation,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+def hard_delete(menu_id:uuid.UUID,data:PasswordConfirmation,user:Annotated[User,Depends(require_admin)],session:Annotated[Session,Depends(get_db_session)]):
     try:MenuService(session).hard_delete(menu_id,user.id,data.password)
     except Exception as exc:raise error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -122,7 +122,7 @@ def reactivate_meal(menu_id:uuid.UUID,meal_type_id:uuid.UUID,user:Annotated[User
 
 
 @router.post("/{menu_id}/meal-types/{meal_type_id}/hard-delete",status_code=204)
-def delete_meal(menu_id:uuid.UUID,meal_type_id:uuid.UUID,data:PasswordConfirmation,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+def delete_meal(menu_id:uuid.UUID,meal_type_id:uuid.UUID,data:PasswordConfirmation,user:Annotated[User,Depends(require_admin)],session:Annotated[Session,Depends(get_db_session)]):
     try:MenuService(session).hard_delete_meal(menu_id,meal_type_id,user.id,data.password)
     except Exception as exc:raise error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

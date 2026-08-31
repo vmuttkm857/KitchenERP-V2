@@ -1,10 +1,12 @@
+import uuid
 from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text
 from sqlalchemy.orm import Session
 
 from app.db.session import engine as process_engine
+from app.domains.audit.models import AuditLog
 from app.domains.users.schemas import CreateUserCommand
 from app.domains.users.service import UserService
 
@@ -128,6 +130,7 @@ def test_three_days_three_meals_multiple_dishes_modify_remove_and_history_displa
     headers,actor_id=auth(client,db_session); category,dishes=foundations(client,headers); value=menu(client,headers,category["id"]); meal_types=meals(client,headers,value["id"])
     saved=client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
     assert saved.status_code==200,saved.text; body=saved.json()
+    editor_log=db_session.scalar(select(AuditLog).where(AuditLog.action=="menu_editor_save",AuditLog.entity_id==uuid.UUID(value["id"])));assert editor_log is not None
     assert len(body["dates"])==3 and len(body["meal_types"])==3 and len(body["slots"])==9
     assert all(len(slot["dishes"])==2 for slot in body["slots"])
     assert body["slots"][0]["dishes"][0]["sort_order"]==1 and body["slots"][0]["dishes"][0]["dish_name"]=="測試菜色2"

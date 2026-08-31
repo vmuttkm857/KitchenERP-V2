@@ -8,10 +8,11 @@ from app.domains.snapshots.fingerprint import content_fingerprint,hash_payload,n
 from app.domains.snapshots.models import RequirementSnapshot,RequirementSnapshotItem
 from app.domains.snapshots.repository import SnapshotRepository
 from app.domains.auth.service import AuthService
+from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.shared.domain.quantities import convert_quantity
 
 class SnapshotService:
-    def __init__(self,session):self.session=session;self.repository=SnapshotRepository(session)
+    def __init__(self,session):self.session=session;self.repository=SnapshotRepository(session);self.audit=AuditLogService(session)
     def create(self,criteria,actor_id):
         normalized=normalize(criteria.model_dump(exclude_none=True));criteria_hash=snapshot_fingerprint(normalized)
         try:
@@ -25,6 +26,11 @@ class SnapshotService:
             for row in result["rows"]:
                 related=[a for a in result["anomalies"] if str(a.get("related_entity_id")) in {str(row["ingredient_id"])} or str(a.get("context",{}).get("ingredient_id"))==str(row["ingredient_id"])]
                 self.repository.add(RequirementSnapshotItem(snapshot_id=header.id,row_key=row["row_key"],ingredient_id=row["ingredient_id"],ingredient_code_snapshot=row["ingredient_code"],ingredient_name_snapshot=row["ingredient_name"],supplier_id=row["supplier_id"],supplier_code_snapshot=row.get("supplier_code"),supplier_name_snapshot=row["supplier_name"],requirement_quantity=row["requirement_quantity"],requirement_unit=row["requirement_unit"],suggested_purchase_quantity=row["suggested_purchase_quantity"],adjusted_quantity=row["suggested_purchase_quantity"],suggested_purchase_unit_snapshot=row["suggested_purchase_unit"],purchase_unit_snapshot=row["suggested_purchase_unit"],configured_purchase_unit_snapshot=row["configured_purchase_unit"],package_size_snapshot=row["package_size"],minimum_order_quantity_snapshot=row["minimum_order_quantity"],unit_price_snapshot=row["current_price"],estimated_cost_snapshot=row["estimated_cost"],needs_review=row["needs_review"],total_diner_count=row["total_diner_count"],source_count=row["source_count"],anomaly_snapshot=normalize(related),source_summary=normalize(row["schedules"]),updated_by=actor_id))
+            self.audit.record(actor_id=actor_id,action="snapshot_create",entity_type="requirement_snapshot",
+                entity_id=header.id,entity_label=f"Revision {header.revision}",
+                after_data={"revision":header.revision,"source_menus":header.source_menus,
+                            "known_estimated_cost":header.known_estimated_cost,"total_estimated_cost":header.total_estimated_cost,
+                            "item_count":len(result["rows"])})
             self.session.commit()
         except IntegrityError as exc:
             self.session.rollback();existing=self.repository.by_content(criteria_hash,content_hash);raise DuplicateSnapshotError(existing.id if existing else None) from exc
@@ -49,6 +55,7 @@ class SnapshotService:
         if self._purchase(snapshot_id):raise SnapshotLockedError()
         item=self.repository.item(snapshot_id,item_id)
         if not item:raise SnapshotNotFoundError()
+        before=audit_snapshot(item,"ingredient_code_snapshot","ingredient_name_snapshot","adjusted_quantity","purchase_unit_snapshot")
         target=(purchase_unit or item.purchase_unit_snapshot or item.requirement_unit).strip()
         current=item.purchase_unit_snapshot or item.requirement_unit
         original_quantity=item.adjusted_quantity;current_quantity=original_quantity
@@ -59,7 +66,12 @@ class SnapshotService:
             current_quantity=converted.quantity
             if quantity is not None and Decimal(quantity)!=original_quantity:current_quantity=Decimal(quantity)
         elif quantity is not None:current_quantity=Decimal(quantity)
-        item.adjusted_quantity=current_quantity;item.purchase_unit_snapshot=target;item.updated_by=actor_id;self.session.commit();return self._item_data(item)
+        item.adjusted_quantity=current_quantity;item.purchase_unit_snapshot=target;item.updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="snapshot_item_adjust",entity_type="requirement_snapshot_item",
+            entity_id=item.id,entity_label=item.ingredient_name_snapshot,before_data=before,
+            after_data=audit_snapshot(item,"ingredient_code_snapshot","ingredient_name_snapshot","adjusted_quantity","purchase_unit_snapshot"),
+            metadata={"snapshot_id":snapshot_id})
+        self.session.commit();return self._item_data(item)
     def readiness(self,items):
         issues=[]
         for item in items:
@@ -81,4 +93,10 @@ class SnapshotService:
         value=self.repository.get(snapshot_id)
         if not value:raise SnapshotNotFoundError()
         if self._purchase(snapshot_id):raise SnapshotInUseError()
-        AuthService(self.session).verify_current_password(actor_id,password);self.repository.delete(value);self.session.commit()
+        AuthService(self.session).verify_current_password(actor_id,password)
+        before={"revision":value.revision,"source_menus":value.source_menus,"known_estimated_cost":value.known_estimated_cost,
+                "total_estimated_cost":value.total_estimated_cost}
+        self.repository.delete(value)
+        self.audit.record(actor_id=actor_id,action="snapshot_hard_delete",entity_type="requirement_snapshot",
+            entity_id=value.id,entity_label=f"Revision {value.revision}",before_data=before)
+        self.session.commit()

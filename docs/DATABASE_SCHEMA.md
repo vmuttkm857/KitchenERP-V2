@@ -1,4 +1,35 @@
-# KitchenERP V1 資料模型盤點
+# KitchenERP 資料模型
+
+> V2 PostgreSQL 實際 migration head：`20260831_0009`。下方原 V1 A/B 盤點保留為歷史設計來源；V2 實際 schema 以 `backend/migrations/versions/` 與 SQLAlchemy models 為準，不支援 SQLite。
+
+## V2 Users 與 Audit（0009）
+
+### `users`
+
+- UUID primary key；`username` unique；只保存 Argon2 `password_hash`，不保存或回傳明碼。
+- `role` 由 `ck_users_role` 限制為 `admin` / `user`；`is_active` 控制登入與目前 access-token principal 是否仍有效。
+- `created_by` / `updated_by` self-FK 使用 `ON DELETE RESTRICT`，保存快速 actor 資訊。
+- 使用者不提供 hard-delete；停用、重設密碼、自行改密碼會撤銷 refresh sessions。
+
+### `audit_logs`
+
+| 欄位 | PostgreSQL 型別 | 規則 |
+|---|---|---|
+| id | UUID | primary key |
+| actor_user_id | UUID nullable | FK → users.id, `ON DELETE RESTRICT` |
+| actor_username / actor_display_name | VARCHAR | 操作當時 snapshot，不受日後 User 修改影響 |
+| action / entity_type | VARCHAR | 穩定的操作與資料類型識別 |
+| entity_id / entity_label | UUID nullable / VARCHAR nullable | 被操作資料識別與人類可讀名稱 |
+| before_data / after_data | JSONB nullable | 集中 sanitization 後的修改前／後內容 |
+| metadata | JSONB NOT NULL | 非敏感操作脈絡，預設 `{}` |
+| request_id / ip_address | VARCHAR nullable | request correlation 與直接 peer IP |
+| created_at | TIMESTAMPTZ | server default current timestamp |
+
+索引：`created_at`、`(actor_user_id, created_at)`、`(action, created_at)`、`(entity_type, entity_id, created_at)`。Application API 僅提供 admin 查詢，不提供 PATCH/DELETE；Audit 與業務操作在同一 transaction 寫入。
+
+---
+
+## V1 歷史資料模型盤點
 
 > 本文件區分「B 所代表的 SQLite 原始/升級後模型」與「A 的 PostgreSQL target schema」。SQLite 基礎建表在 `database/init_db.py`，實際 V1 功能還依賴 `migrate_*.py`；因此只看 init_db 不足以描述真實模型。
 

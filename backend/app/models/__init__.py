@@ -1,6 +1,7 @@
 """SQLAlchemy model registry."""
 
 from app.domains.auth.models import RefreshSession
+from app.domains.audit.models import AuditLog
 from app.domains.categories.models import DishCategory, IngredientCategory, MenuCategory
 from app.domains.dishes.models import Dish
 from app.domains.ingredients.models import Ingredient, IngredientPriceHistory
@@ -11,4 +12,4 @@ from app.domains.snapshots.models import RequirementSnapshot, RequirementSnapsho
 from app.domains.purchases.models import PurchaseBatch, PurchaseOrder, PurchaseOrderItem
 from app.domains.users.models import User
 
-__all__ = ["Dish", "DishCategory", "DishIngredient", "Ingredient", "IngredientCategory", "IngredientPriceHistory", "Menu", "MenuCategory", "MenuDay", "MenuDish", "MenuMealType", "PurchaseBatch", "PurchaseOrder", "PurchaseOrderItem", "RefreshSession", "RequirementSnapshot", "RequirementSnapshotItem", "Supplier", "User"]
+__all__ = ["AuditLog", "Dish", "DishCategory", "DishIngredient", "Ingredient", "IngredientCategory", "IngredientPriceHistory", "Menu", "MenuCategory", "MenuDay", "MenuDish", "MenuMealType", "PurchaseBatch", "PurchaseOrder", "PurchaseOrderItem", "RefreshSession", "RequirementSnapshot", "RequirementSnapshotItem", "Supplier", "User"]

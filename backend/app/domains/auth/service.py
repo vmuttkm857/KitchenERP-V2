@@ -126,6 +126,4 @@ class AuthService:
         return user
 
     def revoke_all_sessions(self, user_id: uuid.UUID) -> int:
-        count = self.refresh_sessions.revoke_all_for_user(user_id, datetime.now(UTC))
-        self.session.commit()
-        return count
+        return self.refresh_sessions.revoke_all_for_user(user_id, datetime.now(UTC))

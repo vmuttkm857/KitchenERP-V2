@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.auth.service import AuthService
+from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.domains.categories.exceptions import CategoryInUseError, CategoryNameExistsError, CategoryNotFoundError
 from app.domains.categories.repository import CategoryRepository
 from app.domains.categories.schemas import CategoryCreate, CategoryKind, CategoryUpdate
@@ -14,14 +15,18 @@ class CategoryService:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.repository = CategoryRepository(session)
+        self.audit = AuditLogService(session)
 
     def create(self, kind: CategoryKind, data: CategoryCreate, actor_id: uuid.UUID) -> Any:
         name = data.name.strip()
         if self.repository.name_exists(kind, name):
             raise CategoryNameExistsError()
         model = self.repository.model_for(kind)
-        category = model(name=name, sort_order=data.sort_order, created_by=actor_id, updated_by=actor_id)
+        category = model(id=uuid.uuid4(), name=name, sort_order=data.sort_order, created_by=actor_id, updated_by=actor_id)
         self.repository.add(category)
+        self.audit.record(actor_id=actor_id, action="category_create", entity_type=f"{kind}_category",
+                          entity_id=category.id, entity_label=category.name,
+                          after_data=audit_snapshot(category, "name", "sort_order", "is_active"))
         self._commit_unique()
         self.session.refresh(category)
         return category
@@ -37,6 +42,7 @@ class CategoryService:
 
     def update(self, kind: CategoryKind, category_id: uuid.UUID, data: CategoryUpdate, actor_id: uuid.UUID) -> Any:
         category = self.get(kind, category_id)
+        before = audit_snapshot(category, "name", "sort_order", "is_active")
         if data.name is not None:
             name = data.name.strip()
             if self.repository.name_exists(kind, name, category_id):
@@ -45,14 +51,22 @@ class CategoryService:
         if data.sort_order is not None:
             category.sort_order = data.sort_order
         category.updated_by = actor_id
+        action = "category_reorder" if data.sort_order is not None and data.name is None else "category_update"
+        self.audit.record(actor_id=actor_id, action=action, entity_type=f"{kind}_category",
+                          entity_id=category.id, entity_label=category.name, before_data=before,
+                          after_data=audit_snapshot(category, "name", "sort_order", "is_active"))
         self._commit_unique()
         self.session.refresh(category)
         return category
 
     def set_active(self, kind: CategoryKind, category_id: uuid.UUID, active: bool, actor_id: uuid.UUID) -> Any:
         category = self.get(kind, category_id)
+        before = audit_snapshot(category, "name", "sort_order", "is_active")
         category.is_active = active
         category.updated_by = actor_id
+        self.audit.record(actor_id=actor_id, action="category_reactivate" if active else "category_deactivate",
+                          entity_type=f"{kind}_category", entity_id=category.id, entity_label=category.name,
+                          before_data=before, after_data=audit_snapshot(category, "name", "sort_order", "is_active"))
         self.session.commit()
         self.session.refresh(category)
         return category
@@ -60,9 +74,12 @@ class CategoryService:
     def hard_delete(self, kind: CategoryKind, category_id: uuid.UUID, actor_id: uuid.UUID, password: str) -> None:
         AuthService(self.session).verify_current_password(actor_id, password)
         category = self.get(kind, category_id)
+        before = audit_snapshot(category, "name", "sort_order", "is_active")
         if self.repository.has_references(kind, category_id):
             raise CategoryInUseError()
         self.repository.delete(category)
+        self.audit.record(actor_id=actor_id, action="category_hard_delete", entity_type=f"{kind}_category",
+                          entity_id=category.id, entity_label=category.name, before_data=before)
         try:
             self.session.commit()
         except IntegrityError as exc:

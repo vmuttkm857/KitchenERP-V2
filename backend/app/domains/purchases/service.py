@@ -8,9 +8,10 @@ from app.domains.purchases.exceptions import DuplicatePurchaseError,InvalidPurch
 from app.domains.purchases.models import PurchaseBatch,PurchaseOrder,PurchaseOrderItem
 from app.domains.purchases.repository import PurchaseRepository
 from app.domains.snapshots.service import SnapshotService
+from app.domains.audit.service import AuditLogService, audit_snapshot
 
 class PurchaseService:
-    def __init__(self,session):self.session=session;self.repository=PurchaseRepository(session)
+    def __init__(self,session):self.session=session;self.repository=PurchaseRepository(session);self.audit=AuditLogService(session)
     def create(self,snapshot_id,actor_id,notes=None):
         existing=self.repository.batch_for_snapshot(snapshot_id)
         if existing:raise DuplicatePurchaseError(existing.id)
@@ -33,6 +34,10 @@ class PurchaseService:
                 self.repository.add(order);self.session.flush()
                 for item,final,cost,warnings in group:
                     self.repository.add(PurchaseOrderItem(purchase_order_id=order.id,source_snapshot_item_id=item.id,ingredient_id=item.ingredient_id,ingredient_code_snapshot=item.ingredient_code_snapshot,ingredient_name_snapshot=item.ingredient_name_snapshot,supplier_id=item.supplier_id,supplier_code_snapshot=item.supplier_code_snapshot,supplier_name_snapshot=item.supplier_name_snapshot,requirement_quantity_snapshot=item.requirement_quantity,requirement_unit_snapshot=item.requirement_unit,suggested_quantity_snapshot=item.suggested_purchase_quantity,adjusted_quantity_snapshot=item.adjusted_quantity,final_purchase_quantity=final,purchase_unit_snapshot=item.purchase_unit_snapshot,package_size_snapshot=item.package_size_snapshot,minimum_order_quantity_snapshot=item.minimum_order_quantity_snapshot,unit_price_snapshot=item.unit_price_snapshot,purchase_cost_snapshot=cost,anomaly_snapshot=item.anomaly_snapshot+warnings,source_summary_snapshot=item.source_summary))
+            self.audit.record(actor_id=actor_id,action="purchase_create",entity_type="purchase",entity_id=batch.id,
+                entity_label=batch.purchase_number,after_data={"purchase_number":batch.purchase_number,"status":batch.status,
+                "source_snapshot_id":batch.source_snapshot_id,"known_total_cost":batch.known_total_cost,
+                "total_cost":batch.total_cost,"supplier_count":len(grouped),"item_count":len(prepared)})
             self.session.commit()
         except IntegrityError as exc:
             self.session.rollback();existing=self.repository.batch_for_snapshot(snapshot_id);raise DuplicatePurchaseError(existing.id if existing else None) from exc
@@ -53,7 +58,7 @@ class PurchaseService:
     def transition(self,batch_id,target,actor_id):
         batch=self.repository.batch(batch_id)
         if not batch:raise PurchaseNotFoundError()
-        now=datetime.now(UTC)
+        before=audit_snapshot(batch,"purchase_number","status","confirmed_at","cancelled_at");now=datetime.now(UTC)
         if target=="confirmed":
             if batch.status!="draft":raise InvalidPurchaseStatusError()
             batch.status="confirmed";batch.confirmed_at=now
@@ -61,4 +66,8 @@ class PurchaseService:
             if batch.status not in {"draft","confirmed"}:raise InvalidPurchaseStatusError()
             batch.status="cancelled";batch.cancelled_at=now
         else:raise InvalidPurchaseStatusError()
-        batch.updated_by=actor_id;self.session.commit();return self.detail(batch.id)
+        batch.updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="purchase_confirm" if target=="confirmed" else "purchase_cancel",
+            entity_type="purchase",entity_id=batch.id,entity_label=batch.purchase_number,before_data=before,
+            after_data=audit_snapshot(batch,"purchase_number","status","confirmed_at","cancelled_at"))
+        self.session.commit();return self.detail(batch.id)

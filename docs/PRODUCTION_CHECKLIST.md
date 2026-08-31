@@ -22,8 +22,11 @@
 
 - [ ] A new PostgreSQL database and least-privilege application role exist.
 - [ ] `alembic upgrade head` completed as an explicit deployment step.
-- [ ] `alembic current` equals `20260828_0006 (head)`.
+- [ ] `alembic current` equals `20260831_0009 (head)`.
 - [ ] Initial admin was created interactively with `python -m app.cli.create_admin`.
+- [ ] 每位操作人員都有獨立帳號；至少兩位 active admin，避免唯一管理員保護造成營運阻塞。
+- [ ] Users/Audit API 對一般 user 回傳 403；所有 hard-delete 僅 admin 可執行。
+- [ ] `audit_logs` 可寫入並只能由 admin 查詢；沒有任何 Audit PATCH/DELETE endpoint。
 - [ ] No V1 test data was imported.
 - [ ] Connection budget fits PostgreSQL: 2 workers × (5 pool + 5 overflow) = 20 maximum app connections.
 
@@ -31,6 +34,7 @@
 
 - [ ] Backend runs under systemd without `--reload` and binds only `127.0.0.1:8000`.
 - [ ] Uvicorn trusts forwarded headers only from `127.0.0.1`.
+- [ ] Audit IP 目前使用直接 peer IP；啟用代理來源 IP 前，已明確設定並驗證 Caddy trusted-proxy 邊界，不信任任意 `X-Forwarded-For`。
 - [ ] `GET /api/v1/health` returns 200 and the expected version.
 - [ ] `GET /api/v1/ready` returns 200 with database/schema checks `ok`.
 - [ ] Login, master-data creation, recipe, menu, calculations, snapshot, purchase and export smoke tests pass.
@@ -44,4 +48,3 @@
 - [ ] Restore rehearsal completed into a separate empty database and was recorded.
 - [ ] Upgrade and rollback owner, maintenance window and user communication are agreed.
 - [ ] Monitoring alerts on service failure, readiness failure, disk pressure and backup failure.
-

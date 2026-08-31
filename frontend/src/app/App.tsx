@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { ApiError, apiRequest } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { LoadingState } from '../components/ui/Page'
+import { AuditLogsPage } from '../features/audit/AuditLogsPage'
 import { LoginPage } from '../features/auth/LoginPage'
 import { CategoriesPage } from '../features/categories/CategoriesPage'
 import { Dish, DishesPage } from '../features/dishes/DishesPage'
@@ -14,16 +16,20 @@ import { RecipeEditor } from '../features/recipes/RecipeEditor'
 import { RequirementsPage } from '../features/requirements/RequirementsPage'
 import { SnapshotsPage } from '../features/snapshots/SnapshotsPage'
 import { SuppliersPage } from '../features/suppliers/SuppliersPage'
+import { ChangePasswordDialog, UsersPage } from '../features/users/UsersPage'
 import { NavigationBlockerProvider, useNavigationBlocker } from './NavigationBlocker'
 
-type Page='categories'|'suppliers'|'ingredients'|'dishes'|'recipe'|'menus'|'menu-editor'|'requirements'|'snapshots'|'purchases'|'kitchen'
-const groups=[
+type Page='categories'|'suppliers'|'ingredients'|'dishes'|'recipe'|'menus'|'menu-editor'|'requirements'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
+const businessGroups=[
   {label:'主檔管理',items:[['categories','分類'],['suppliers','供應商'],['ingredients','食材'],['dishes','菜色／配方']]},
   {label:'菜單',items:[['menus','菜單管理'],['kitchen','廚房作業']]},
   {label:'需求／採購',items:[['requirements','食材需求'],['snapshots','固定需求快照'],['purchases','正式採購']]},
 ] as const
+const systemGroup={label:'系統管理',items:[['users','使用者管理'],['audit','操作紀錄']]} as const
 
-type NavPage=(typeof groups)[number]['items'][number][0]
+type BusinessNavPage=(typeof businessGroups)[number]['items'][number][0]
+type SystemNavPage=(typeof systemGroup)['items'][number][0]
+type NavPage=BusinessNavPage|SystemNavPage
 const sidebarPreferenceKey='kitchenerp.sidebar.collapsed'
 
 function NavIcon({page}:{page:NavPage}){
@@ -37,6 +43,8 @@ function NavIcon({page}:{page:NavPage}){
     requirements:'M7 3h10v4H7V3ZM5 5H3v16h18V5h-2M7 11h10M7 15h7',
     snapshots:'M5 4h14v16H5V4Zm3-2h8v4H8V2Zm0 8h8m-8 4h8',
     purchases:'M3 5h2l2 10h10l3-7H6m3 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z',
+    users:'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7-1a3 3 0 1 0 0-6m-7 9c-4 0-7 2-7 5v2h14v-2c0-3-3-5-7-5Zm7-1c3 0 6 2 6 5v2h-4',
+    audit:'M5 3h14v18H5V3Zm3 5h8m-8 4h8m-8 4h5',
   }
   return <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={paths[page]}/></svg>
 }
@@ -48,6 +56,7 @@ function Application(){
     try{const saved=localStorage.getItem(sidebarPreferenceKey);return saved===null?window.matchMedia('(max-width: 1100px)').matches:saved==='true'}catch{return false}
   })
   const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null)
+  const [passwordOpen,setPasswordOpen]=useState(false),[passwordBusy,setPasswordBusy]=useState(false),[passwordError,setPasswordError]=useState('')
   useEffect(()=>{try{localStorage.setItem(sidebarPreferenceKey,String(sidebarCollapsed))}catch{/* UI preference remains in memory. */}},[sidebarCollapsed])
   useEffect(()=>{
     if(!navOpen)return
@@ -56,10 +65,12 @@ function Application(){
   },[navOpen])
   if(isLoading)return <main className="shell"><LoadingState label="系統載入中…"/></main>
   if(!user)return <LoginPage/>
+  const groups=user.role==='admin'?[...businessGroups,systemGroup]:businessGroups
   function navigate(next:Page){requestNavigation(()=>{setPage(next);setNavOpen(false)})}
+  async function changePassword(current:string,next:string,confirm:string){setPasswordBusy(true);setPasswordError('');try{await apiRequest('/users/me/change-password',{method:'POST',body:JSON.stringify({current_password:current,new_password:next,confirm_password:confirm})});setPasswordOpen(false);await logout()}catch(cause){setPasswordError(cause instanceof ApiError&&cause.status<500?cause.message:'密碼修改失敗，請稍後再試。')}finally{setPasswordBusy(false)}}
   const isActive=(id:NavPage)=>page===id||(id==='dishes'&&page==='recipe')||(id==='menus'&&page==='menu-editor')
   return <div className={`app-layout ${sidebarCollapsed?'sidebar-collapsed':''}`}>
-    <header className="topbar"><button className="nav-toggle secondary" aria-label={navOpen?'關閉導覽':'開啟導覽'} aria-expanded={navOpen} onClick={()=>setNavOpen(v=>!v)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div><span className="brand">KitchenERP</span><small>廚房營運管理</small></div><div className="account"><span>{user.display_name}</span><button className="secondary" onClick={()=>requestNavigation(()=>void logout())}>登出</button></div></header>
+    <header className="topbar"><button className="nav-toggle secondary" aria-label={navOpen?'關閉導覽':'開啟導覽'} aria-expanded={navOpen} onClick={()=>setNavOpen(v=>!v)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div><span className="brand">KitchenERP</span><small>廚房營運管理</small></div><div className="account"><span>{user.display_name}</span><button className="secondary" onClick={()=>requestNavigation(()=>{setPasswordError('');setPasswordOpen(true)})}>修改密碼</button><button className="secondary" onClick={()=>requestNavigation(()=>void logout())}>登出</button></div></header>
     <aside className={`sidebar ${navOpen?'is-open':''}`} aria-label="主要導覽">
       <div className="sidebar-controls"><button className="sidebar-toggle" aria-label={sidebarCollapsed?'展開側邊導覽':'收合側邊導覽'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed?'展開側邊導覽':'收合側邊導覽'} onClick={()=>setSidebarCollapsed(value=>!value)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={sidebarCollapsed?'m9 5 7 7-7 7':'m15 5-7 7 7 7'}/></svg><span>收合</span></button></div>
       <nav>{groups.map(group=><section className="nav-group" key={group.label}><h2>{group.label}</h2>{group.items.map(([id,label])=><button key={id} className={isActive(id)?'active':''} aria-current={isActive(id)?'page':undefined} aria-label={sidebarCollapsed?label:undefined} title={sidebarCollapsed?label:undefined} onClick={()=>navigate(id)}><NavIcon page={id}/><span>{label}</span></button>)}</section>)}</nav>
@@ -70,7 +81,9 @@ function Application(){
       {page==='dishes'&&<DishesPage onEditRecipe={dish=>{setRecipeDish(dish);navigate('recipe')}}/>}{page==='recipe'&&recipeDish&&<RecipeEditor dish={recipeDish} onClose={()=>navigate('dishes')}/>}
       {page==='menus'&&<MenusPage onOpen={menu=>{setEditingMenu(menu);navigate('menu-editor')}}/>}{page==='menu-editor'&&editingMenu&&<MenuEditor menu={editingMenu} onClose={()=>navigate('menus')}/>}
       {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage/>}{page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
+      {page==='users'&&user.role==='admin'&&<UsersPage/>}{page==='audit'&&user.role==='admin'&&<AuditLogsPage/>}
     </main>
+    {passwordOpen&&<ChangePasswordDialog busy={passwordBusy} error={passwordError} onClose={()=>setPasswordOpen(false)} onSubmit={changePassword}/>}
   </div>
 }
 

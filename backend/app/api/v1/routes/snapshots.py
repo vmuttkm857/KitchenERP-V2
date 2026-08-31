@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter,Depends,HTTPException,Query,Response,status
 from sqlalchemy.orm import Session
 from app.api.dependencies import get_db_session
-from app.domains.auth.dependencies import get_current_user
+from app.domains.auth.dependencies import get_current_user, require_admin
 from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,InvalidSnapshotDateRangeError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.snapshots.schemas import SnapshotCreate,SnapshotDetail,SnapshotHeaderPublic,SnapshotItemPublic,SnapshotItemUpdate,SnapshotList
@@ -48,8 +48,7 @@ def adjust(snapshot_id:uuid.UUID,item_id:uuid.UUID,data:SnapshotItemUpdate,user:
     except Exception as exc:raise mapped(exc) from exc
 
 @router.post("/{snapshot_id}/hard-delete",status_code=204)
-def hard_delete(snapshot_id:uuid.UUID,data:PasswordConfirmation,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
-    if user.role!="admin":raise HTTPException(403,"Admin role required")
+def hard_delete(snapshot_id:uuid.UUID,data:PasswordConfirmation,user:Annotated[User,Depends(require_admin)],session:Annotated[Session,Depends(get_db_session)]):
     try:SnapshotService(session).delete(snapshot_id,user.id,data.password)
     except Exception as exc:raise mapped(exc) from exc
     return Response(status_code=204)

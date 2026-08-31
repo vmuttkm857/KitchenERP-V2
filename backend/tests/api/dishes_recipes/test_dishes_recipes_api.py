@@ -3,11 +3,12 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import engine as process_engine
+from app.domains.audit.models import AuditLog
 from app.domains.dishes.models import Dish
 from app.domains.dishes.repository import DishRepository
 from app.domains.users.schemas import CreateUserCommand
@@ -162,6 +163,11 @@ def test_recipe_replace_decimal_sort_relationship_removal_and_actors(client: Tes
     assert updated.json()["items"][0]["id"] == retained["id"]
     assert updated.json()["items"][0]["updated_by"] == actor_id
     assert client.get(f"/api/v1/ingredients/{ingredients[1]['id']}", headers=headers).status_code == 200
+    recipe_logs = list(db_session.scalars(select(AuditLog).where(
+        AuditLog.action == "recipe_replace", AuditLog.entity_id == uuid.UUID(dish["id"])
+    ).order_by(AuditLog.created_at)))
+    assert len(recipe_logs) == 2
+    assert recipe_logs[-1].before_data["items"] and len(recipe_logs[-1].after_data["items"]) == 1
 
 
 def test_recipe_duplicate_invalid_values_and_inactive_ingredient_are_rejected(client: TestClient, db_session: Session) -> None:

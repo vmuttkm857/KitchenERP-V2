@@ -1,10 +1,10 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 6－Kitchen Operations 與 Phase 9－Purchases（不含配送）已完成**。下一階段必須等待明確指示才可開始。每一階段都必須遵守根目錄 `ARCHITECTURE.md`，並以 `docs/V2_REGRESSION_REQUIREMENTS.md` 作回歸基準。
+> 目前狀態：**Phase 0–9 的既定核心能力、Users Management、兩角色 RBAC 與 append-only Audit Log 已完成；配送仍未開始**。下一階段必須等待明確指示才可開始。
 
 ## Phase 0：架構與核心決策（已完成）
 
-- 已固定 Access Token + Refresh Token、`admin/user`、重要主表預留 actor 欄位但不建完整 audit log。
+- 已固定 Access Token + Refresh Token、`admin/user`、actor 欄位與同交易 append-only Audit Log。
 - 已固定 Decimal string API、UTC timestamp / Asia-Taipei 顯示、三類 Delete Policy、recipe 草稿 0 / 正式 >0、Snapshot fingerprint + DB unique constraint。
 - 已固定 `menu_days.menu_meal_type_id` FK、`dish_categories.sort_order` 與 legacy unit 只在 migration 階段正規化。
 - 對 V1 現場資料做另行 read-only audit，產出資料遷移風險清單。
@@ -22,11 +22,11 @@
 
 完成條件：空 schema 可由 Alembic 建立；健康檢查、測試與 query telemetry 可運作；尚無 ERP domain 功能。
 
-## Phase 2：Authentication 與 Users（已完成）
+## Phase 2：Authentication、Users、RBAC 與 Audit（已完成）
 
-- users schema、password hashing、登入/登出/refresh 或 session lifecycle。
-- Backend authorization enforcement 與前端登入/route guard。
-- 依 Phase 0 決策加入角色與必要 audit actor。
+- users schema、Users Management、Argon2、登入/登出/refresh rotation 與 session revoke。
+- 集中 `admin/user` authorization dependency；admin 專屬 Users/Audit/hard-delete，一般 user 保留日常 ERP 操作。
+- append-only `audit_logs`、actor snapshot、before/after、敏感資料 sanitization 與管理員查詢 UI。
 
 完成條件：每位使用者以獨立帳密登入；停用、權限與安全回歸測試通過。
 
@@ -59,19 +59,19 @@
 
 重點：aggregate API、真正 ID、單一 transaction、避免每格/每列 N+1。
 
-## Phase 6：廚房作業／備料（查詢與 Web 視圖已完成；Excel 尚未開始）
+## Phase 6：廚房作業／備料（已完成）
 
 - 單餐、單日、整張菜單三種範圍。
 - 依菜色、食材、供應商 view。
 - 缺配方/缺食材/不可換算警示。
-- A4 備料 Excel 與整週總覽。
+- 一般 Excel/PDF 與獨立 A4 現場列印 workbook；日期 × 餐別獨立 worksheet/page numbering。
 
 重點：只讀菜單與配方，不讀採購量；Web 與 Excel 共用 Backend quantity formatter/輸出規則。
 
-## Phase 7：食材需求（即時計算 Preview 已完成）
+## Phase 7：食材需求（已完成既定第一版）
 
 - 多分類/菜單/日期候選與快速加入。
-- requirement preview、彙總/明細、成本及待確認警示。
+- requirement preview、每日需求／依供應商／總需求 views、成本、待確認警示與 Excel。
 - 保留 menu/date schedule，不跨菜單錯誤合併。
 
 重點：純計算先做 unit tests，再接 Repository aggregate query 與 API query budget。

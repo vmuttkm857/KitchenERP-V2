@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db_session
-from app.domains.auth.dependencies import get_current_user
+from app.domains.auth.dependencies import get_current_user, require_admin
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.ingredients.exceptions import IngredientCodeExistsError, IngredientInUseError, IngredientNameExistsError, IngredientNotFoundError, InvalidIngredientReferenceError
 from app.domains.ingredients.schemas import IngredientCreate, IngredientList, IngredientPublic, IngredientUpdate, PriceHistoryPublic
@@ -70,7 +70,7 @@ def reactivate_ingredient(ingredient_id: uuid.UUID, user: Annotated[User, Depend
 
 
 @router.post("/{ingredient_id}/hard-delete", status_code=204)
-def hard_delete_ingredient(ingredient_id: uuid.UUID, confirmation: PasswordConfirmation, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+def hard_delete_ingredient(ingredient_id: uuid.UUID, confirmation: PasswordConfirmation, user: Annotated[User, Depends(require_admin)], session: Annotated[Session, Depends(get_db_session)]):
     try: IngredientService(session).hard_delete(ingredient_id, user.id, confirmation.password)
     except Exception as exc: raise map_error(exc) from exc
     return None

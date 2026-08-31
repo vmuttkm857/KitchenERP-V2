@@ -13,6 +13,8 @@ from app.api.v1.routes.snapshots import router as snapshots_router
 from app.api.v1.routes.purchases import router as purchases_router
 from app.api.v1.routes.kitchen_operations import router as kitchen_operations_router
 from app.api.v1.routes.exports import router as exports_router
+from app.api.v1.routes.users import router as users_router
+from app.api.v1.routes.audit_logs import router as audit_logs_router
 
 
 api_v1_router = APIRouter()
@@ -29,3 +31,5 @@ api_v1_router.include_router(snapshots_router)
 api_v1_router.include_router(purchases_router)
 api_v1_router.include_router(kitchen_operations_router)
 api_v1_router.include_router(exports_router)
+api_v1_router.include_router(users_router)
+api_v1_router.include_router(audit_logs_router)
