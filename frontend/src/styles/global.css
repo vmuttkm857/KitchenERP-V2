@@ -201,6 +201,11 @@ button.compact { min-height:2rem; padding:.3rem .45rem; font-size:.76rem; }
 .copy-menu-dialog { width:min(50rem,100%); }
 .copy-menu-dialog fieldset { padding:.7rem; border:1px solid #cbd8ce; border-radius:.6rem; }
 .copy-menu-dialog legend { padding:0 .35rem; color:#425148; font-weight:750; }
+.export-dialog { width:min(34rem,100%); }
+.export-dialog fieldset { display:grid; gap:.55rem; margin:.8rem 0; padding:.8rem; border:1px solid #cbd8ce; border-radius:.6rem; }
+.export-dialog legend { padding:0 .35rem; color:#425148; font-weight:750; }
+.export-dialog fieldset label { display:flex; flex-direction:row; align-items:center; gap:.5rem; padding:.55rem .7rem; background:#f6f9f6; border-radius:.45rem; }
+.export-dialog fieldset input { width:auto; min-width:auto; }
 .copy-scope,.copy-conflict-mode { display:flex; gap:.6rem; margin-bottom:1rem; }
 .copy-scope label,.copy-conflict-mode label { display:flex; flex-direction:row; align-items:center; gap:.4rem; padding:.55rem .75rem; background:#f6f9f6; border:1px solid #d7e0d8; border-radius:.45rem; }
 .copy-scope input,.copy-conflict-mode input { width:auto; }

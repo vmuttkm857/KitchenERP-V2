@@ -24,11 +24,12 @@
 | Menu | 日期 × 餐別矩陣、餐格批次交易 | menus | `/menus/{id}/editor` | Menu Editor | menu API | Smoke 8 | PASS |
 | Menu | 餐格平時摘要，集中編輯菜色、人數、備註、排序 | menus | editor aggregate | Menu Editor panel | TypeScript build + menu API | Smoke 8 | PASS |
 | Menu | 單日／完整七日加入或覆蓋複製 | menus | `copy-day`, `copy-week` | 「複製菜單」panel | menu API transaction tests | 覆蓋確認 | PASS |
-| Menu | 週菜單可編輯版／列印版 Excel | exports | — | — | — | — | MISSING |
+| Menu | 餐別合併／菜色分格／漂亮公告七日週表；單張 A4 Excel、4 張拼接 Excel（公告版除外）與 image-only PDF | exports | `/exports/menus/{id}/{layout}/{format}?variant=single\|poster` | Menu Editor Export Dialog | export unit/API/frontend tests | Excel COM 1/4-page and PDF raster review | PASS |
 | Kitchen | 依日期、餐別、菜色產生只讀備料 | kitchen_operations | `/kitchen-operations/calculate` | Kitchen Operations | kitchen API/unit | Smoke 9 | PASS |
 | Kitchen | 菜色／食材／供應商三種 view | kitchen_operations | 同一 aggregate API | Kitchen Operations toggles | kitchen API | 切換不重新計算 | PASS |
 | Kitchen | 備料量 = 人數 × 配方量 × (1+耗損) | kitchen_operations/shared | calculate | Kitchen Operations | known-answer tests | Smoke 9 | PASS |
 | Kitchen | Excel/PDF/A4 現場列印，文字公式注入防護 | exports | `/exports/kitchen-operations/*`, `/a4-xlsx` | Header actions | export API/unit/A4 layout | 列印預覽與實體 A4 | PASS |
+| Kitchen | 七日週配料表，依菜色顯示人數、食材與安全換算量；異常不靜默省略 | exports/kitchen_operations | `/exports/kitchen-operations/simple/{format}?variant=single\|poster` | Kitchen Export Dialog | known-answer/conversion/anomaly/image-only tests | Excel COM 1/4-page and PDF raster review | PASS |
 | Requirement | 多菜單與日期 criteria、Decimal 彙總 | requirements | `/requirements/calculate` | Requirements | requirement API/unit | Smoke 10 | PASS |
 | Requirement | 總表／供應商分組、集中異常 | requirements | aggregate result | Requirements | requirement API | Smoke 10 | PASS |
 | Requirement | 日期 overlap／關鍵字候選、server-side pagination、保留已選菜單 | requirements/menus | `/menus` filters | Requirements candidate selector | frontend/menu API | 候選操作 | PASS |
@@ -68,7 +69,6 @@
 
 ### B. 可以之後補
 
-- 週菜單可編輯版／列印版 Excel。
 - Requirement 更進階的多分類候選篩選（日期 overlap、關鍵字與每日明細已完成）。
 - 每日叫貨表、帳務明細、分帳與進階供應商／日期報表。
 - Purchase 結案／恢復與受控正式單刪除（需先確認新 V2 lifecycle）。

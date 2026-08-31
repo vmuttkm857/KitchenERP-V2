@@ -55,7 +55,7 @@
 - menus、動態餐別、日期餐格 lazy materialization。
 - 餐格 basket、批次加菜、人數、備註、連續排序。
 - 一日/整週加入與覆蓋複製。
-- 週菜單可編輯版與列印版 Excel。
+- 週菜單完整表與簡潔公告版 Excel，以及對應的 image-only PDF。
 
 重點：aggregate API、真正 ID、單一 transaction、避免每格/每列 N+1。
 
@@ -65,6 +65,7 @@
 - 依菜色、食材、供應商 view。
 - 缺配方/缺食材/不可換算警示。
 - 一般 Excel/PDF 與獨立 A4 現場列印 workbook；日期 × 餐別獨立 worksheet/page numbering。
+- 七日橫向週配料表 Excel（單張 A4／4 張 A4 拼接）與 image-only PDF，沿用同一 Kitchen calculator 與 anomaly 規則；重量顯示為 kg、容量顯示為 L，異常菜色保留安全食材並顯示現場中文提醒。
 
 重點：只讀菜單與配方，不讀採購量；Web 與 Excel 共用 Backend quantity formatter/輸出規則。
 

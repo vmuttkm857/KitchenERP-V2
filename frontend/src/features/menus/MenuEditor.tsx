@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, apiRequest } from '../../api/client'
+import { ApiError, apiDownload, apiRequest } from '../../api/client'
 import { Feedback, LoadingState } from '../../components/ui/Page'
 import { MenuEditorPanel } from './MenuEditorPanel'
 import { MenuWeekGrid } from './MenuWeekGrid'
@@ -33,7 +33,12 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [dialog, setDialog] = useState<'meal' | 'copy' | null>(null)
+  const [dialog, setDialog] = useState<'meal' | 'copy' | 'export' | null>(null)
+  const [exportLayout, setExportLayout] = useState<'full' | 'grid' | 'pretty'>('full')
+  const [exportFormat, setExportFormat] = useState<'xlsx' | 'pdf'>('xlsx')
+  const [exportVariant, setExportVariant] = useState<'single' | 'poster'>('single')
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState('')
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [mealDraft, setMealDraft] = useState<MenuSlot | null>(null)
   const [mealInitial, setMealInitial] = useState('')
@@ -141,9 +146,19 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
     window.setTimeout(() => searchInputRef.current?.focus(), 0)
   }
   function requestCloseMeal() { if (saving) return; if (mealDraft && JSON.stringify(mealDraft) !== mealInitial) setConfirmation({ kind: 'discard-meal' }); else closeMealEditor() }
-  function openDialog(next: 'meal' | 'copy') {
+  function openDialog(next: 'meal' | 'copy' | 'export') {
     if (next === 'copy') setCopyError(null)
+    if (next === 'export') setExportError('')
     setDialog(next)
+  }
+
+  async function downloadMenu() {
+    setExporting(true); setExportError('')
+    try {
+      await apiDownload(`/exports/menus/${menu.id}/${exportLayout}/${exportFormat}?variant=${exportVariant}`)
+      setDialog(null)
+    } catch { setExportError('菜單匯出失敗，請稍後再試。') }
+    finally { setExporting(false) }
   }
 
   async function saveMealDraft() {
@@ -193,7 +208,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const selectedSourceMenu = sourceMenus.find(item => item.id === sourceMenu)
 
   return <section className="menu-editor-page">
-    <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={onClose}>返回</button></div></header>
+    <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={() => openDialog('export')}>匯出</button><button className="secondary" onClick={onClose}>返回</button></div></header>
     {error && <Feedback type="error">{error}</Feedback>}{message && <Feedback type="success">{message}</Feedback>}
     {!meals.length ? <div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div> : <div className="menu-editor-workspace"><MenuWeekGrid dates={data.dates} meals={meals} selectedKey={editingKey} slotFor={slotFor} onSelect={selectCell}/></div>}
     {editing && <MenuEditorPanel date={editing.date} meal={editing.meal} slot={editing.slot} search={dishSearch} categoryId={dishCategoryId} categories={dishCategories} results={dishResults} searchTotal={dishTotal} searchPage={dishPage} searchLoading={dishLoading} searchInputRef={searchInputRef} onClose={requestCloseMeal} onSave={saveMealDraft} saving={saving} saveError={mealSaveError} onSlotNotes={notes => setMealDraftSlot({ ...editing.slot, notes })} onDishChange={(index, changes) => updateDish(editing.slot, index, changes)} onMove={(index, direction) => moveDish(editing.slot, index, direction)} onRemove={index => setConfirmation({ kind: 'remove-dish', index })} onSearch={value => { setDishSearch(value); setDishPage(1) }} onCategory={value => { setDishCategoryId(value); setDishPage(1) }} onSearchPage={setDishPage} onAdd={dish => addDish(editing.slot, dish)}/>}
@@ -205,6 +220,13 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
       <fieldset className="copy-conflict-mode" disabled={copySaving}><legend>目的已有內容時</legend><label><input type="radio" name="copy-mode" checked={copyMode === 'add'} onChange={() => { setCopyMode('add'); setConfirmReplace(false); setCopyError(null) }}/>加入並跳過重複</label><label><input type="radio" name="copy-mode" checked={copyMode === 'replace'} onChange={() => { setCopyMode('replace'); setCopyError(null) }}/>覆蓋目的內容</label></fieldset>
       {copyMode === 'replace' && <label className="confirm-box"><input disabled={copySaving} type="checkbox" checked={confirmReplace} onChange={event => setConfirmReplace(event.target.checked)}/>我了解目的{copyScope === 'day' ? '日期' : '整週'}原有餐格內容將被覆蓋。</label>}{copyError?.scope === copyScope && <Feedback type="error">{copyError.message}</Feedback>}
       <footer><button className="secondary" disabled={copySaving} onClick={() => setDialog(null)}>取消</button><button disabled={copySaving || incompleteSourceRange || invalidSourceRange || !sourceMenu || (copyMode === 'replace' && !confirmReplace)} onClick={() => void copy()}>{copySaving ? '複製中…' : copyScope === 'day' ? '複製這一天' : '複製整週'}</button></footer>
+    </section></div>}
+    {dialog === 'export' && <div className="modal-backdrop" onMouseDown={() => { if (!exporting) setDialog(null) }}><section className="modal-panel export-dialog" role="dialog" aria-modal="true" aria-labelledby="menu-export-title" onMouseDown={event => event.stopPropagation()}><header><div><h2 id="menu-export-title">匯出菜單</h2><p>選擇七日週表版型與單張或拼接列印方式。</p></div><button className="secondary" disabled={exporting} onClick={() => setDialog(null)}>關閉</button></header>
+      <fieldset disabled={exporting}><legend>版型</legend><label><input autoFocus type="radio" name="menu-export-layout" checked={exportLayout === 'full'} onChange={() => { setExportLayout('full'); setExportError('') }}/>餐別合併週表</label><label><input type="radio" name="menu-export-layout" checked={exportLayout === 'grid'} onChange={() => { setExportLayout('grid'); setExportError('') }}/>菜色分格週表</label><label><input type="radio" name="menu-export-layout" checked={exportLayout === 'pretty'} onChange={() => { setExportLayout('pretty'); setExportVariant('single'); setExportError('') }}/>漂亮公告版</label></fieldset>
+      <fieldset disabled={exporting}><legend>格式</legend><label><input type="radio" name="menu-export-format" checked={exportFormat === 'xlsx'} onChange={() => { setExportFormat('xlsx'); setExportError('') }}/>Excel</label><label><input type="radio" name="menu-export-format" checked={exportFormat === 'pdf'} onChange={() => { setExportFormat('pdf'); setExportVariant('single'); setExportError('') }}/>PDF（圖片型）</label></fieldset>
+      {exportFormat === 'xlsx' && exportLayout !== 'pretty' && <fieldset disabled={exporting}><legend>紙張</legend><label><input type="radio" name="menu-export-variant" checked={exportVariant === 'single'} onChange={() => setExportVariant('single')}/>單張 A4</label><label><input type="radio" name="menu-export-variant" checked={exportVariant === 'poster'} onChange={() => setExportVariant('poster')}/>4張 A4 拼接放大</label></fieldset>}
+      {exportError && <Feedback type="error">{exportError}</Feedback>}
+      <footer><button className="secondary" disabled={exporting} onClick={() => setDialog(null)}>取消</button><button disabled={exporting} onClick={() => void downloadMenu()}>{exporting ? '匯出中…' : '匯出'}</button></footer>
     </section></div>}
     {confirmationContent && <MenuConfirmDialog title={confirmationContent.title} description={confirmationContent.description} confirmLabel={confirmationContent.label} onCancel={() => setConfirmation(null)} onConfirm={confirmationContent.action}/>}
   </section>

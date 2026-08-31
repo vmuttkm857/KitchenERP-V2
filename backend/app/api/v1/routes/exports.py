@@ -9,6 +9,7 @@ from app.domains.exports.safety import content_disposition,safe_filename
 from app.domains.exports.service import ExportService
 from app.domains.kitchen_operations.exceptions import KitchenMenuNotFoundError
 from app.domains.kitchen_operations.schemas import KitchenCriteria
+from app.domains.menus.exceptions import MenuNotFoundError
 from app.domains.purchases.exceptions import PurchaseNotFoundError
 from app.domains.requirements.exceptions import RequirementMenuNotFoundError
 from app.domains.requirements.schemas import RequirementCriteria
@@ -18,16 +19,29 @@ TYPES={"xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 def binary(payload,name,format):
     filename=safe_filename(name,format);return Response(payload,media_type=TYPES[format],headers={"Content-Disposition":content_disposition(filename),"X-Content-Type-Options":"nosniff"})
 def mapped(exc):
-    if isinstance(exc,(KitchenMenuNotFoundError,RequirementMenuNotFoundError,SnapshotNotFoundError,PurchaseNotFoundError)):return HTTPException(404,"Export source not found")
+    if isinstance(exc,(KitchenMenuNotFoundError,MenuNotFoundError,RequirementMenuNotFoundError,SnapshotNotFoundError,PurchaseNotFoundError)):return HTTPException(404,"Export source not found")
     if isinstance(exc,EmptyExportError):return HTTPException(422,detail={"code":"EMPTY_EXPORT","message":str(exc)})
     return HTTPException(400,detail={"code":"EXPORT_FAILED","message":"The export could not be generated"})
 @router.post("/kitchen-operations/a4-xlsx")
 def export_kitchen_a4(criteria:KitchenCriteria,session:Annotated[Session,Depends(get_db_session)]):
     try:payload,name=ExportService(session).kitchen_a4(criteria);return binary(payload,f"{name}_A4廚房作業表","xlsx")
     except Exception as exc:raise mapped(exc) from exc
+@router.post("/kitchen-operations/simple/{format}")
+def export_kitchen_simple(format:Literal["xlsx","pdf"],criteria:KitchenCriteria,session:Annotated[Session,Depends(get_db_session)],variant:Literal["single","poster"]="single"):
+    if variant=="poster" and format!="xlsx":raise HTTPException(422,detail={"code":"INVALID_EXPORT_VARIANT","message":"Poster export is Excel only"})
+    try:payload,name=ExportService(session).kitchen_simple(criteria,format,variant);return binary(payload,f"{name}_週配料表",format)
+    except Exception as exc:raise mapped(exc) from exc
 @router.post("/kitchen-operations/{format}")
 def export_kitchen(format:Literal["xlsx","pdf"],criteria:KitchenCriteria,session:Annotated[Session,Depends(get_db_session)]):
     try:payload,name=ExportService(session).kitchen(criteria,format);return binary(payload,f"{name}_廚房備料",format)
+    except Exception as exc:raise mapped(exc) from exc
+@router.get("/menus/{menu_id}/{layout}/{format}")
+def export_menu(menu_id:uuid.UUID,layout:Literal["full","merged","grid","pretty"],format:Literal["xlsx","pdf"],session:Annotated[Session,Depends(get_db_session)],variant:Literal["single","poster"]="single"):
+    if variant=="poster" and (format!="xlsx" or layout=="pretty"):raise HTTPException(422,detail={"code":"INVALID_EXPORT_VARIANT","message":"Poster export is available for merged/grid Excel only"})
+    try:
+        payload,name=ExportService(session).menu(menu_id,layout,format,variant)
+        label={"full":"餐別合併週表","merged":"餐別合併週表","grid":"菜色分格週表","pretty":"漂亮公告版"}[layout]
+        return binary(payload,f"{name}_{label}",format)
     except Exception as exc:raise mapped(exc) from exc
 @router.post("/requirements/xlsx")
 def export_requirements(criteria:RequirementCriteria,session:Annotated[Session,Depends(get_db_session)]):
