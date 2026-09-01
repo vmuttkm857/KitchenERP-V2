@@ -10,6 +10,9 @@ from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.ingredients.exceptions import IngredientCodeExistsError, IngredientInUseError, IngredientNameExistsError, IngredientNotFoundError, InvalidIngredientReferenceError
 from app.domains.ingredients.schemas import IngredientCreate, IngredientList, IngredientPublic, IngredientUpdate, PriceHistoryPublic
 from app.domains.ingredients.service import IngredientService
+from app.domains.nutrition.exceptions import NutritionFoodNotFoundError
+from app.domains.nutrition.schemas import IngredientNutritionUpdate
+from app.domains.nutrition.service import NutritionService
 from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta, PasswordConfirmation
 
@@ -24,12 +27,13 @@ def map_error(exc: Exception) -> HTTPException:
     if isinstance(exc, InvalidIngredientReferenceError): return HTTPException(422, str(exc))
     if isinstance(exc, IngredientInUseError): return HTTPException(409, "Ingredient has price or business history and cannot be permanently deleted")
     if isinstance(exc, InvalidCredentialsError): return HTTPException(401, "Password verification failed")
+    if isinstance(exc, NutritionFoodNotFoundError): return HTTPException(422, "Nutrition food must exist and be active")
     return HTTPException(400, "Ingredient operation failed")
 
 
 @router.get("", response_model=IngredientList)
-def list_ingredients(session: Annotated[Session, Depends(get_db_session)], page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), active: bool | None = None, search: str | None = None, category_id: uuid.UUID | None = None, supplier_id: uuid.UUID | None = None) -> IngredientList:
-    items, total = IngredientService(session).list(page, page_size, active, search, category_id, supplier_id)
+def list_ingredients(session: Annotated[Session, Depends(get_db_session)], page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), active: bool | None = None, search: str | None = None, category_id: uuid.UUID | None = None, supplier_id: uuid.UUID | None = None, nutrition_status: str | None = Query(None,pattern="^(official|manual|none)$")) -> IngredientList:
+    items, total = IngredientService(session).list(page, page_size, active, search, category_id, supplier_id, nutrition_status)
     return IngredientList(items=[IngredientPublic.model_validate(item) for item in items], pagination=PaginationMeta(page=page, page_size=page_size, total=total))
 
 
@@ -55,6 +59,14 @@ def create_ingredient(data: IngredientCreate, user: Annotated[User, Depends(get_
 def update_ingredient(ingredient_id: uuid.UUID, data: IngredientUpdate, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]) -> IngredientPublic:
     try: return IngredientPublic.model_validate(IngredientService(session).update(ingredient_id, data, user.id))
     except Exception as exc: raise map_error(exc) from exc
+
+
+@router.patch("/{ingredient_id}/nutrition", response_model=IngredientPublic)
+def update_nutrition(ingredient_id:uuid.UUID,data:IngredientNutritionUpdate,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:
+        NutritionService(session).set_ingredient_mapping(ingredient_id,data.nutrition_food_id,user.id)
+        return IngredientPublic.model_validate(IngredientService(session).get(ingredient_id))
+    except Exception as exc:raise map_error(exc) from exc
 
 
 @router.post("/{ingredient_id}/deactivate", response_model=IngredientPublic)

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.domains.categories.models import IngredientCategory
 from app.domains.ingredients.models import Ingredient, IngredientPriceHistory
+from app.domains.nutrition.models import NutritionFood, NutritionFoodValue, NutritionNutrient
 from app.domains.suppliers.models import Supplier
 
 
@@ -26,6 +27,7 @@ class IngredientRepository:
     def category(self, category_id: uuid.UUID) -> IngredientCategory | None: return self.session.get(IngredientCategory, category_id)
     def supplier(self, supplier_id: uuid.UUID) -> Supplier | None: return self.session.get(Supplier, supplier_id)
     def _view_statement(self):
+        corrected_id = select(NutritionNutrient.id).where(NutritionNutrient.code == "corrected_energy").scalar_subquery()
         return select(
             Ingredient.id, Ingredient.code, Ingredient.name, Ingredient.category_id,
             IngredientCategory.name.label("category_name"), Ingredient.unit,
@@ -34,14 +36,20 @@ class IngredientRepository:
             Ingredient.package_size, Ingredient.minimum_order_quantity, Ingredient.notes,
             Ingredient.is_active, Ingredient.created_at, Ingredient.updated_at,
             Ingredient.created_by, Ingredient.updated_by,
-        ).join(IngredientCategory, IngredientCategory.id == Ingredient.category_id).outerjoin(Supplier, Supplier.id == Ingredient.primary_supplier_id)
+            Ingredient.nutrition_food_id, NutritionFood.name.label("nutrition_food_name"), NutritionFood.external_code.label("nutrition_external_code"),
+            NutritionFoodValue.value.label("nutrition_corrected_energy"),
+            case((NutritionFood.source == "tfda", "official"), (NutritionFood.source == "manual", "manual"), else_="none").label("nutrition_status"),
+        ).join(IngredientCategory, IngredientCategory.id == Ingredient.category_id).outerjoin(Supplier, Supplier.id == Ingredient.primary_supplier_id).outerjoin(NutritionFood, NutritionFood.id == Ingredient.nutrition_food_id).outerjoin(NutritionFoodValue, and_(NutritionFoodValue.food_id == NutritionFood.id, NutritionFoodValue.nutrient_id == corrected_id))
     def get_view(self, ingredient_id: uuid.UUID):
         return self.session.execute(self._view_statement().where(Ingredient.id == ingredient_id)).mappings().one_or_none()
-    def list(self, page: int, page_size: int, active: bool | None, search: str | None, category_id: uuid.UUID | None, supplier_id: uuid.UUID | None = None) -> tuple[list[dict], int]:
+    def list(self, page: int, page_size: int, active: bool | None, search: str | None, category_id: uuid.UUID | None, supplier_id: uuid.UUID | None = None, nutrition_status: str | None = None) -> tuple[list[dict], int]:
         filters = []
         if active is not None: filters.append(Ingredient.is_active == active)
         if category_id: filters.append(Ingredient.category_id == category_id)
         if supplier_id: filters.append(Ingredient.primary_supplier_id == supplier_id)
+        if nutrition_status == "none": filters.append(Ingredient.nutrition_food_id.is_(None))
+        elif nutrition_status in {"official", "manual"}:
+            filters.append(Ingredient.nutrition_food_id.in_(select(NutritionFood.id).where(NutritionFood.source == ("tfda" if nutrition_status == "official" else "manual"))))
         if search:
             term = f"%{search.strip().lower()}%"
             filters.append(or_(func.lower(Ingredient.code).like(term), func.lower(Ingredient.name).like(term)))

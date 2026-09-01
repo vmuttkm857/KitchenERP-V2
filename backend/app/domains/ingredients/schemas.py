@@ -57,10 +57,15 @@ class IngredientPublic(BaseModel):
     updated_at: datetime
     created_by: uuid.UUID
     updated_by: uuid.UUID
+    nutrition_food_id: uuid.UUID | None
+    nutrition_status: str
+    nutrition_food_name: str | None
+    nutrition_external_code: str | None
+    nutrition_corrected_energy: Decimal | None
 
-    @field_serializer("current_price", "package_size", "minimum_order_quantity")
+    @field_serializer("current_price", "package_size", "minimum_order_quantity", "nutrition_corrected_energy")
     def serialize_decimal(self, value: Decimal) -> str:
-        return format(value, "f")
+        return format(value, "f") if value is not None else None
 
 
 class IngredientList(BaseModel):

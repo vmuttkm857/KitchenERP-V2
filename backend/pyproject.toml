@@ -16,6 +16,7 @@ dependencies = [
   "psycopg[binary]>=3.2,<4",
   "openpyxl>=3.1,<4",
   "Pillow>=12,<13",
+  "python-multipart>=0.0.20,<1",
   "reportlab>=4.2,<5",
   "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.32,<1",

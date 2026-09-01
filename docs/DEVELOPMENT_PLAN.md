@@ -1,6 +1,6 @@
 # KitchenERP V2 開發計畫
 
-> 目前狀態：**Phase 0–9 的既定核心能力、Users Management、兩角色 RBAC 與 append-only Audit Log 已完成；配送仍未開始**。下一階段必須等待明確指示才可開始。
+> 目前狀態：**Phase 0–9 的既定核心能力、Nutrition 第一階段、Users Management、兩角色 RBAC 與 append-only Audit Log 已完成；配送仍未開始**。
 
 ## Phase 0：架構與核心決策（已完成）
 
@@ -49,6 +49,14 @@
 3. recipes batch commands、單位換算、耗損與單份成本
 
 重點：Decimal、不可換算即待確認、同菜色食材唯一、批次 rollback、lazy preview 與 query budget。
+
+## Nutrition 第一階段：資料基礎與食材對應（已完成）
+
+- 獨立 Nutrition Domain：官方／手動食品、動態營養素、NUMERIC food values、匯入批次。
+- TFDA XLSX 依 header name 掃描、以 `(source, external_code)` 去重，支援 preview、重複匯入、更新與新版未出現標記。
+- `corrected_energy` 固定對應「修正熱量(kcal)」；blank 不建立 value row，數值 0 保存為 Decimal 0。
+- Ingredient 只保存 nullable `nutrition_food_id`，可在官方／手動／未設定間自由切換；不改動 ERP 主檔或 Kitchen/Purchase calculations。
+- Nutrition 管理頁提供官方搜尋與唯讀明細、手動食品 CRUD、匯入紀錄；Ingredient 清單只顯示營養狀態並採 server-side filter。
 
 ## Phase 5：菜單與週排餐（已完成）
 

@@ -23,7 +23,7 @@ class IngredientService:
         view = self.repository.get_view(ingredient_id)
         if view is None: raise IngredientNotFoundError()
         return dict(view)
-    def list(self, page: int, page_size: int, active: bool | None, search: str | None, category_id: uuid.UUID | None, supplier_id: uuid.UUID | None = None): return self.repository.list(page, page_size, active, search, category_id, supplier_id)
+    def list(self, page: int, page_size: int, active: bool | None, search: str | None, category_id: uuid.UUID | None, supplier_id: uuid.UUID | None = None, nutrition_status: str | None = None): return self.repository.list(page, page_size, active, search, category_id, supplier_id, nutrition_status)
     def _validate_references(self, category_id: uuid.UUID, supplier_id: uuid.UUID | None) -> None:
         category = self.repository.category(category_id)
         if category is None or not category.is_active: raise InvalidIngredientReferenceError("Active category is required")

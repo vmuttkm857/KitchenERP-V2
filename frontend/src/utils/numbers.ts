@@ -1,8 +1,9 @@
 const quantityFormatter=new Intl.NumberFormat('zh-TW',{maximumFractionDigits:6})
-const moneyFormatter=new Intl.NumberFormat('zh-TW',{maximumFractionDigits:2})
+const twoDecimalFormatter=new Intl.NumberFormat('zh-TW',{maximumFractionDigits:2})
 
 export function formatQuantity(value:string|null|undefined){if(value===null||value===undefined)return '—';const number=Number(value);return Number.isFinite(number)?quantityFormatter.format(number):value}
-export function formatMoney(value:string|null|undefined){if(value===null||value===undefined)return '—';const number=Number(value);return Number.isFinite(number)?moneyFormatter.format(number):value}
+export function formatMoney(value:string|null|undefined){if(value===null||value===undefined)return '—';const number=Number(value);return Number.isFinite(number)?twoDecimalFormatter.format(number):value}
+export function formatNutritionValue(value:string|null|undefined){if(value===null||value===undefined||value.trim()==='')return '—';const number=Number(value);return Number.isFinite(number)?twoDecimalFormatter.format(number):value}
 export function plainDecimal(value:string){
   const normalized=value.trim()
   if(!/^-?\d+(\.\d+)?$/.test(normalized))return normalized

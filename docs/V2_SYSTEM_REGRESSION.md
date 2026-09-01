@@ -1,6 +1,6 @@
 # KitchenERP V2 System Regression Matrix
 
-> 狀態日期：2026-08-31。狀態定義：`PASS` 已有 API、UI 與自動測試；`PARTIAL` 核心可用但仍有操作或覆蓋缺口；`MISSING` 尚未實作；`INTENTIONALLY_CHANGED` V2 有意採不同流程。
+> 狀態日期：2026-09-01。狀態定義：`PASS` 已有 API、UI 與自動測試；`PARTIAL` 核心可用但仍有操作或覆蓋缺口；`MISSING` 尚未實作；`INTENTIONALLY_CHANGED` V2 有意採不同流程。
 
 | 分類 | V1 Feature / Business Rule | V2 Domain | API | Frontend Page | Automated Test | Manual Verification | Status |
 |---|---|---|---|---|---|---|---|
@@ -13,6 +13,9 @@
 | Master Data | 供應商 CRUD、啟停 | suppliers | `/suppliers` | Suppliers | master data API | Smoke 3 | PASS |
 | Master Data | 供應商地址、全域排序與大型列表分頁 | suppliers | supplier list/reorder | Suppliers | supplier enhancement tests | 列表驗收 | PASS |
 | Master Data | 食材、分類、供應商、價格歷史 | ingredients | `/ingredients`, price history | Ingredients | master data API | Smoke 4 | PASS |
+| Nutrition | TFDA 官方食品 XLSX preview/confirm、重複匯入與新版未出現標記 | nutrition | `/nutrition/imports/*`, `/nutrition/foods` | Nutrition | importer/API/real-file validation | 2025 UPDATE1 XLSX | PASS |
+| Nutrition | 手動食品 CRUD、停用／恢復及受引用 hard-delete 保護 | nutrition | `/nutrition/manual-foods/*` | Nutrition | nutrition API/audit tests | Manual food dialog | PASS |
+| Nutrition | Ingredient 可對應官方／手動／未設定且不改 ERP 欄位 | nutrition/ingredients | `/ingredients/{id}/nutrition` | Ingredients | mapping transition/query-budget tests | Create/Edit mapping dialog | PASS |
 | Master Data | 主檔 hard delete 需密碼且受引用限制 | categories/suppliers/ingredients/dishes/menus | `hard-delete` commands | 各主檔 danger flow | master data/menu API | 以測試資料確認拒絕條件 | PASS |
 | Master Data | 搜尋、狀態篩選、SQL 分頁 | master data | list endpoints | 各列表 | API pagination tests | 列表工具列 | PARTIAL |
 | Recipe | 菜色 CRUD、分類、啟停 | dishes | `/dishes` | Dishes | dishes API | Smoke 5 | PASS |
@@ -45,7 +48,7 @@
 | Export | Requirements Excel | exports | `/exports/requirements/xlsx` | Requirements | export/full workflow | Smoke 15 | PASS |
 | Export | Snapshot Excel | exports | `/exports/requirement-snapshots/{id}/xlsx` | Snapshots | export/full workflow | Smoke 15 | PASS |
 | Export | Purchase Excel/PDF、多供應商 | exports | `/exports/purchases/{id}/*` | Purchases | export/full workflow | Smoke 15 | PASS |
-| Technical | PostgreSQL only、Alembic 0009 | db/migrations | — | — | 0008→0009、base→head migration | `alembic current` | PASS |
+| Technical | PostgreSQL only、Alembic 0010 | db/migrations | — | — | base→head migration | `alembic current` | PASS |
 | Technical | API→Service→Repository、request Session/process Engine | all | all | — | full suite/integration | — | PASS |
 | Technical | Query budgets、無逐列 detail fetch | repositories/frontend | aggregate endpoints | all pages | domain query-budget tests | Network smoke | PASS |
 | V1 change | Streamlit rerun/session-state 流程 | all | versioned API | React local state | regression suite | normal navigation | INTENTIONALLY_CHANGED |

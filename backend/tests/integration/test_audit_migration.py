@@ -39,6 +39,8 @@ def test_fresh_postgresql_base_to_head_includes_audit_logs(migrated_test_databas
         command.upgrade(config(), "head")
         assert inspect(migrated_test_database).has_table("audit_logs")
         with migrated_test_database.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260831_0009"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260901_0010"
+            for table in ("nutrition_foods", "nutrition_nutrients", "nutrition_food_values", "nutrition_import_batches"):
+                assert inspect(migrated_test_database).has_table(table)
     finally:
         command.upgrade(config(), "head")

@@ -28,6 +28,7 @@ class Ingredient(Base):
     package_size: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("1"), server_default="1")
     minimum_order_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0")
     notes: Mapped[str | None] = mapped_column(String(1000))
+    nutrition_food_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("nutrition_foods.id", ondelete="RESTRICT"), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

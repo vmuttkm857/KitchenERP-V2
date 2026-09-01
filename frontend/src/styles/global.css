@@ -277,3 +277,9 @@ button.compact { min-height:2rem; padding:.3rem .45rem; font-size:.76rem; }
   .category-tabs { width:100%; overflow-x:auto; }.category-tabs button { flex:1; min-width:7rem; }
   .category-create-form { align-items:stretch; flex-direction:column; }.category-create-form button { width:100%; }
 }
+.segmented{display:flex;gap:.5rem;margin:1rem 0}.segmented button.active{background:var(--primary);color:#fff}
+.nutrition-form-grid,.nutrition-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.nutrition-summary div{padding:.7rem;background:#f5f8f5;border-radius:8px}.nutrition-summary dt{font-size:.8rem;color:#68766d}.nutrition-summary dd{margin:.2rem 0 0}
+.nutrition-source-options{display:grid;gap:.45rem}.nutrition-source-options label{display:flex;align-items:center;justify-content:flex-start;gap:.5rem;padding:.55rem .7rem;background:#f6f9f6;border-radius:.45rem;cursor:pointer}.nutrition-source-options input{width:auto;min-width:auto;margin:0;flex:none}
+.nutrition-picker-results{display:grid;gap:.45rem;max-height:280px;overflow:auto;margin:.7rem 0}.nutrition-picker-results label{display:flex;align-items:flex-start;gap:.55rem;padding:.65rem;border:1px solid #dce4dd;border-radius:8px;cursor:pointer}.nutrition-picker-results input{width:auto;min-width:auto;margin-top:.15rem;flex:none}.nutrition-picker-results span{display:grid}.nutrition-picker-results small{color:#68766d}
+.nutrition-selected,.import-summary,.nutrition-mapping-summary{display:grid;gap:.35rem;padding:.8rem;margin:.7rem 0;background:#f3f8f4;border:1px solid #d3e2d7;border-radius:9px}.import-summary{grid-template-columns:repeat(auto-fit,minmax(110px,1fr))}.import-summary strong,.import-summary small{grid-column:1/-1}
+.status-badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;background:#eef1ef}.nutrition-official{background:#e5f0ff;color:#23548b}.nutrition-manual{background:#fff1d8;color:#805513}.nutrition-none{color:#66736a}

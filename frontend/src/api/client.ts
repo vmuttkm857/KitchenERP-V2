@@ -32,7 +32,7 @@ async function refreshAccessToken(): Promise<string | null> {
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('Accept', 'application/json')
-  if (init?.body) headers.set('Content-Type', 'application/json')
+  if (init?.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
 
   let response = await fetch(`${apiBaseUrl}${path}`, {

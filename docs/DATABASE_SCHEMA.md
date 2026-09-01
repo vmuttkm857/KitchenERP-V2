@@ -1,6 +1,15 @@
 # KitchenERP 資料模型
 
-> V2 PostgreSQL 實際 migration head：`20260831_0009`。下方原 V1 A/B 盤點保留為歷史設計來源；V2 實際 schema 以 `backend/migrations/versions/` 與 SQLAlchemy models 為準，不支援 SQLite。
+> V2 PostgreSQL 實際 migration head：`20260901_0010`。下方原 V1 A/B 盤點保留為歷史設計來源；V2 實際 schema 以 `backend/migrations/versions/` 與 SQLAlchemy models 為準，不支援 SQLite。
+
+## V2 Nutrition Domain（0010）
+
+- `nutrition_foods`：`tfda`／`manual` 食品主檔；TFDA 以 `(source, external_code)` 唯一，manual 可沒有 external code。
+- `nutrition_nutrients`：動態營養素定義；`corrected_energy` 固定代表「修正熱量」、`kcal`、`per_100_g`。
+- `nutrition_food_values`：`(food_id, nutrient_id)` 唯一，值為 `NUMERIC(24,10)`；blank 不建立 row，與數值 0 明確分離。
+- `nutrition_import_batches`：只保存版本、原始安全檔名、header row、hash、counts、actor 與狀態，不保存 XLSX binary。
+- `ingredients.nutrition_food_id`：nullable、`ON DELETE RESTRICT`；營養來源狀態由對應食品的 source 推導，不重複保存。
+- 官方匯入只更新 Nutrition tables；不修改 Ingredient、Recipe、Kitchen、Requirement 或 Purchase 資料與計算。
 
 ## V2 Users 與 Audit（0009）
 
