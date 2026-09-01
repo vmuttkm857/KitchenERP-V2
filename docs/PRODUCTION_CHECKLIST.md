@@ -13,6 +13,7 @@
 - [ ] `APP_ENV=production`, `LOG_LEVEL=INFO`, `DB_ECHO=false`.
 - [ ] `APP_VERSION` identifies the deployed release or commit SHA.
 - [ ] `DATABASE_URL`, `JWT_SECRET`, and `CORS_ORIGINS` are injected outside Git.
+- [ ] `MEDIA_ROOT=/var/lib/kitchenerp/media` (or another persistent private path) exists, is writable only by the backend service account, and is included in file backups.
 - [ ] `REFRESH_COOKIE_SECURE=true` and `REFRESH_COOKIE_SAMESITE=lax`.
 - [ ] `CORS_ORIGINS` contains only the exact HTTPS frontend origin, never `*` or localhost.
 - [ ] `VITE_API_BASE_URL=/api/v1`; no provider URL or secret is compiled into the frontend.
@@ -22,7 +23,7 @@
 
 - [ ] A new PostgreSQL database and least-privilege application role exist.
 - [ ] `alembic upgrade head` completed as an explicit deployment step.
-- [ ] `alembic current` equals `20260831_0009 (head)`.
+- [ ] `alembic current` equals `20260901_0012 (head)`.
 - [ ] Initial admin was created interactively with `python -m app.cli.create_admin`.
 - [ ] 每位操作人員都有獨立帳號；至少兩位 active admin，避免唯一管理員保護造成營運阻塞。
 - [ ] Users/Audit API 對一般 user 回傳 403；所有 hard-delete 僅 admin 可執行。
@@ -43,8 +44,10 @@
 ## Backup and operations
 
 - [ ] Daily `pg_dump -Fc` job runs outside the web/static directory.
+- [ ] `MEDIA_ROOT` is backed up separately; the media archive and PostgreSQL dump share a timestamp/backup-set identifier because `pg_dump` does not contain image files.
 - [ ] Retention is daily 7, weekly 4 and monthly 3; at least one copy is off-host.
 - [ ] Backup storage has access control and encryption at rest.
 - [ ] Restore rehearsal completed into a separate empty database and was recorded.
+- [ ] Restore rehearsal uses a matching DB/media pair, restores media ownership/permissions, and verifies both present and deliberately missing-image behavior.
 - [ ] Upgrade and rollback owner, maintenance window and user communication are agreed.
 - [ ] Monitoring alerts on service failure, readiness failure, disk pressure and backup failure.

@@ -1,0 +1,9 @@
+class ProductionError(Exception): pass
+class ProductionProfileNotFound(ProductionError): pass
+class ProductionVersionNotFound(ProductionError): pass
+class ProductionStepNotFound(ProductionError): pass
+class ProductionIngredientNotFound(ProductionError): pass
+class ProductionConflict(ProductionError): pass
+class ProductionValidationError(ProductionError): pass
+class ProductionImageError(ProductionError): pass
+class ProductionMenuNotFound(ProductionError): pass

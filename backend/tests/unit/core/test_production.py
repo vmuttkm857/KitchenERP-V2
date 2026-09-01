@@ -18,6 +18,7 @@ def set_production_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REFRESH_COOKIE_SECURE", "true")
     monkeypatch.setenv("REFRESH_COOKIE_SAMESITE", "lax")
     monkeypatch.setenv("DB_ECHO", "false")
+    monkeypatch.setenv("MEDIA_ROOT", "/var/lib/kitchenerp/media")
 
 
 def test_production_missing_secret_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:

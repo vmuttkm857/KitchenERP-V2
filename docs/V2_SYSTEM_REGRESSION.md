@@ -53,7 +53,7 @@
 | Export | Requirements Excel | exports | `/exports/requirements/xlsx` | Requirements | export/full workflow | Smoke 15 | PASS |
 | Export | Snapshot Excel | exports | `/exports/requirement-snapshots/{id}/xlsx` | Snapshots | export/full workflow | Smoke 15 | PASS |
 | Export | Purchase Excel/PDF、多供應商 | exports | `/exports/purchases/{id}/*` | Purchases | export/full workflow | Smoke 15 | PASS |
-| Technical | PostgreSQL only、Alembic 0011 | db/migrations | — | — | base→head migration | `alembic current` | PASS |
+| Technical | PostgreSQL only、Alembic 0012 | db/migrations | — | — | base→head migration | `alembic current` | PASS |
 | Technical | API→Service→Repository、request Session/process Engine | all | all | — | full suite/integration | — | PASS |
 | Technical | Query budgets、無逐列 detail fetch | repositories/frontend | aggregate endpoints | all pages | domain query-budget tests | Network smoke | PASS |
 | V1 change | Streamlit rerun/session-state 流程 | all | versioned API | React local state | regression suite | normal navigation | INTENTIONALLY_CHANGED |

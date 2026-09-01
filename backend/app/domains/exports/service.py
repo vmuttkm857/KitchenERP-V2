@@ -8,6 +8,8 @@ from app.domains.kitchen_operations.service import KitchenOperationsService
 from app.domains.menus.service import MenuService
 from app.domains.nutrition.dish_service import DishNutritionService
 from app.domains.purchases.service import PurchaseService
+from app.domains.production.service import ProductionService
+from app.domains.exports.recipe_cards import recipe_cards_pdf
 from app.domains.requirements.service import RequirementService
 from app.domains.snapshots.service import SnapshotService
 
@@ -51,3 +53,14 @@ class ExportService:
         result=PurchaseService(self.session).detail(purchase_id)
         if not result["orders"]:raise EmptyExportError("Purchase has no supplier orders")
         return (purchase_workbook if format=="xlsx" else purchase_pdf)(result),result["purchase_number"]
+    def recipe_cards(self,menu_id,menu_date=None,meal_type_id=None,mode="work"):
+        production=ProductionService(self.session);result=production.menu_plan(menu_id,menu_date,meal_type_id)
+        def image_loader(dish_id):
+            try:return production.image(dish_id)[0]
+            except Exception:return None
+        dates=[day["menu_date"] for day in result["days"]]
+        date_label=str(menu_date or (dates[0] if len(dates)==1 else f"{dates[0]}_{dates[-1]}" if dates else "全期間"))
+        meals=[meal["meal_type_name"] for day in result["days"] for meal in day["meals"]]
+        meal_label=meals[0] if meal_type_id and meals else "全日"
+        label="廚房工作單" if mode=="work" else "標準食譜詳細版"
+        return recipe_cards_pdf(result,image_loader,mode),f"KitchenERP_{label}_{date_label}_{meal_label}"

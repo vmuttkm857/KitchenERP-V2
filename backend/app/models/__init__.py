@@ -11,6 +11,7 @@ from app.domains.recipes.models import DishIngredient
 from app.domains.suppliers.models import Supplier
 from app.domains.snapshots.models import RequirementSnapshot, RequirementSnapshotItem
 from app.domains.purchases.models import PurchaseBatch, PurchaseOrder, PurchaseOrderItem
+from app.domains.production.models import DishProductionProfile, ProductionBatchIngredient, ProductionBatchVersion, ProductionProcessStep
 from app.domains.users.models import User
 
-__all__ = ["AuditLog", "Dish", "DishCategory", "DishIngredient", "Ingredient", "IngredientCategory", "IngredientNutritionUnitConversion", "IngredientPriceHistory", "Menu", "MenuCategory", "MenuDay", "MenuDish", "MenuMealType", "NutritionFood", "NutritionFoodValue", "NutritionImportBatch", "NutritionNutrient", "PurchaseBatch", "PurchaseOrder", "PurchaseOrderItem", "RefreshSession", "RequirementSnapshot", "RequirementSnapshotItem", "Supplier", "User"]
+__all__ = ["AuditLog", "Dish", "DishCategory", "DishIngredient", "DishProductionProfile", "Ingredient", "IngredientCategory", "IngredientNutritionUnitConversion", "IngredientPriceHistory", "Menu", "MenuCategory", "MenuDay", "MenuDish", "MenuMealType", "NutritionFood", "NutritionFoodValue", "NutritionImportBatch", "NutritionNutrient", "ProductionBatchIngredient", "ProductionBatchVersion", "ProductionProcessStep", "PurchaseBatch", "PurchaseOrder", "PurchaseOrderItem", "RefreshSession", "RequirementSnapshot", "RequirementSnapshotItem", "Supplier", "User"]

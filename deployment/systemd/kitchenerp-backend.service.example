@@ -16,7 +16,7 @@ PrivateTmp=true
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/log/kitchenerp
+ReadWritePaths=/var/log/kitchenerp /var/lib/kitchenerp/media
 
 [Install]
 WantedBy=multi-user.target

@@ -14,13 +14,14 @@ import { Menu } from '../features/menus/types'
 import { NutritionPage } from '../features/nutrition/NutritionPage'
 import { PurchasesPage } from '../features/purchases/PurchasesPage'
 import { RecipeEditor } from '../features/recipes/RecipeEditor'
+import { ProductionProfilePage } from '../features/production/ProductionProfilePage'
 import { RequirementsPage } from '../features/requirements/RequirementsPage'
 import { SnapshotsPage } from '../features/snapshots/SnapshotsPage'
 import { SuppliersPage } from '../features/suppliers/SuppliersPage'
 import { ChangePasswordDialog, UsersPage } from '../features/users/UsersPage'
 import { NavigationBlockerProvider, useNavigationBlocker } from './NavigationBlocker'
 
-type Page='categories'|'suppliers'|'ingredients'|'nutrition'|'dishes'|'recipe'|'menus'|'menu-editor'|'requirements'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
+type Page='categories'|'suppliers'|'ingredients'|'nutrition'|'dishes'|'recipe'|'production-profile'|'menus'|'menu-editor'|'requirements'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
 const businessGroups=[
   {label:'主檔管理',items:[['categories','分類'],['suppliers','供應商'],['ingredients','食材'],['nutrition','營養資料'],['dishes','菜色／配方']]},
   {label:'菜單',items:[['menus','菜單管理'],['kitchen','廚房作業']]},
@@ -57,7 +58,7 @@ function Application(){
   const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>{
     try{const saved=localStorage.getItem(sidebarPreferenceKey);return saved===null?window.matchMedia('(max-width: 1100px)').matches:saved==='true'}catch{return false}
   })
-  const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null)
+  const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [productionDish,setProductionDish]=useState<Dish|null>(null);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null)
   const [passwordOpen,setPasswordOpen]=useState(false),[passwordBusy,setPasswordBusy]=useState(false),[passwordError,setPasswordError]=useState('')
   useEffect(()=>{try{localStorage.setItem(sidebarPreferenceKey,String(sidebarCollapsed))}catch{/* UI preference remains in memory. */}},[sidebarCollapsed])
   useEffect(()=>{
@@ -70,7 +71,7 @@ function Application(){
   const groups=user.role==='admin'?[...businessGroups,systemGroup]:businessGroups
   function navigate(next:Page){requestNavigation(()=>{setPage(next);setNavOpen(false)})}
   async function changePassword(current:string,next:string,confirm:string){setPasswordBusy(true);setPasswordError('');try{await apiRequest('/users/me/change-password',{method:'POST',body:JSON.stringify({current_password:current,new_password:next,confirm_password:confirm})});setPasswordOpen(false);await logout()}catch(cause){setPasswordError(cause instanceof ApiError&&cause.status<500?cause.message:'密碼修改失敗，請稍後再試。')}finally{setPasswordBusy(false)}}
-  const isActive=(id:NavPage)=>page===id||(id==='dishes'&&page==='recipe')||(id==='menus'&&page==='menu-editor')
+  const isActive=(id:NavPage)=>page===id||(id==='dishes'&&(page==='recipe'||page==='production-profile'))||(id==='menus'&&page==='menu-editor')
   return <div className={`app-layout ${sidebarCollapsed?'sidebar-collapsed':''}`}>
     <header className="topbar"><button className="nav-toggle secondary" aria-label={navOpen?'關閉導覽':'開啟導覽'} aria-expanded={navOpen} onClick={()=>setNavOpen(v=>!v)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div><span className="brand">KitchenERP</span><small>廚房營運管理</small></div><div className="account"><span>{user.display_name}</span><button className="secondary" onClick={()=>requestNavigation(()=>{setPasswordError('');setPasswordOpen(true)})}>修改密碼</button><button className="secondary" onClick={()=>requestNavigation(()=>void logout())}>登出</button></div></header>
     <aside className={`sidebar ${navOpen?'is-open':''}`} aria-label="主要導覽">
@@ -80,7 +81,7 @@ function Application(){
     {navOpen&&<button className="nav-backdrop" aria-label="關閉導覽" onClick={()=>setNavOpen(false)}/>}
     <main className="workspace" id="main-content">
       {page==='categories'&&<CategoriesPage/>}{page==='suppliers'&&<SuppliersPage/>}{page==='ingredients'&&<IngredientsPage/>}{page==='nutrition'&&<NutritionPage isAdmin={user.role==='admin'}/>}
-      {page==='dishes'&&<DishesPage onEditRecipe={dish=>{setRecipeDish(dish);navigate('recipe')}}/>}{page==='recipe'&&recipeDish&&<RecipeEditor dish={recipeDish} onClose={()=>navigate('dishes')}/>}
+      {page==='dishes'&&<DishesPage onEditRecipe={dish=>{setRecipeDish(dish);navigate('recipe')}} onEditProduction={dish=>{setProductionDish(dish);navigate('production-profile')}}/>}{page==='recipe'&&recipeDish&&<RecipeEditor dish={recipeDish} onClose={()=>navigate('dishes')}/>} {page==='production-profile'&&productionDish&&<ProductionProfilePage dish={productionDish} isAdmin={user.role==='admin'} onClose={()=>navigate('dishes')}/>}
       {page==='menus'&&<MenusPage onOpen={menu=>{setEditingMenu(menu);navigate('menu-editor')}}/>}{page==='menu-editor'&&editingMenu&&<MenuEditor menu={editingMenu} onClose={()=>navigate('menus')}/>}
       {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage/>}{page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
       {page==='users'&&user.role==='admin'&&<UsersPage/>}{page==='audit'&&user.role==='admin'&&<AuditLogsPage/>}

@@ -1,6 +1,7 @@
 import uuid
+from datetime import date
 from typing import Annotated,Literal
-from fastapi import APIRouter,Depends,HTTPException,Response
+from fastapi import APIRouter,Depends,HTTPException,Query,Response
 from sqlalchemy.orm import Session
 from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user
@@ -11,6 +12,7 @@ from app.domains.kitchen_operations.exceptions import KitchenMenuNotFoundError
 from app.domains.kitchen_operations.schemas import KitchenCriteria
 from app.domains.menus.exceptions import MenuNotFoundError
 from app.domains.purchases.exceptions import PurchaseNotFoundError
+from app.domains.production.exceptions import ProductionMenuNotFound,ProductionValidationError
 from app.domains.requirements.exceptions import RequirementMenuNotFoundError
 from app.domains.requirements.schemas import RequirementCriteria
 from app.domains.snapshots.exceptions import SnapshotNotFoundError
@@ -19,7 +21,8 @@ TYPES={"xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 def binary(payload,name,format):
     filename=safe_filename(name,format);return Response(payload,media_type=TYPES[format],headers={"Content-Disposition":content_disposition(filename),"X-Content-Type-Options":"nosniff"})
 def mapped(exc):
-    if isinstance(exc,(KitchenMenuNotFoundError,MenuNotFoundError,RequirementMenuNotFoundError,SnapshotNotFoundError,PurchaseNotFoundError)):return HTTPException(404,"Export source not found")
+    if isinstance(exc,(KitchenMenuNotFoundError,MenuNotFoundError,RequirementMenuNotFoundError,SnapshotNotFoundError,PurchaseNotFoundError,ProductionMenuNotFound)):return HTTPException(404,"Export source not found")
+    if isinstance(exc,ProductionValidationError):return HTTPException(422,detail={"code":"INVALID_PRODUCTION_SCOPE","message":str(exc)})
     if isinstance(exc,EmptyExportError):return HTTPException(422,detail={"code":"EMPTY_EXPORT","message":str(exc)})
     return HTTPException(400,detail={"code":"EXPORT_FAILED","message":"The export could not be generated"})
 @router.post("/kitchen-operations/a4-xlsx")
@@ -34,6 +37,10 @@ def export_kitchen_simple(format:Literal["xlsx","pdf"],criteria:KitchenCriteria,
 @router.post("/kitchen-operations/{format}")
 def export_kitchen(format:Literal["xlsx","pdf"],criteria:KitchenCriteria,session:Annotated[Session,Depends(get_db_session)]):
     try:payload,name=ExportService(session).kitchen(criteria,format);return binary(payload,f"{name}_廚房備料",format)
+    except Exception as exc:raise mapped(exc) from exc
+@router.get("/menus/{menu_id}/recipe-cards/pdf")
+def export_recipe_cards(menu_id:uuid.UUID,session:Annotated[Session,Depends(get_db_session)],date_value:date|None=Query(None,alias="date"),meal_type_id:uuid.UUID|None=None,mode:Literal["work","detailed"]="work"):
+    try:payload,name=ExportService(session).recipe_cards(menu_id,date_value,meal_type_id,mode);return binary(payload,name,"pdf")
     except Exception as exc:raise mapped(exc) from exc
 @router.get("/menus/{menu_id}/{layout}/{format}")
 def export_menu(menu_id:uuid.UUID,layout:Literal["full","merged","grid","pretty"],format:Literal["xlsx","pdf"],session:Annotated[Session,Depends(get_db_session)],variant:Literal["single","poster"]="single",nutrition:Literal["none","calories","detailed"]="none"):

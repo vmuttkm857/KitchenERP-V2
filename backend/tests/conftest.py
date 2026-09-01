@@ -46,6 +46,10 @@ def clean_auth_tables(migrated_test_database: Engine) -> Generator[None, None, N
     yield
     with migrated_test_database.begin() as connection:
         connection.execute(text("DELETE FROM audit_logs"))
+        connection.execute(text("DELETE FROM production_process_steps"))
+        connection.execute(text("DELETE FROM production_batch_ingredients"))
+        connection.execute(text("DELETE FROM production_batch_versions"))
+        connection.execute(text("DELETE FROM dish_production_profiles"))
         connection.execute(text("DELETE FROM purchase_batches"))
         connection.execute(text("DELETE FROM requirement_snapshots"))
         connection.execute(text("DELETE FROM menu_dishes"))

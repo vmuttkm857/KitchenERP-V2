@@ -39,7 +39,7 @@ def test_fresh_postgresql_base_to_head_includes_audit_logs(migrated_test_databas
         command.upgrade(config(), "head")
         assert inspect(migrated_test_database).has_table("audit_logs")
         with migrated_test_database.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260901_0011"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260901_0012"
             for table in ("nutrition_foods", "nutrition_nutrients", "nutrition_food_values", "nutrition_import_batches"):
                 assert inspect(migrated_test_database).has_table(table)
     finally:
@@ -62,5 +62,18 @@ def test_0010_to_0011_adds_nutrition_unit_conversions(migrated_test_database) ->
         assert foreign_keys[("created_by",)]["options"].get("ondelete") == "RESTRICT"
         with migrated_test_database.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260901_0011"
+    finally:
+        command.upgrade(config(), "head")
+
+
+def test_0011_to_0012_adds_standard_recipe_card_schema(migrated_test_database) -> None:
+    command.downgrade(config(), "20260901_0011")
+    try:
+        command.upgrade(config(), "20260901_0012")
+        inspector = inspect(migrated_test_database)
+        for table in ("dish_production_profiles", "production_batch_versions", "production_batch_ingredients", "production_process_steps"):
+            assert inspector.has_table(table)
+        with migrated_test_database.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260901_0012"
     finally:
         command.upgrade(config(), "head")

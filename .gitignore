@@ -33,6 +33,8 @@ Thumbs.db
 *.sql
 *.sql.gz
 backups/
+media/
+**/media/
 *.pem
 *.key
 *.p12

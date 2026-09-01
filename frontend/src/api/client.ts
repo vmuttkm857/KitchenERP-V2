@@ -98,3 +98,12 @@ export async function apiDownload(path: string, init?: RequestInit): Promise<voi
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click()
   URL.revokeObjectURL(url)
 }
+
+export async function apiBlobUrl(path:string):Promise<string>{
+  const headers=new Headers({Accept:'image/*'})
+  if(accessToken)headers.set('Authorization',`Bearer ${accessToken}`)
+  let response=await fetch(`${apiBaseUrl}${path}`,{credentials:'include',headers})
+  if(response.status===401&&accessToken){const refreshed=await refreshAccessToken();if(refreshed){headers.set('Authorization',`Bearer ${refreshed}`);response=await fetch(`${apiBaseUrl}${path}`,{credentials:'include',headers})}else{setAccessToken(null);authExpiredHandler?.()}}
+  if(!response.ok)throw new Error('Image download failed')
+  return URL.createObjectURL(await response.blob())
+}

@@ -1,0 +1,20 @@
+import {useEffect,useMemo,useState} from 'react'
+import {apiDownload,apiRequest} from '../../api/client'
+import {Feedback,LoadingState} from '../../components/ui/Page'
+import type {MealType,Menu} from '../menus/types'
+import {aggregateBatches} from './presentation'
+
+interface Batch{batch_number:number;serving_count:number;official:boolean}
+interface DishPlan{dish_id:string;dish_code:string;dish_name:string;diner_count:number;profile_missing:boolean;batches:Batch[]}
+interface MealPlan{meal_type_id:string;meal_type_name:string;dishes:DishPlan[]}
+interface DayPlan{menu_date:string;meals:MealPlan[]}
+interface Plan{menu_id:string;menu_name:string;days:DayPlan[]}
+
+export function MenuProductionDialog({menu,dates,meals,onClose}:{menu:Menu;dates:string[];meals:MealType[];onClose:()=>void}){
+  const [date,setDate]=useState(dates[0]??menu.start_date),[meal,setMeal]=useState(''),[format,setFormat]=useState<'work'|'detailed'>('work'),[plan,setPlan]=useState<Plan|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(''),[exporting,setExporting]=useState(false)
+  const query=useMemo(()=>{const value=new URLSearchParams({date});if(meal)value.set('meal_type_id',meal);return value.toString()},[date,meal])
+  useEffect(()=>{let active=true;setLoading(true);setError('');void apiRequest<Plan>(`/menus/${menu.id}/production-plan?${query}`).then(value=>{if(active)setPlan(value)}).catch(()=>{if(active)setError('廚房製作計畫載入失敗')}).finally(()=>{if(active)setLoading(false)});return()=>{active=false}},[menu.id,query])
+  async function download(){setExporting(true);setError('');try{await apiDownload(`/exports/menus/${menu.id}/recipe-cards/pdf?${query}&mode=${format}`)}catch{setError(format==='work'?'廚房工作單下載失敗':'詳細標準食譜下載失敗')}finally{setExporting(false)}}
+  const dishes=plan?.days.flatMap(day=>day.meals.flatMap(item=>item.dishes))??[]
+  return <div className="modal-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget&&!exporting)onClose()}}><section className="modal-panel menu-production-dialog" role="dialog" aria-modal="true" aria-labelledby="menu-production-title"><header><div><h2 id="menu-production-title">標準食譜卡／廚房製作單</h2><p>{menu.name}｜依菜單日期、餐別與實際供餐人數整理。</p></div><button className="secondary" disabled={exporting} onClick={onClose}>關閉</button></header><div className="production-plan-filters"><label>日期<select value={date} onChange={event=>setDate(event.target.value)}>{dates.map(value=><option key={value} value={value}>{value}</option>)}</select></label><label>餐別<select value={meal} onChange={event=>setMeal(event.target.value)}><option value="">全日（全部餐別）</option>{meals.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>輸出格式<select value={format} onChange={event=>setFormat(event.target.value as 'work'|'detailed')}><option value="work">廚房工作版</option><option value="detailed">詳細標準版</option></select></label><button disabled={exporting||loading} onClick={()=>void download()}>{exporting?'產生中…':format==='work'?'下載廚房工作單':'下載詳細標準食譜'}</button></div>{error&&<Feedback type="error">{error}</Feedback>}{loading?<LoadingState label="製作計畫載入中…"/>:!dishes.length?<p className="state-panel">所選日期／餐別沒有菜色。</p>:<div className="menu-production-list">{plan?.days.map(day=><section key={day.menu_date}><h3>{day.menu_date}</h3>{day.meals.map(item=><div key={item.meal_type_id}><h4>{item.meal_type_name}</h4>{item.dishes.map(dish=>{const groups=aggregateBatches(dish.batches);return <article key={dish.dish_id} className="production-dish-card"><header><strong>{dish.dish_code}｜{dish.dish_name}</strong><span>{dish.diner_count} 人</span></header>{dish.profile_missing?<p className="feedback feedback-info">尚未建立標準食譜卡；PDF 仍會保留此菜與提醒。</p>:<><p><span className="status-badge">已建立標準食譜卡</span>・共 {dish.batches.length} 批</p><ul>{groups.map(group=><li key={`${group.serving_count}-${group.official}`}>{group.serving_count} 人份 × {group.count} 批 <span className={group.official?'status-badge':'status-badge warning'}>{group.official?'正式版本':'估算，請確認'}</span></li>)}</ul></>}</article>})}</div>)}</section>)}</div>}</section></div>
+}

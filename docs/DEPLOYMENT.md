@@ -50,9 +50,10 @@ DB_POOL_TIMEOUT_SECONDS=30
 DB_POOL_RECYCLE_SECONDS=1800
 DB_ECHO=false
 LOG_LEVEL=INFO
+MEDIA_ROOT=/var/lib/kitchenerp/media
 ```
 
-Replace every placeholder. Production startup fails if the database, JWT secret or explicit production origin is absent, if cookies are not Secure, if localhost/wildcard CORS is used, or if SQL echo is enabled. `SameSite=None` is unnecessary for the recommended same-origin design and would still require Secure.
+Replace every placeholder. `MEDIA_ROOT` must be a persistent directory writable by the backend service account; it stores authenticated dish photos and must not be the frontend/Caddy public root. Production startup fails if the database, JWT secret, explicit production origin or media path is absent, if cookies are not Secure, if localhost/wildcard CORS is used, or if SQL echo is enabled. `SameSite=None` is unnecessary for the recommended same-origin design and would still require Secure.
 
 ## 5. Fresh database and first administrator
 
@@ -111,6 +112,10 @@ Use PostgreSQL-native custom dumps. Schedule `scripts/backup_postgres.sh` daily 
 
 At least one copy must be off-host. Treat backups as sensitive because they contain users, password hashes and business data; restrict access and use encrypted-at-rest storage. Alert on job failure and periodically verify the newest file exists and is non-empty.
 
+`pg_dump` only backs up PostgreSQL records; it does **not** include files under `MEDIA_ROOT`. Back up the complete private media directory separately, for example as a permission-restricted `tar.gz` archive, and give the database dump and media archive the same timestamp or backup-set identifier. Keep both copies off-host under the same retention and encryption policy. For the closest DB/file recovery point, briefly stop application writes while producing the paired database and media backups; copying live media is acceptable only with the documented possibility that a file uploaded or replaced during the two operations may not match the dump.
+
+Restore a paired backup with the backend stopped: restore PostgreSQL into the controlled target, restore the matching media archive to the configured `MEDIA_ROOT`, restore ownership and restrictive permissions, then start the backend and verify representative dish photos and recipe-card PDFs. Restoring only the DB can leave referenced images missing; restoring only media can leave orphan files that are not referenced by any profile. Missing files are treated as “no available photo” in profile/plan reads and PDF generation continues without the image. Orphan files are not publicly reachable and do not break exports, but consume disk space; review them against database image filenames before any manual cleanup rather than deleting files by age alone.
+
 ## 10. Restore rehearsal
 
 Never overwrite development or production during rehearsal.
@@ -120,8 +125,9 @@ Never overwrite development or production during rehearsal.
 3. Point a temporary backend process at the restored URL.
 4. Run `alembic current`; confirm it equals the application head.
 5. Compare selected row counts and verify foreign keys with normal reads.
-6. Check `/health`, `/ready`, login and one basic workflow/export.
-7. Destroy only the explicitly named rehearsal database after recording the result.
+6. Restore the matching media archive into an isolated rehearsal media path and point the temporary backend `MEDIA_ROOT` to it.
+7. Check `/health`, `/ready`, login, representative dish photos and one recipe-card export.
+8. Destroy only the explicitly named rehearsal database and media directory after recording the result.
 
 The restore script refuses the configured `PRODUCTION_DATABASE_NAME` unless `--allow-production` is explicit. A real production restore additionally requires an approved incident plan, outage, verified backup and named operator.
 

@@ -1,6 +1,13 @@
 # KitchenERP 資料模型
 
-> V2 PostgreSQL 實際 migration head：`20260901_0011`。下方原 V1 A/B 盤點保留為歷史設計來源；V2 實際 schema 以 `backend/migrations/versions/` 與 SQLAlchemy models 為準，不支援 SQLite。
+> V2 PostgreSQL 實際 migration head：`20260901_0012`。下方原 V1 A/B 盤點保留為歷史設計來源；V2 實際 schema 以 `backend/migrations/versions/` 與 SQLAlchemy models 為準，不支援 SQLite。
+
+## V2 標準食譜卡／廚房標準製程（0012）
+
+- `dish_production_profiles`：每道菜的最大單批量、整體注意事項與私有成品照片 metadata。
+- `production_batch_versions`：同一道菜可保存多個人工確認份數版本，並區分正式／草稿。
+- `production_batch_ingredients`：由既有 `dish_ingredients` 建議值建立，保存該份數人工校正量與加入用途；不取代原 Recipe BOM。
+- `production_process_steps`：版本所屬的有序製程、設備、時間、溫度與批量／盤量設定。
 
 ## V2 Nutrition Domain（0010）
 

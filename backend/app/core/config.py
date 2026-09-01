@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     db_pool_recycle_seconds: int = Field(default=1800, ge=0)
     db_echo: bool = False
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    media_root: str = str(PROJECT_ROOT / "media")
     jwt_secret: SecretStr | None = None
     jwt_algorithm: Literal["HS256"] = "HS256"
     access_token_minutes: int = Field(default=15, ge=1)
@@ -44,7 +45,7 @@ class Settings(BaseSettings):
         if self.jwt_secret is not None and len(self.jwt_secret.get_secret_value()) < 32:
             raise ValueError("JWT_SECRET must contain at least 32 characters")
         if self.app_env == "production":
-            missing = [name for name in ("DATABASE_URL", "JWT_SECRET", "CORS_ORIGINS") if not os.getenv(name)]
+            missing = [name for name in ("DATABASE_URL", "JWT_SECRET", "CORS_ORIGINS", "MEDIA_ROOT") if not os.getenv(name)]
             if missing:
                 raise ValueError(f"Production environment variables are required: {', '.join(missing)}")
             if not self.refresh_cookie_secure:

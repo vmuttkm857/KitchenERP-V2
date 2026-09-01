@@ -7,6 +7,7 @@ import { DishCategoryOption, DishOption, List, MealType, Menu, MenuAggregate, Me
 import { useEditorDirty } from '../../app/NavigationBlocker'
 import { PaginationControls } from '../../components/ui/PaginationControls'
 import { useMenuCandidates } from './useMenuCandidates'
+import { MenuProductionDialog } from '../production/MenuProductionDialog'
 
 const slotKey = (date: string, mealId: string) => `${date}:${mealId}`
 const displayDate = (value: string) => value.replaceAll('-', '/')
@@ -33,7 +34,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [dialog, setDialog] = useState<'meal' | 'copy' | 'export' | null>(null)
+  const [dialog, setDialog] = useState<'meal' | 'copy' | 'export' | 'production' | null>(null)
   const [exportLayout, setExportLayout] = useState<'full' | 'grid' | 'pretty'>('full')
   const [exportFormat, setExportFormat] = useState<'xlsx' | 'pdf'>('xlsx')
   const [exportVariant, setExportVariant] = useState<'single' | 'poster'>('single')
@@ -147,7 +148,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
     window.setTimeout(() => searchInputRef.current?.focus(), 0)
   }
   function requestCloseMeal() { if (saving) return; if (mealDraft && JSON.stringify(mealDraft) !== mealInitial) setConfirmation({ kind: 'discard-meal' }); else closeMealEditor() }
-  function openDialog(next: 'meal' | 'copy' | 'export') {
+  function openDialog(next: 'meal' | 'copy' | 'export' | 'production') {
     if (next === 'copy') setCopyError(null)
     if (next === 'export') setExportError('')
     setDialog(next)
@@ -210,7 +211,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const selectedSourceMenu = sourceMenus.find(item => item.id === sourceMenu)
 
   return <section className="menu-editor-page">
-    <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={() => openDialog('export')}>匯出</button><button className="secondary" onClick={onClose}>返回</button></div></header>
+    <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={() => openDialog('export')}>匯出</button><button onClick={() => openDialog('production')}>標準食譜卡／廚房製作單</button><button className="secondary" onClick={onClose}>返回</button></div></header>
     {error && <Feedback type="error">{error}</Feedback>}{message && <Feedback type="success">{message}</Feedback>}
     {!meals.length ? <div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div> : <div className="menu-editor-workspace"><MenuWeekGrid dates={data.dates} meals={meals} selectedKey={editingKey} slotFor={slotFor} onSelect={selectCell}/></div>}
     {editing && <MenuEditorPanel date={editing.date} meal={editing.meal} slot={editing.slot} search={dishSearch} categoryId={dishCategoryId} categories={dishCategories} results={dishResults} searchTotal={dishTotal} searchPage={dishPage} searchLoading={dishLoading} searchInputRef={searchInputRef} onClose={requestCloseMeal} onSave={saveMealDraft} saving={saving} saveError={mealSaveError} onSlotNotes={notes => setMealDraftSlot({ ...editing.slot, notes })} onDishChange={(index, changes) => updateDish(editing.slot, index, changes)} onMove={(index, direction) => moveDish(editing.slot, index, direction)} onRemove={index => setConfirmation({ kind: 'remove-dish', index })} onSearch={value => { setDishSearch(value); setDishPage(1) }} onCategory={value => { setDishCategoryId(value); setDishPage(1) }} onSearchPage={setDishPage} onAdd={dish => addDish(editing.slot, dish)}/>}
@@ -231,6 +232,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
       {exportError && <Feedback type="error">{exportError}</Feedback>}
       <footer><button className="secondary" disabled={exporting} onClick={() => setDialog(null)}>取消</button><button disabled={exporting} onClick={() => void downloadMenu()}>{exporting ? '匯出中…' : '匯出'}</button></footer>
     </section></div>}
+    {dialog === 'production' && <MenuProductionDialog menu={data.menu} dates={data.dates} meals={data.meal_types} onClose={()=>setDialog(null)}/>}
     {confirmationContent && <MenuConfirmDialog title={confirmationContent.title} description={confirmationContent.description} confirmLabel={confirmationContent.label} onCancel={() => setConfirmation(null)} onConfirm={confirmationContent.action}/>}
   </section>
 }
