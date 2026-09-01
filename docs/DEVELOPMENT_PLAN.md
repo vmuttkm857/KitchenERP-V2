@@ -58,6 +58,17 @@
 - Ingredient 只保存 nullable `nutrition_food_id`，可在官方／手動／未設定間自由切換；不改動 ERP 主檔或 Kitchen/Purchase calculations。
 - Nutrition 管理頁提供官方搜尋與唯讀明細、手動食品 CRUD、匯入紀錄；Ingredient 清單只顯示營養狀態並採 server-side filter。
 
+## Nutrition 第二階段：菜色計算與菜單輸出（已完成）
+
+- 菜色營養以「每人配方用量」即時計算，不建立 cache table；Recipe、Ingredient mapping 或 Nutrition Food 更新後，下次讀取立即反映。
+- 修正熱量只使用 `corrected_energy`。所有配方食材皆有 mapping、修正熱量且單位可安全換成 g 時才成立；任一缺漏即為「無」，禁止 partial calorie。
+- 其他常用營養素各自判斷完整度；某一營養素缺值不影響其他已完整營養素。NULL 代表缺值，數值 0 是有效結果。
+- 營養原生接受 `g`、`kg`、`斤`（1 斤 = 600 g）；其他單位只在該 Ingredient 有明確的營養重量換算時使用。`ml`、`L` 與計數／包裝單位不猜重量，換算不影響採購、需求、備料、成本或訂購單位。
+- Dish 管理的營養資訊預設關閉；開啟後以 bulk API 顯示每人熱量，缺值原因只在內部明細顯示。
+- Menu export 以 `nutrition=none|calories|detailed` opt-in；原版維持既有輸出，熱量版顯示 kcal／無，詳細版依序輸出原版、熱量版及去重後的全 reportable numeric nutrients。Excel 依 DB order 原生超寬輸出，PDF 按相同順序每 7 項分頁。
+- Nutrition Excel 保持原生可編輯儲存格；PDF 延用 image-only A4 pipeline。Poster 支援熱量週表，但不支援 detailed 組合。
+- Nutrition UI 的 Decimal 統一最多 2 位小數、移除尾零；廢棄率僅顯示為百分比 metadata，仍不參與配方計算。缺值維持「無／—」，數值 0 不視為缺值。
+
 ## Phase 5：菜單與週排餐（已完成）
 
 - menus、動態餐別、日期餐格 lazy materialization。

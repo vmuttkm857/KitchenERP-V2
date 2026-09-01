@@ -48,6 +48,15 @@ def test_known_answer_hierarchy_decimal_notes_sort_and_units(client,db_session):
     incompatible=next(value for value in body["anomalies"] if value["code"]=="INCOMPATIBLE_UNIT")
     assert incompatible["context"]["dish_name"]=="錯誤單位菜"
 
+
+def test_nutrition_conversion_does_not_change_kitchen_calculation(client,db_session):
+    headers=auth(client,db_session);menu,_,_,_,ingredients=kitchen_fixture(client,headers,db_session)
+    before=client.post("/api/v1/kitchen-operations/calculate",headers=headers,json={"menu_id":menu["id"]}).json()
+    created=client.post(f"/api/v1/ingredients/{ingredients[3]['id']}/nutrition-unit-conversions",headers=headers,json={"unit":"個","grams_per_unit":"180"})
+    assert created.status_code==201,created.text
+    after=client.post("/api/v1/kitchen-operations/calculate",headers=headers,json={"menu_id":menu["id"]}).json()
+    assert after==before
+
 def test_date_meal_filter_raw_display_and_summary(client,db_session):
     headers=auth(client,db_session);menu,lunch,_,_,_=kitchen_fixture(client,headers,db_session)
     body=client.post("/api/v1/kitchen-operations/calculate",headers=headers,json={"menu_id":menu["id"],"start_date":"2026-10-02","end_date":"2026-10-02","meal_type_ids":[lunch["id"]],"display_mode":"raw"}).json()

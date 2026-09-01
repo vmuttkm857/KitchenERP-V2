@@ -16,6 +16,10 @@
 | Nutrition | TFDA 官方食品 XLSX preview/confirm、重複匯入與新版未出現標記 | nutrition | `/nutrition/imports/*`, `/nutrition/foods` | Nutrition | importer/API/real-file validation | 2025 UPDATE1 XLSX | PASS |
 | Nutrition | 手動食品 CRUD、停用／恢復及受引用 hard-delete 保護 | nutrition | `/nutrition/manual-foods/*` | Nutrition | nutrition API/audit tests | Manual food dialog | PASS |
 | Nutrition | Ingredient 可對應官方／手動／未設定且不改 ERP 欄位 | nutrition/ingredients | `/ingredients/{id}/nutrition` | Ingredients | mapping transition/query-budget tests | Create/Edit mapping dialog | PASS |
+| Nutrition | 每人配方營養即時計算；修正熱量禁止 partial，其他營養素各自判斷完整度 | nutrition/recipes | `/dishes/{id}/nutrition`, `/dishes/nutrition/bulk` | Dishes opt-in summary/detail | calculator/API/query-budget tests | Case A–G | PASS |
+| Nutrition | g/kg/斤原生換算；NULL 與 0 分離，不套耗損或 TFDA 廢棄率 | nutrition/recipes | dish nutrition endpoints | Dishes detail | known-answer/unit tests | 不安全單位原因檢視 | PASS |
+| Nutrition | Ingredient 專屬營養重量換算；非重量與 ml/L 只接受 explicit grams，不影響採購／需求／備料／成本 | nutrition/ingredients | `/ingredients/{id}/nutrition-unit-conversions` | Ingredients conversion dialog | CRUD/validation/live calculation regressions | 1 隻=180g、20ml×1.15g | PASS |
+| Nutrition | Detailed export 動態輸出全部 reportable numeric nutrients；Excel 原生超寬、PDF 每 7 項分頁 | exports/nutrition | menu export `nutrition=detailed` | Menu Export Dialog | 105-column Excel / multi-page PDF tests | E5300104 全營養素抽查 | PASS |
 | Master Data | 主檔 hard delete 需密碼且受引用限制 | categories/suppliers/ingredients/dishes/menus | `hard-delete` commands | 各主檔 danger flow | master data/menu API | 以測試資料確認拒絕條件 | PASS |
 | Master Data | 搜尋、狀態篩選、SQL 分頁 | master data | list endpoints | 各列表 | API pagination tests | 列表工具列 | PARTIAL |
 | Recipe | 菜色 CRUD、分類、啟停 | dishes | `/dishes` | Dishes | dishes API | Smoke 5 | PASS |
@@ -28,6 +32,7 @@
 | Menu | 餐格平時摘要，集中編輯菜色、人數、備註、排序 | menus | editor aggregate | Menu Editor panel | TypeScript build + menu API | Smoke 8 | PASS |
 | Menu | 單日／完整七日加入或覆蓋複製 | menus | `copy-day`, `copy-week` | 「複製菜單」panel | menu API transaction tests | 覆蓋確認 | PASS |
 | Menu | 餐別合併／菜色分格／漂亮公告七日週表；單張 A4 Excel、4 張拼接 Excel（公告版除外）與 image-only PDF | exports | `/exports/menus/{id}/{layout}/{format}?variant=single\|poster` | Menu Editor Export Dialog | export unit/API/frontend tests | Excel COM 1/4-page and PDF raster review | PASS |
+| Menu | Opt-in 熱量版與原版＋熱量版＋詳細營養輸出；相同 Dish 明細只列一次 | exports/nutrition | menu export `nutrition=none\|calories\|detailed` | Menu Export Dialog | Excel/PDF/API/frontend regression | Nutrition export review | PASS |
 | Kitchen | 依日期、餐別、菜色產生只讀備料 | kitchen_operations | `/kitchen-operations/calculate` | Kitchen Operations | kitchen API/unit | Smoke 9 | PASS |
 | Kitchen | 菜色／食材／供應商三種 view | kitchen_operations | 同一 aggregate API | Kitchen Operations toggles | kitchen API | 切換不重新計算 | PASS |
 | Kitchen | 備料量 = 人數 × 配方量 × (1+耗損) | kitchen_operations/shared | calculate | Kitchen Operations | known-answer tests | Smoke 9 | PASS |
@@ -48,7 +53,7 @@
 | Export | Requirements Excel | exports | `/exports/requirements/xlsx` | Requirements | export/full workflow | Smoke 15 | PASS |
 | Export | Snapshot Excel | exports | `/exports/requirement-snapshots/{id}/xlsx` | Snapshots | export/full workflow | Smoke 15 | PASS |
 | Export | Purchase Excel/PDF、多供應商 | exports | `/exports/purchases/{id}/*` | Purchases | export/full workflow | Smoke 15 | PASS |
-| Technical | PostgreSQL only、Alembic 0010 | db/migrations | — | — | base→head migration | `alembic current` | PASS |
+| Technical | PostgreSQL only、Alembic 0011 | db/migrations | — | — | base→head migration | `alembic current` | PASS |
 | Technical | API→Service→Repository、request Session/process Engine | all | all | — | full suite/integration | — | PASS |
 | Technical | Query budgets、無逐列 detail fetch | repositories/frontend | aggregate endpoints | all pages | domain query-budget tests | Network smoke | PASS |
 | V1 change | Streamlit rerun/session-state 流程 | all | versioned API | React local state | regression suite | normal navigation | INTENTIONALLY_CHANGED |

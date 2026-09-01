@@ -6,7 +6,8 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.domains.ingredients.models import Ingredient
-from app.domains.nutrition.models import NutritionFood, NutritionFoodValue, NutritionImportBatch, NutritionNutrient
+from app.domains.nutrition.models import IngredientNutritionUnitConversion, NutritionFood, NutritionFoodValue, NutritionImportBatch, NutritionNutrient
+from app.domains.recipes.models import DishIngredient
 
 
 class NutritionRepository:
@@ -15,6 +16,12 @@ class NutritionRepository:
     def tfda_by_code(self): return {item.external_code: item for item in self.session.scalars(select(NutritionFood).where(NutritionFood.source == "tfda"))}
     def nutrients_by_code(self): return {item.code: item for item in self.session.scalars(select(NutritionNutrient))}
     def corrected_energy_id(self): return self.session.scalar(select(NutritionNutrient.id).where(NutritionNutrient.code == "corrected_energy"))
+    def reportable_nutrients(self):
+        return list(self.session.scalars(
+            select(NutritionNutrient)
+            .where(NutritionNutrient.enabled.is_(True), NutritionNutrient.basis == "per_100_g")
+            .order_by(NutritionNutrient.sort_order, NutritionNutrient.id)
+        ))
     def list_foods(self, *, source: str | None, page: int, page_size: int, search: str | None, category: str | None, active: bool | None):
         corrected = self.corrected_energy_id()
         energy = select(NutritionFoodValue.value).where(NutritionFoodValue.food_id == NutritionFood.id, NutritionFoodValue.nutrient_id == corrected).scalar_subquery() if corrected else None
@@ -41,3 +48,32 @@ class NutritionRepository:
         items = list(self.session.scalars(select(NutritionImportBatch).order_by(NutritionImportBatch.imported_at.desc()).offset((page-1)*page_size).limit(page_size)))
         return items, total
     def ingredient_uses(self, food_id: uuid.UUID): return self.session.scalar(select(Ingredient.id).where(Ingredient.nutrition_food_id == food_id).limit(1)) is not None
+    def recipe_inputs(self, dish_ids: set[uuid.UUID]):
+        if not dish_ids: return []
+        return list(self.session.execute(select(
+            DishIngredient.dish_id, Ingredient.id.label("ingredient_id"), Ingredient.name.label("ingredient_name"),
+            Ingredient.nutrition_food_id, DishIngredient.quantity, DishIngredient.unit,
+        ).join(Ingredient, Ingredient.id == DishIngredient.ingredient_id)
+         .where(DishIngredient.dish_id.in_(dish_ids))
+         .order_by(DishIngredient.dish_id, DishIngredient.sort_order, DishIngredient.id)).mappings())
+    def food_values(self, food_ids: set[uuid.UUID], nutrient_codes: set[str]):
+        if not food_ids: return []
+        return list(self.session.execute(select(
+            NutritionFoodValue.food_id, NutritionNutrient.code, NutritionFoodValue.value,
+        ).join(NutritionNutrient, NutritionNutrient.id == NutritionFoodValue.nutrient_id)
+         .where(NutritionFoodValue.food_id.in_(food_ids), NutritionNutrient.code.in_(nutrient_codes))).mappings())
+    def nutrition_unit_conversions(self, ingredient_ids: set[uuid.UUID]):
+        if not ingredient_ids: return []
+        return list(self.session.scalars(
+            select(IngredientNutritionUnitConversion)
+            .where(IngredientNutritionUnitConversion.ingredient_id.in_(ingredient_ids))
+            .order_by(IngredientNutritionUnitConversion.ingredient_id, IngredientNutritionUnitConversion.unit)
+        ))
+    def ingredient_nutrition_unit_conversions(self, ingredient_id: uuid.UUID):
+        return list(self.session.scalars(
+            select(IngredientNutritionUnitConversion)
+            .where(IngredientNutritionUnitConversion.ingredient_id == ingredient_id)
+            .order_by(IngredientNutritionUnitConversion.unit, IngredientNutritionUnitConversion.id)
+        ))
+    def nutrition_unit_conversion(self, conversion_id: uuid.UUID):
+        return self.session.get(IngredientNutritionUnitConversion, conversion_id)

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { attemptNavigation, confirmNavigation, shouldBlockNavigation } from '../src/app/navigationPolicy.ts'
+import { attemptNavigation, completeSavedNavigation, confirmNavigation, shouldBlockNavigation } from '../src/app/navigationPolicy.ts'
 import { buildListQuery, dateRangeError, menuCandidateDateParams, nextFilterPage, preserveSelected, RequestSequence, totalPages } from '../src/utils/listQuery.ts'
 
 test('dirty editor blocks navigation until the application dialog confirms it', () => {
@@ -15,6 +15,16 @@ test('dirty editor blocks navigation until the application dialog confirms it', 
   assert.equal(navigations, 1)
   assert.equal(attemptNavigation(false, navigate), true)
   assert.equal(navigations, 2)
+})
+
+test('successful save clears the synchronous guard before returning', () => {
+  let dirty = true
+  let navigations = 0
+  completeSavedNavigation(() => { dirty = false }, () => {
+    assert.equal(attemptNavigation(dirty, () => { navigations += 1 }), true)
+  })
+  assert.equal(dirty, false)
+  assert.equal(navigations, 1)
 })
 
 test('list query includes server-side filters and pagination', () => {

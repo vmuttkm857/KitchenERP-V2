@@ -1,6 +1,6 @@
 # KitchenERP 資料模型
 
-> V2 PostgreSQL 實際 migration head：`20260901_0010`。下方原 V1 A/B 盤點保留為歷史設計來源；V2 實際 schema 以 `backend/migrations/versions/` 與 SQLAlchemy models 為準，不支援 SQLite。
+> V2 PostgreSQL 實際 migration head：`20260901_0011`。下方原 V1 A/B 盤點保留為歷史設計來源；V2 實際 schema 以 `backend/migrations/versions/` 與 SQLAlchemy models 為準，不支援 SQLite。
 
 ## V2 Nutrition Domain（0010）
 
@@ -10,6 +10,13 @@
 - `nutrition_import_batches`：只保存版本、原始安全檔名、header row、hash、counts、actor 與狀態，不保存 XLSX binary。
 - `ingredients.nutrition_food_id`：nullable、`ON DELETE RESTRICT`；營養來源狀態由對應食品的 source 推導，不重複保存。
 - 官方匯入只更新 Nutrition tables；不修改 Ingredient、Recipe、Kitchen、Requirement 或 Purchase 資料與計算。
+
+## V2 Nutrition Unit Conversion（0011）
+
+- `ingredient_nutrition_unit_conversions`：Ingredient 專屬、只供 Nutrition 計算使用；保存 normalized `unit` 與 `grams_per_unit NUMERIC(24,10)`。
+- `(ingredient_id, unit)` 唯一且 `grams_per_unit > 0`；created/updated actor 使用 `ON DELETE RESTRICT`。
+- Ingredient 合法永久刪除時換算列 `ON DELETE CASCADE`；此表不被 Purchase、Requirement、Kitchen Operations、成本或訂購邏輯讀取。
+- 計算優先使用原生 `g/kg/斤`，其他單位（含 `ml/L`）只查此表的明確換算，不建立全域密度假設。
 
 ## V2 Users 與 Audit（0009）
 

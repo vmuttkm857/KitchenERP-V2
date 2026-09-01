@@ -79,6 +79,44 @@ def test_menu_export_query_budget_is_constant(client,db_session):
     assert response.status_code==200
     assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=4
 
+
+def test_menu_nutrition_exports_are_opt_in_complete_and_deduplicated(client,db_session):
+    headers=auth(client,db_session);category,dishes=foundations(client,headers)
+    ingredient_category=client.post("/api/v1/categories/ingredient",headers=headers,json={"name":"匯出營養食材"}).json()
+    food=client.post("/api/v1/nutrition/manual-foods",headers=headers,json={"name":"匯出雞肉營養","nutrients":{"corrected_energy":"200","protein":"20","fat":"2","sodium":"50"}}).json()
+    ingredient=client.post("/api/v1/ingredients",headers=headers,json={"code":"EXPORT-N","name":"匯出營養雞肉","category_id":ingredient_category["id"],"unit":"g","current_price":"1"}).json()
+    client.patch(f"/api/v1/ingredients/{ingredient['id']}/nutrition",headers=headers,json={"nutrition_food_id":food["id"]})
+    client.put(f"/api/v1/dishes/{dishes[0]['id']}/recipe",headers=headers,json={"items":[{"ingredient_id":ingredient["id"],"quantity":"150","unit":"g","loss_rate":"0"}]})
+    value=menu(client,headers,category["id"],name="營養匯出菜單");meal_types=meals(client,headers,value["id"])
+    client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
+
+    original=client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx",headers=headers)
+    original_text="\n".join(str(cell.value) for sheet in load_workbook(BytesIO(original.content)) for row in sheet.iter_rows() for cell in row)
+    assert "kcal" not in original_text
+
+    statements=[]
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    event.listen(process_engine,"before_cursor_execute",record)
+    try:calories=client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx?nutrition=calories",headers=headers)
+    finally:event.remove(process_engine,"before_cursor_execute",record)
+    assert calories.status_code==200,calories.text
+    calorie_text="\n".join(str(cell.value) for sheet in load_workbook(BytesIO(calories.content)) for row in sheet.iter_rows() for cell in row)
+    assert "測試菜色1（300 kcal）" in calorie_text and "測試菜色2（無）" in calorie_text
+    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=8
+
+    detailed=client.get(f"/api/v1/exports/menus/{value['id']}/grid/xlsx?nutrition=detailed",headers=headers)
+    workbook=load_workbook(BytesIO(detailed.content));assert workbook.sheetnames==["原版-菜色分格週表","熱量-菜色分格週表","詳細營養"]
+    assert workbook["詳細營養"].max_row==4 and workbook["詳細營養"].max_column==10  # dish + all nine reportable definitions
+    assert workbook["詳細營養"].freeze_panes=="B3" and workbook["詳細營養"].auto_filter.ref=="A2:J4"
+    assert workbook["詳細營養"].cell(2,2).value=="修正熱量 (kcal)" and workbook["詳細營養"].cell(2,3).value=="熱量 (kcal)"
+    detail_values={workbook["詳細營養"].cell(row,1).value:workbook["詳細營養"].cell(row,2).value for row in range(3,5)}
+    assert detail_values=={"測試菜色1":300,"測試菜色2":"無"}
+    pdf=client.get(f"/api/v1/exports/menus/{value['id']}/pretty/pdf?nutrition=detailed",headers=headers)
+    assert pdf.status_code==200,pdf.text;reader=PdfReader(BytesIO(pdf.content));assert len(reader.pages)>=3
+    assert all((page.extract_text() or "")=="" for page in reader.pages)
+    assert client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx?variant=poster&nutrition=calories",headers=headers).status_code==200
+    assert client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx?variant=poster&nutrition=detailed",headers=headers).status_code==422
+
 def test_kitchen_simple_excel_pdf_known_answer_anomaly_and_query_budget(client,db_session):
     headers=auth(client,db_session);value,*_=kitchen_fixture(client,headers,db_session);body={"menu_id":value["id"],"selected_dates":["2026-10-01"]};statements=[]
     def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)

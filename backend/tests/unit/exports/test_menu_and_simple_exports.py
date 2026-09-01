@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -7,7 +8,8 @@ from openpyxl import load_workbook
 from pypdf import PdfReader
 
 from app.domains.exports.kitchen_simple import WARNING_TEXT, display_ingredient, kitchen_simple_pdf, kitchen_simple_workbook, simple_page_plan
-from app.domains.exports.menu_exports import menu_full_pdf, menu_full_workbook, menu_grid_pdf, menu_grid_workbook, menu_pretty_pdf, menu_pretty_workbook, menu_week_plan
+from app.domains.exports.menu_exports import menu_full_pdf, menu_full_workbook, menu_grid_pdf, menu_grid_workbook, menu_nutrition_pdf, menu_nutrition_workbook, menu_pretty_pdf, menu_pretty_workbook, menu_week_plan
+from app.domains.nutrition.calculator import NutrientDefinition
 
 
 def menu_result(days=7, meal_count=3, dishes_per_slot=2):
@@ -93,3 +95,46 @@ def test_kitchen_poster_and_pdf_print_contracts():
 
 def test_weeks_are_never_split_inside_seven_day_period():
     plans=menu_week_plan(menu_result(days=11,meal_count=6,dishes_per_slot=6)); assert [len(p["dates"]) for p in plans]==[7,4]
+
+
+def nutrient_definitions(count=20):
+    common=[("corrected_energy","修正熱量","kcal"),("energy","熱量","kcal"),("protein","粗蛋白","g"),("fat","粗脂肪","g"),("carbohydrate","總碳水化合物","g"),("dietary_fiber","膳食纖維","g"),("sodium","鈉","mg"),("potassium","鉀","mg"),("calcium","鈣","mg")]
+    definitions=[NutrientDefinition(*item) for item in common]
+    definitions.extend(NutrientDefinition(f"synthetic_{index:03}",f"營養素 {index:03}","mg") for index in range(max(0,count-len(definitions))))
+    return tuple(definitions)
+
+
+def nutrition_results(result, definitions=None):
+    definitions=definitions or nutrient_definitions()
+    values={"corrected_energy":"350","protein":"28.4","fat":"18.1","carbohydrate":None,"dietary_fiber":"0","sodium":"560","potassium":"300","calcium":"25"}
+    output={}
+    for dish_id,_ in {(item["dish_id"],item["dish_name"]) for slot in result["slots"] for item in slot["dishes"]}:
+        nutrients={definition.code:SimpleNamespace(code=definition.code,name=definition.name,unit=definition.unit,value=Decimal("0") if definition.code.startswith("synthetic_") else (None if values.get(definition.code) is None else Decimal(values[definition.code])),complete=definition.code.startswith("synthetic_") or values.get(definition.code) is not None) for definition in definitions}
+        output[dish_id]=SimpleNamespace(calorie_complete=True,calorie_value=Decimal("350"),nutrients=nutrients)
+    return output
+
+
+@pytest.mark.parametrize("layout",["merged","grid","pretty"])
+def test_calorie_workbook_preserves_layout_and_adds_kcal(layout):
+    result=menu_result(); definitions=nutrient_definitions(); workbook=load_workbook(BytesIO(menu_nutrition_workbook(result,layout,"calories","single",nutrition_results(result,definitions),definitions)))
+    text="\n".join(str(value) for sheet in workbook for value in values(sheet))
+    assert "350 kcal" in text and len(workbook.sheetnames)==1
+
+
+def test_detailed_workbook_has_original_calorie_and_deduplicated_native_detail():
+    result=menu_result(); definitions=nutrient_definitions(105); workbook=load_workbook(BytesIO(menu_nutrition_workbook(result,"merged","detailed","single",nutrition_results(result,definitions),definitions)))
+    assert workbook.sheetnames==["原版-餐別合併週表","熱量-餐別合併週表","詳細營養"]
+    assert "kcal" not in "\n".join(str(value) for value in values(workbook.worksheets[0]))
+    assert "350 kcal" in "\n".join(str(value) for value in values(workbook.worksheets[1]))
+    detail=workbook["詳細營養"]; assert detail.max_row==4 and detail.max_column==106
+    assert detail["B3"].value==350 and detail["C3"].value=="無" and detail["F3"].value=="無" and detail["G3"].value==0
+    assert detail["B3"].data_type=="n" and detail["K3"].value==0 and detail["K3"].data_type=="n"
+    assert detail.freeze_panes=="B3" and detail.print_title_cols=="$A:$A" and detail.auto_filter.ref=="A2:DB4"
+    assert [detail.cell(2,column).value for column in range(2,7)]==["修正熱量 (kcal)","熱量 (kcal)","粗蛋白 (g)","粗脂肪 (g)","總碳水化合物 (g)"]
+    assert detail.page_setup.fitToWidth==0
+
+
+def test_nutrition_pdf_remains_image_only_and_detail_can_extend_pages():
+    result=menu_result(dishes_per_slot=12); definitions=nutrient_definitions(105); payload=menu_nutrition_pdf(result,"pretty","detailed",nutrition_results(result,definitions),definitions)
+    reader=PdfReader(BytesIO(payload)); assert len(reader.pages)==32  # original + calorie + 15 nutrient chunks x 2 dish pages
+    assert all((page.extract_text() or "")=="" for page in reader.pages)

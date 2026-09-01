@@ -36,12 +36,14 @@ def export_kitchen(format:Literal["xlsx","pdf"],criteria:KitchenCriteria,session
     try:payload,name=ExportService(session).kitchen(criteria,format);return binary(payload,f"{name}_廚房備料",format)
     except Exception as exc:raise mapped(exc) from exc
 @router.get("/menus/{menu_id}/{layout}/{format}")
-def export_menu(menu_id:uuid.UUID,layout:Literal["full","merged","grid","pretty"],format:Literal["xlsx","pdf"],session:Annotated[Session,Depends(get_db_session)],variant:Literal["single","poster"]="single"):
+def export_menu(menu_id:uuid.UUID,layout:Literal["full","merged","grid","pretty"],format:Literal["xlsx","pdf"],session:Annotated[Session,Depends(get_db_session)],variant:Literal["single","poster"]="single",nutrition:Literal["none","calories","detailed"]="none"):
     if variant=="poster" and (format!="xlsx" or layout=="pretty"):raise HTTPException(422,detail={"code":"INVALID_EXPORT_VARIANT","message":"Poster export is available for merged/grid Excel only"})
+    if variant=="poster" and nutrition=="detailed":raise HTTPException(422,detail={"code":"INVALID_NUTRITION_VARIANT","message":"Detailed nutrition is not available for poster exports"})
     try:
-        payload,name=ExportService(session).menu(menu_id,layout,format,variant)
+        payload,name=ExportService(session).menu(menu_id,layout,format,variant,nutrition)
         label={"full":"餐別合併週表","merged":"餐別合併週表","grid":"菜色分格週表","pretty":"漂亮公告版"}[layout]
-        return binary(payload,f"{name}_{label}",format)
+        suffix={"none":"","calories":"_含熱量","detailed":"_營養詳細"}[nutrition]
+        return binary(payload,f"{name}_{label}{suffix}",format)
     except Exception as exc:raise mapped(exc) from exc
 @router.post("/requirements/xlsx")
 def export_requirements(criteria:RequirementCriteria,session:Annotated[Session,Depends(get_db_session)]):

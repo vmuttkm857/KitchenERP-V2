@@ -13,11 +13,22 @@ from app.domains.dishes.exceptions import (
 )
 from app.domains.dishes.schemas import DishCreate, DishList, DishPublic, DishUpdate
 from app.domains.dishes.service import DishService
+from app.domains.nutrition.dish_service import DishNutritionService
+from app.domains.nutrition.schemas import DishNutritionBulkPublic, DishNutritionBulkRequest, DishNutritionPublic
 from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta, PasswordConfirmation
 
 
 router = APIRouter(prefix="/dishes", tags=["dishes"], dependencies=[Depends(get_current_user)])
+
+
+def nutrition_public(result) -> DishNutritionPublic:
+    return DishNutritionPublic.model_validate({
+        "dish_id": result.dish_id, "basis": result.basis,
+        "calorie_complete": result.calorie_complete, "calorie_value": result.calorie_value,
+        "missing_calorie_ingredients": result.missing_calorie_ingredients,
+        "nutrients": result.nutrients,
+    })
 
 
 def map_error(exc: Exception) -> HTTPException:
@@ -47,10 +58,26 @@ def list_dishes(session: Annotated[Session, Depends(get_db_session)], page: int 
                     pagination=PaginationMeta(page=page, page_size=page_size, total=total))
 
 
+@router.post("/nutrition/bulk", response_model=DishNutritionBulkPublic)
+def bulk_dish_nutrition(data: DishNutritionBulkRequest,
+                        session: Annotated[Session, Depends(get_db_session)]) -> DishNutritionBulkPublic:
+    results = DishNutritionService(session).bulk(set(data.dish_ids))
+    return DishNutritionBulkPublic(items=[nutrition_public(results[dish_id]) for dish_id in data.dish_ids])
+
+
 @router.get("/{dish_id}", response_model=DishPublic)
 def get_dish(dish_id: uuid.UUID, session: Annotated[Session, Depends(get_db_session)]) -> DishPublic:
     try:
         return DishPublic.model_validate(DishService(session).get(dish_id))
+    except Exception as exc:
+        raise map_error(exc) from exc
+
+
+@router.get("/{dish_id}/nutrition", response_model=DishNutritionPublic)
+def get_dish_nutrition(dish_id: uuid.UUID,
+                       session: Annotated[Session, Depends(get_db_session)]) -> DishNutritionPublic:
+    try:
+        return nutrition_public(DishNutritionService(session).get(dish_id))
     except Exception as exc:
         raise map_error(exc) from exc
 

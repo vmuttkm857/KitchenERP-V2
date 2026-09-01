@@ -7,3 +7,8 @@ export function attemptNavigation(dirty: boolean, action: () => void) {
 }
 
 export function confirmNavigation(action: (() => void) | null) { action?.() }
+
+export function completeSavedNavigation(clearDirty: () => void, action: () => void) {
+  clearDirty()
+  action()
+}

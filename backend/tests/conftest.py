@@ -55,6 +55,7 @@ def clean_auth_tables(migrated_test_database: Engine) -> Generator[None, None, N
         connection.execute(text("DELETE FROM dish_ingredients"))
         connection.execute(text("DELETE FROM dishes"))
         connection.execute(text("DELETE FROM ingredient_price_history"))
+        connection.execute(text("DELETE FROM ingredient_nutrition_unit_conversions"))
         connection.execute(text("DELETE FROM ingredients"))
         connection.execute(text("DELETE FROM nutrition_food_values"))
         connection.execute(text("DELETE FROM nutrition_foods"))

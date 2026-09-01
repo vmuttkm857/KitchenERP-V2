@@ -10,8 +10,8 @@ from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.ingredients.exceptions import IngredientCodeExistsError, IngredientInUseError, IngredientNameExistsError, IngredientNotFoundError, InvalidIngredientReferenceError
 from app.domains.ingredients.schemas import IngredientCreate, IngredientList, IngredientPublic, IngredientUpdate, PriceHistoryPublic
 from app.domains.ingredients.service import IngredientService
-from app.domains.nutrition.exceptions import NutritionFoodNotFoundError
-from app.domains.nutrition.schemas import IngredientNutritionUpdate
+from app.domains.nutrition.exceptions import NutritionFoodNotFoundError, NutritionUnitConversionExistsError, NutritionUnitConversionNotFoundError
+from app.domains.nutrition.schemas import IngredientNutritionUpdate, NutritionUnitConversionCreate, NutritionUnitConversionPublic, NutritionUnitConversionUpdate
 from app.domains.nutrition.service import NutritionService
 from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta, PasswordConfirmation
@@ -28,6 +28,8 @@ def map_error(exc: Exception) -> HTTPException:
     if isinstance(exc, IngredientInUseError): return HTTPException(409, "Ingredient has price or business history and cannot be permanently deleted")
     if isinstance(exc, InvalidCredentialsError): return HTTPException(401, "Password verification failed")
     if isinstance(exc, NutritionFoodNotFoundError): return HTTPException(422, "Nutrition food must exist and be active")
+    if isinstance(exc, NutritionUnitConversionNotFoundError): return HTTPException(404, "Nutrition unit conversion not found")
+    if isinstance(exc, NutritionUnitConversionExistsError): return HTTPException(409, "Nutrition unit conversion already exists")
     return HTTPException(400, "Ingredient operation failed")
 
 
@@ -67,6 +69,32 @@ def update_nutrition(ingredient_id:uuid.UUID,data:IngredientNutritionUpdate,user
         NutritionService(session).set_ingredient_mapping(ingredient_id,data.nutrition_food_id,user.id)
         return IngredientPublic.model_validate(IngredientService(session).get(ingredient_id))
     except Exception as exc:raise map_error(exc) from exc
+
+
+@router.get("/{ingredient_id}/nutrition-unit-conversions", response_model=list[NutritionUnitConversionPublic])
+def list_nutrition_unit_conversions(ingredient_id: uuid.UUID, session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return [NutritionUnitConversionPublic.model_validate(item) for item in NutritionService(session).ingredient_nutrition_unit_conversions(ingredient_id)]
+    except Exception as exc: raise map_error(exc) from exc
+
+
+@router.post("/{ingredient_id}/nutrition-unit-conversions", response_model=NutritionUnitConversionPublic, status_code=201)
+def create_nutrition_unit_conversion(ingredient_id: uuid.UUID, data: NutritionUnitConversionCreate, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try: return NutritionUnitConversionPublic.model_validate(NutritionService(session).create_nutrition_unit_conversion(ingredient_id, data, user.id))
+    except Exception as exc: raise map_error(exc) from exc
+
+
+@router.patch("/{ingredient_id}/nutrition-unit-conversions/{conversion_id}", response_model=NutritionUnitConversionPublic)
+def update_nutrition_unit_conversion(ingredient_id: uuid.UUID, conversion_id: uuid.UUID, data: NutritionUnitConversionUpdate, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try: return NutritionUnitConversionPublic.model_validate(NutritionService(session).update_nutrition_unit_conversion(ingredient_id, conversion_id, data, user.id))
+    except Exception as exc: raise map_error(exc) from exc
+
+
+@router.delete("/{ingredient_id}/nutrition-unit-conversions/{conversion_id}", status_code=204)
+def delete_nutrition_unit_conversion(ingredient_id: uuid.UUID, conversion_id: uuid.UUID, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try: NutritionService(session).delete_nutrition_unit_conversion(ingredient_id, conversion_id, user.id)
+    except Exception as exc: raise map_error(exc) from exc
+    return None
 
 
 @router.post("/{ingredient_id}/deactivate", response_model=IngredientPublic)

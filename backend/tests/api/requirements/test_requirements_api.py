@@ -81,6 +81,8 @@ def test_missing_recipe_zero_quantity_incompatible_unit_missing_supplier_and_ina
     actor_id=db_session.scalar(select(User.id))
     db_session.add(DishIngredient(id=uuid.uuid4(),dish_id=uuid.UUID(bad_dish["id"]),ingredient_id=uuid.UUID(bad_ingredient["id"]),quantity=Decimal("1"),unit="個",loss_rate=Decimal("0"),sort_order=1,created_by=actor_id,updated_by=actor_id))
     db_session.commit()
+    conversion=client.post(f"/api/v1/ingredients/{bad_ingredient['id']}/nutrition-unit-conversions",headers=headers,json={"unit":"個","grams_per_unit":"180"})
+    assert conversion.status_code==201,conversion.text
     aggregate=client.get(f"/api/v1/menus/{menu['id']}/editor",headers=headers).json();slot=aggregate["slots"][0]
     slot["dishes"].extend([{"dish_id":no_recipe["id"],"diner_count":1,"sort_order":3},{"dish_id":bad_dish["id"],"diner_count":1,"sort_order":4}])
     payload={"slots":[{"menu_day_id":s["menu_day_id"],"menu_date":s["menu_date"],"menu_meal_type_id":s["menu_meal_type_id"],"notes":s["notes"],"dishes":[{"id":d.get("id"),"dish_id":d["dish_id"],"diner_count":d["diner_count"],"notes":d.get("notes"),"sort_order":d["sort_order"]} for d in s["dishes"]]} for s in aggregate["slots"]]}

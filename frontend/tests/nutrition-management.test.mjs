@@ -5,6 +5,7 @@ import test from 'node:test'
 const app=readFileSync(new URL('../src/app/App.tsx',import.meta.url),'utf8')
 const nutrition=readFileSync(new URL('../src/features/nutrition/NutritionPage.tsx',import.meta.url),'utf8')
 const ingredients=readFileSync(new URL('../src/features/ingredients/IngredientsPage.tsx',import.meta.url),'utf8')
+const dishes=readFileSync(new URL('../src/features/dishes/DishesPage.tsx',import.meta.url),'utf8')
 const numbers=readFileSync(new URL('../src/utils/numbers.ts',import.meta.url),'utf8')
 const styles=readFileSync(new URL('../src/styles/global.css',import.meta.url),'utf8')
 
@@ -18,4 +19,10 @@ test('ingredient create continues directly into nutrition mapping',()=>{assert.m
 test('ingredient edit can change or clear current mapping',()=>{assert.match(ingredients,/>變更</);assert.match(ingredients,/>清除對應</);assert.match(ingredients,/nutrition_food_id:null/)})
 test('nutrition source radios stay beside their clickable labels',()=>{assert.match(ingredients,/fieldset className="nutrition-source-options"/);assert.match(styles,/\.nutrition-source-options label\{display:flex/);assert.match(styles,/\.nutrition-source-options input\{width:auto;min-width:auto/)})
 test('corrected energy uses one shared two-decimal presentation formatter',()=>{assert.match(numbers,/formatNutritionValue/);assert.match(numbers,/maximumFractionDigits:2/);for(const source of [nutrition,ingredients])assert.match(source,/formatNutritionValue/)})
+test('official and manual detail format every nutrient and waste rate',()=>{assert.match(nutrition,/food\.values\.map\(value/);assert.match(nutrition,/formatNutritionValue\(value\.value\)/);assert.match(nutrition,/formatNutritionValue\(food\.waste_rate\)\}%/);assert.match(nutrition,/food\.waste_rate===null\?'—'/)})
+test('ingredient nutrition conversions support list add edit and delete',()=>{assert.match(ingredients,/NutritionUnitConversionsDialog/);assert.match(ingredients,/nutrition-unit-conversions/);for(const method of ["method:'POST'","method:'PATCH'","method:'DELETE'"])assert.match(ingredients,new RegExp(method));assert.match(ingredients,/營養重量換算/)})
+test('nutrition conversion UI validates positive finite grams and explains isolation',()=>{assert.match(ingredients,/Number\.isFinite/);assert.match(ingredients,/Number\(value\)>0/);assert.match(ingredients,/此換算僅供營養計算使用，不影響採購、需求、備料、成本或訂購單位。/)})
+test('dish nutrition is opt-in and loaded in one bulk request',()=>{assert.match(dishes,/顯示營養資訊/);assert.match(dishes,/useState\(false\)/);assert.match(dishes,/\/dishes\/nutrition\/bulk/);assert.match(dishes,/dish_ids:items\.map/)})
+test('dish nutrition shows kcal unavailable and internal missing reasons',()=>{assert.match(dishes,/熱量：/);assert.match(dishes,/calorie_complete/);assert.match(dishes,/ⓘ 查看原因/);for(const reason of ['未設定營養資料','缺少修正熱量','無法安全換算為 g'])assert.match(dishes,new RegExp(reason))})
+test('dish nutrition detail uses the shared formatter',()=>{assert.match(dishes,/formatNutritionValue/);for(const code of ['corrected_energy','protein','fat','carbohydrate','dietary_fiber','sodium','potassium','calcium'])assert.match(dishes,new RegExp(code))})
 test('nutrition flows do not use native prompt or confirm',()=>{for(const source of [nutrition,ingredients])assert.doesNotMatch(source,/window\.(prompt|confirm)\s*\(/)})

@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session
 from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.domains.auth.service import AuthService
 from app.domains.ingredients.models import Ingredient
-from app.domains.nutrition.exceptions import InvalidNutritionSourceError, NutritionFoodInUseError, NutritionFoodNotFoundError, NutritionImportError
+from app.domains.nutrition.calculator import normalize_nutrition_unit
+from app.domains.nutrition.exceptions import InvalidNutritionSourceError, NutritionFoodInUseError, NutritionFoodNotFoundError, NutritionImportError, NutritionUnitConversionExistsError, NutritionUnitConversionNotFoundError
 from app.domains.nutrition.importer import CANONICAL, ParsedWorkbook, parse_tfda_xlsx
-from app.domains.nutrition.models import NutritionFood, NutritionFoodValue, NutritionImportBatch, NutritionNutrient
+from app.domains.nutrition.models import IngredientNutritionUnitConversion, NutritionFood, NutritionFoodValue, NutritionImportBatch, NutritionNutrient
 from app.domains.nutrition.repository import NutritionRepository
-from app.domains.nutrition.schemas import ManualFoodCreate, ManualFoodUpdate
+from app.domains.nutrition.schemas import ManualFoodCreate, ManualFoodUpdate, NutritionUnitConversionCreate, NutritionUnitConversionUpdate
 
 MANUAL_DEFINITIONS = {
     "corrected_energy": ("修正熱量", "kcal"), "energy": ("熱量", "kcal"), "protein": ("粗蛋白", "g"),
@@ -127,3 +128,65 @@ class NutritionService:
             if not food or not food.is_active:raise NutritionFoodNotFoundError()
         old=ingredient.nutrition_food_id;ingredient.nutrition_food_id=food_id;ingredient.updated_by=actor_id
         self.audit.record(actor_id=actor_id,action="ingredient_nutrition_mapping_change",entity_type="ingredient",entity_id=ingredient.id,entity_label=ingredient.name,before_data={"nutrition_food_id":old},after_data={"nutrition_food_id":food_id});self.session.commit()
+    def ingredient_nutrition_unit_conversions(self, ingredient_id: uuid.UUID):
+        self._ingredient(ingredient_id)
+        return self.repository.ingredient_nutrition_unit_conversions(ingredient_id)
+    def create_nutrition_unit_conversion(self, ingredient_id: uuid.UUID, data: NutritionUnitConversionCreate, actor_id: uuid.UUID):
+        ingredient = self._ingredient(ingredient_id)
+        conversion = IngredientNutritionUnitConversion(
+            ingredient_id=ingredient.id, unit=normalize_nutrition_unit(data.unit),
+            grams_per_unit=data.grams_per_unit, created_by=actor_id, updated_by=actor_id,
+        )
+        self.session.add(conversion)
+        self.audit.record(
+            actor_id=actor_id, action="ingredient_nutrition_unit_conversion_create",
+            entity_type="ingredient_nutrition_unit_conversion", entity_id=conversion.id,
+            entity_label=f"{ingredient.name} / {conversion.unit}",
+            after_data={"ingredient_id": ingredient.id, "unit": conversion.unit, "grams_per_unit": conversion.grams_per_unit},
+        )
+        self._commit_conversion(); self.session.refresh(conversion); return conversion
+    def update_nutrition_unit_conversion(self, ingredient_id: uuid.UUID, conversion_id: uuid.UUID, data: NutritionUnitConversionUpdate, actor_id: uuid.UUID):
+        ingredient = self._ingredient(ingredient_id)
+        conversion = self._conversion(ingredient_id, conversion_id)
+        before = audit_snapshot(conversion, "ingredient_id", "unit", "grams_per_unit")
+        changes = data.model_dump(exclude_unset=True)
+        if "unit" in changes: changes["unit"] = normalize_nutrition_unit(changes["unit"])
+        for key, value in changes.items(): setattr(conversion, key, value)
+        conversion.updated_by = actor_id
+        self.audit.record(
+            actor_id=actor_id, action="ingredient_nutrition_unit_conversion_update",
+            entity_type="ingredient_nutrition_unit_conversion", entity_id=conversion.id,
+            entity_label=f"{ingredient.name} / {conversion.unit}", before_data=before,
+            after_data=audit_snapshot(conversion, "ingredient_id", "unit", "grams_per_unit"),
+        )
+        self._commit_conversion(); self.session.refresh(conversion); return conversion
+    def delete_nutrition_unit_conversion(self, ingredient_id: uuid.UUID, conversion_id: uuid.UUID, actor_id: uuid.UUID) -> None:
+        ingredient = self._ingredient(ingredient_id)
+        conversion = self._conversion(ingredient_id, conversion_id)
+        before = audit_snapshot(conversion, "ingredient_id", "unit", "grams_per_unit")
+        self.session.delete(conversion)
+        self.audit.record(
+            actor_id=actor_id, action="ingredient_nutrition_unit_conversion_delete",
+            entity_type="ingredient_nutrition_unit_conversion", entity_id=conversion.id,
+            entity_label=f"{ingredient.name} / {conversion.unit}", before_data=before,
+        )
+        self.session.commit()
+    def _ingredient(self, ingredient_id: uuid.UUID) -> Ingredient:
+        ingredient = self.session.get(Ingredient, ingredient_id)
+        if ingredient is None:
+            from app.domains.ingredients.exceptions import IngredientNotFoundError
+            raise IngredientNotFoundError()
+        return ingredient
+    def _conversion(self, ingredient_id: uuid.UUID, conversion_id: uuid.UUID) -> IngredientNutritionUnitConversion:
+        conversion = self.repository.nutrition_unit_conversion(conversion_id)
+        if conversion is None or conversion.ingredient_id != ingredient_id:
+            raise NutritionUnitConversionNotFoundError()
+        return conversion
+    def _commit_conversion(self) -> None:
+        try: self.session.commit()
+        except IntegrityError as exc:
+            self.session.rollback()
+            constraint = getattr(getattr(getattr(exc, "orig", None), "diag", None), "constraint_name", None)
+            if constraint == "uq_ingredient_nutrition_unit_conversions_ingredient_unit":
+                raise NutritionUnitConversionExistsError() from exc
+            raise

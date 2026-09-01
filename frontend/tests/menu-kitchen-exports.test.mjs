@@ -22,6 +22,15 @@ test('menu export composes the selected authenticated endpoint and handles loadi
   assert.match(menu,/菜單匯出失敗/)
 })
 
+test('menu nutrition export is opt-in with calories and detailed choices',()=>{
+  assert.match(menu,/useState<'none' \| 'calories' \| 'detailed'>\('none'\)/)
+  assert.match(menu,/顯示營養資訊/)
+  assert.match(menu,/熱量版/)
+  assert.match(menu,/熱量＋詳細營養/)
+  assert.match(menu,/exportNutrition==='none'\?'':`&nutrition=\$\{exportNutrition\}`/)
+  assert.match(menu,/disabled=\{exportNutrition === 'detailed'\}/)
+})
+
 test('kitchen weekly prep uses one format and paper dialog with the dedicated endpoint',()=>{
   assert.match(kitchen,/週配料表/)
   assert.match(kitchen,/\/exports\/kitchen-operations\/simple\/\$\{simpleFormat\}/)

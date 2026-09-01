@@ -190,7 +190,7 @@ def test_recipe_unit_compatibility_accepts_supported_dimensions_and_exact_units(
     headers, _ = auth_headers(client, db_session)
     dish_category, _ = foundations(client, headers)
     ingredient_category = client.get("/api/v1/categories/ingredient?active=true", headers=headers).json()["items"][0]
-    cases = (("g", "g"), ("g", "kg"), ("kg", "斤"), ("L", "ml"), ("ml", "L"), ("個", "個"), ("片", "片"), ("盒", "盒"))
+    cases = (("g", "g"), ("g", "kg"), ("kg", "斤"), ("L", "ml"), ("ml", "L"), ("個", "個"), ("片", "片"), ("包", "包"), ("盒", "盒"))
     ingredients = []
     for index, (base_unit, recipe_unit) in enumerate(cases, 1):
         response = client.post("/api/v1/ingredients", headers=headers, json={

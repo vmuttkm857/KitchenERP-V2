@@ -17,6 +17,8 @@ def setup_snapshot(client,db_session):
 
 def test_known_answer_supplier_grouping_units_cost_lock_and_hard_copy(client,db_session):
     headers,menu,rest,snapshot=setup_snapshot(client,db_session);_,dishes,ingredients,suppliers=rest
+    conversion=client.post(f"/api/v1/ingredients/{ingredients[0]['id']}/nutrition-unit-conversions",headers=headers,json={"unit":"隻","grams_per_unit":"180"})
+    assert conversion.status_code==201,conversion.text
     chicken=next(item for item in snapshot["items"] if item["ingredient_code_snapshot"]=="REQ-I1")
     water=next(item for item in snapshot["items"] if item["ingredient_code_snapshot"]=="REQ-I3")
     changed=client.patch(f"/api/v1/requirement-snapshots/{snapshot['id']}/items/{chicken['id']}",headers=headers,json={"purchase_unit":"斤"}).json()

@@ -37,6 +37,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const [exportLayout, setExportLayout] = useState<'full' | 'grid' | 'pretty'>('full')
   const [exportFormat, setExportFormat] = useState<'xlsx' | 'pdf'>('xlsx')
   const [exportVariant, setExportVariant] = useState<'single' | 'poster'>('single')
+  const [exportNutrition, setExportNutrition] = useState<'none' | 'calories' | 'detailed'>('none')
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -155,7 +156,8 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   async function downloadMenu() {
     setExporting(true); setExportError('')
     try {
-      await apiDownload(`/exports/menus/${menu.id}/${exportLayout}/${exportFormat}?variant=${exportVariant}`)
+      const nutritionQuery=exportNutrition==='none'?'':`&nutrition=${exportNutrition}`
+      await apiDownload(`/exports/menus/${menu.id}/${exportLayout}/${exportFormat}?variant=${exportVariant}${nutritionQuery}`)
       setDialog(null)
     } catch { setExportError('菜單匯出失敗，請稍後再試。') }
     finally { setExporting(false) }
@@ -224,7 +226,8 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
     {dialog === 'export' && <div className="modal-backdrop" onMouseDown={() => { if (!exporting) setDialog(null) }}><section className="modal-panel export-dialog" role="dialog" aria-modal="true" aria-labelledby="menu-export-title" onMouseDown={event => event.stopPropagation()}><header><div><h2 id="menu-export-title">匯出菜單</h2><p>選擇七日週表版型與單張或拼接列印方式。</p></div><button className="secondary" disabled={exporting} onClick={() => setDialog(null)}>關閉</button></header>
       <fieldset disabled={exporting}><legend>版型</legend><label><input autoFocus type="radio" name="menu-export-layout" checked={exportLayout === 'full'} onChange={() => { setExportLayout('full'); setExportError('') }}/>餐別合併週表</label><label><input type="radio" name="menu-export-layout" checked={exportLayout === 'grid'} onChange={() => { setExportLayout('grid'); setExportError('') }}/>菜色分格週表</label><label><input type="radio" name="menu-export-layout" checked={exportLayout === 'pretty'} onChange={() => { setExportLayout('pretty'); setExportVariant('single'); setExportError('') }}/>漂亮公告版</label></fieldset>
       <fieldset disabled={exporting}><legend>格式</legend><label><input type="radio" name="menu-export-format" checked={exportFormat === 'xlsx'} onChange={() => { setExportFormat('xlsx'); setExportError('') }}/>Excel</label><label><input type="radio" name="menu-export-format" checked={exportFormat === 'pdf'} onChange={() => { setExportFormat('pdf'); setExportVariant('single'); setExportError('') }}/>PDF（圖片型）</label></fieldset>
-      {exportFormat === 'xlsx' && exportLayout !== 'pretty' && <fieldset disabled={exporting}><legend>紙張</legend><label><input type="radio" name="menu-export-variant" checked={exportVariant === 'single'} onChange={() => setExportVariant('single')}/>單張 A4</label><label><input type="radio" name="menu-export-variant" checked={exportVariant === 'poster'} onChange={() => setExportVariant('poster')}/>4張 A4 拼接放大</label></fieldset>}
+      <fieldset disabled={exporting}><legend>顯示營養資訊</legend><label><input type="radio" name="menu-export-nutrition" checked={exportNutrition === 'none'} onChange={() => setExportNutrition('none')}/>不顯示（維持原版）</label><label><input type="radio" name="menu-export-nutrition" checked={exportNutrition === 'calories'} onChange={() => setExportNutrition('calories')}/>熱量版</label><label><input type="radio" name="menu-export-nutrition" checked={exportNutrition === 'detailed'} onChange={() => { setExportNutrition('detailed'); setExportVariant('single') }}/>熱量＋詳細營養</label></fieldset>
+      {exportFormat === 'xlsx' && exportLayout !== 'pretty' && <fieldset disabled={exporting}><legend>紙張</legend><label><input type="radio" name="menu-export-variant" checked={exportVariant === 'single'} onChange={() => setExportVariant('single')}/>單張 A4</label><label><input type="radio" name="menu-export-variant" disabled={exportNutrition === 'detailed'} checked={exportVariant === 'poster'} onChange={() => setExportVariant('poster')}/>4張 A4 拼接放大{exportNutrition === 'detailed'?'（詳細營養不支援）':''}</label></fieldset>}
       {exportError && <Feedback type="error">{exportError}</Feedback>}
       <footer><button className="secondary" disabled={exporting} onClick={() => setDialog(null)}>取消</button><button disabled={exporting} onClick={() => void downloadMenu()}>{exporting ? '匯出中…' : '匯出'}</button></footer>
     </section></div>}

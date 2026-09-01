@@ -80,3 +80,27 @@ class NutritionFoodValue(Base):
     value: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class IngredientNutritionUnitConversion(Base):
+    __tablename__ = "ingredient_nutrition_unit_conversions"
+    __table_args__ = (
+        UniqueConstraint("ingredient_id", "unit", name="uq_ingredient_nutrition_unit_conversions_ingredient_unit"),
+        CheckConstraint("grams_per_unit > 0", name="ck_ingredient_nutrition_unit_conversions_grams_positive"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ingredient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ingredients.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    unit: Mapped[str] = mapped_column(String(30), nullable=False)
+    grams_per_unit: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now(),
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False,
+    )
+    updated_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False,
+    )
