@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.categories.models import DishCategory, MenuCategory
 from app.domains.dishes.models import Dish
-from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType
+from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType, MenuMealTypeColumn
 
 
 class MenuRepository:
@@ -16,6 +16,7 @@ class MenuRepository:
     def menu_model(self, menu_id): return self.session.get(Menu, menu_id)
     def category(self, category_id): return self.session.get(MenuCategory, category_id)
     def meal_type(self, meal_type_id): return self.session.get(MenuMealType, meal_type_id)
+    def meal_type_column(self, column_id): return self.session.get(MenuMealTypeColumn, column_id)
     def dish_models(self, ids: set[uuid.UUID]):
         if not ids: return {}
         return {row.id: row for row in self.session.scalars(select(Dish).where(Dish.id.in_(ids)))}
@@ -39,6 +40,20 @@ class MenuRepository:
     def meal_name_exists(self, menu_id, name, exclude=None):
         stmt=select(MenuMealType.id).where(MenuMealType.menu_id==menu_id, func.lower(MenuMealType.name)==name.lower())
         if exclude: stmt=stmt.where(MenuMealType.id != exclude)
+        return self.session.scalar(stmt.limit(1)) is not None
+    def meal_type_columns(self, meal_type_id):
+        return list(self.session.scalars(select(MenuMealTypeColumn).where(
+            MenuMealTypeColumn.menu_meal_type_id==meal_type_id).order_by(
+            MenuMealTypeColumn.sort_order,MenuMealTypeColumn.id)))
+    def menu_columns(self, menu_id):
+        return list(self.session.scalars(select(MenuMealTypeColumn).join(MenuMealType).where(
+            MenuMealType.menu_id==menu_id).order_by(MenuMealType.sort_order,
+            MenuMealTypeColumn.sort_order,MenuMealTypeColumn.id)))
+    def column_name_exists(self, meal_type_id, name, exclude=None):
+        stmt=select(MenuMealTypeColumn.id).where(
+            MenuMealTypeColumn.menu_meal_type_id==meal_type_id,
+            func.lower(MenuMealTypeColumn.name)==name.lower())
+        if exclude: stmt=stmt.where(MenuMealTypeColumn.id!=exclude)
         return self.session.scalar(stmt.limit(1)) is not None
     def days(self, menu_id):
         return list(self.session.scalars(select(MenuDay).where(MenuDay.menu_id==menu_id)))

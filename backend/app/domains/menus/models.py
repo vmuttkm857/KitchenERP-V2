@@ -43,6 +43,22 @@ class MenuMealType(AuditColumns, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
 
+class MenuMealTypeColumn(AuditColumns, Base):
+    __tablename__ = "menu_meal_type_columns"
+    __table_args__ = (
+        UniqueConstraint("menu_meal_type_id", "name", name="uq_menu_meal_type_columns_meal_name"),
+        CheckConstraint("sort_order >= 1", name="ck_menu_meal_type_columns_sort_order_positive"),
+        Index("ix_menu_meal_type_columns_meal_order", "menu_meal_type_id", "sort_order", "id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    menu_meal_type_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("menu_meal_types.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+
 class MenuDay(AuditColumns, Base):
     __tablename__ = "menu_days"
     __table_args__ = (

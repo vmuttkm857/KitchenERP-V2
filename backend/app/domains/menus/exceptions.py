@@ -6,6 +6,8 @@ class MenuInUseError(MenuError): pass
 class MealTypeNotFoundError(MenuError): pass
 class MealTypeNameExistsError(MenuError): pass
 class MealTypeInUseError(MenuError): pass
+class MealTypeColumnNotFoundError(MenuError): pass
+class MealTypeColumnNameExistsError(MenuError): pass
 class InvalidMenuStructureError(MenuError): pass
 class DuplicateMenuDishError(MenuError): pass
 class InvalidMenuCopyError(MenuError): pass

@@ -12,10 +12,12 @@ from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.menus.exceptions import (
     DuplicateMenuDishError, InvalidMenuCategoryError, InvalidMenuCopyError,
     InvalidMenuDateRangeError, InvalidMenuStructureError, MealTypeInUseError,
+    MealTypeColumnNameExistsError, MealTypeColumnNotFoundError,
     MealTypeNameExistsError, MealTypeNotFoundError, MenuInUseError, MenuNotFoundError,
 )
 from app.domains.menus.schemas import (
-    CopyDayCommand, CopyWeekCommand, MealTypeCreate, MealTypePublic, MealTypeReorder, MealTypeUpdate,
+    CopyDayCommand, CopyWeekCommand, MealTypeColumnCreate, MealTypeColumnPublic,
+    MealTypeColumnReorder, MealTypeColumnUpdate, MealTypeCreate, MealTypePublic, MealTypeReorder, MealTypeUpdate,
     MenuCreate, MenuEditorAggregate, MenuEditorSave, MenuList, MenuPublic, MenuUpdate,
 )
 from app.domains.menus.service import MenuService
@@ -29,9 +31,11 @@ logger=logging.getLogger("kitchenerp.menus")
 def error(exc):
     if isinstance(exc,MenuNotFoundError): return HTTPException(404,"Menu not found")
     if isinstance(exc,MealTypeNotFoundError): return HTTPException(404,"Meal type not found")
+    if isinstance(exc,MealTypeColumnNotFoundError): return HTTPException(404,"Menu column not found")
     if isinstance(exc,InvalidMenuCategoryError): return HTTPException(422,"Menu category must exist and be active")
     if isinstance(exc,InvalidMenuDateRangeError): return HTTPException(422,str(exc) or "Invalid menu date range")
     if isinstance(exc,MealTypeNameExistsError): return HTTPException(409,"Meal type name already exists in this menu")
+    if isinstance(exc,MealTypeColumnNameExistsError): return HTTPException(409,"Menu column name already exists in this meal type")
     if isinstance(exc,(MenuInUseError,MealTypeInUseError)): return HTTPException(409,"Resource is referenced and cannot be permanently deleted")
     if isinstance(exc,DuplicateMenuDishError): return HTTPException(409,"A dish may appear only once in a meal slot")
     if isinstance(exc,(InvalidMenuStructureError,InvalidMenuCopyError)): return HTTPException(422,str(exc))
@@ -124,6 +128,37 @@ def reactivate_meal(menu_id:uuid.UUID,meal_type_id:uuid.UUID,user:Annotated[User
 @router.post("/{menu_id}/meal-types/{meal_type_id}/hard-delete",status_code=204)
 def delete_meal(menu_id:uuid.UUID,meal_type_id:uuid.UUID,data:PasswordConfirmation,user:Annotated[User,Depends(require_admin)],session:Annotated[Session,Depends(get_db_session)]):
     try:MenuService(session).hard_delete_meal(menu_id,meal_type_id,user.id,data.password)
+    except Exception as exc:raise error(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{menu_id}/meal-types/{meal_type_id}/columns",response_model=list[MealTypeColumnPublic])
+def meal_columns(menu_id:uuid.UUID,meal_type_id:uuid.UUID,session:Annotated[Session,Depends(get_db_session)]):
+    try:return [MealTypeColumnPublic.model_validate(item,from_attributes=True) for item in MenuService(session).meal_type_columns(menu_id,meal_type_id)]
+    except Exception as exc:raise error(exc) from exc
+
+
+@router.post("/{menu_id}/meal-types/{meal_type_id}/columns",response_model=MealTypeColumnPublic,status_code=201)
+def create_meal_column(menu_id:uuid.UUID,meal_type_id:uuid.UUID,data:MealTypeColumnCreate,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return MealTypeColumnPublic.model_validate(MenuService(session).create_meal_type_column(menu_id,meal_type_id,data,user.id),from_attributes=True)
+    except Exception as exc:raise error(exc) from exc
+
+
+@router.put("/{menu_id}/meal-types/{meal_type_id}/columns/reorder",response_model=list[MealTypeColumnPublic])
+def reorder_meal_columns(menu_id:uuid.UUID,meal_type_id:uuid.UUID,data:MealTypeColumnReorder,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return [MealTypeColumnPublic.model_validate(item,from_attributes=True) for item in MenuService(session).reorder_meal_type_columns(menu_id,meal_type_id,data,user.id)]
+    except Exception as exc:raise error(exc) from exc
+
+
+@router.patch("/{menu_id}/meal-types/{meal_type_id}/columns/{column_id}",response_model=MealTypeColumnPublic)
+def update_meal_column(menu_id:uuid.UUID,meal_type_id:uuid.UUID,column_id:uuid.UUID,data:MealTypeColumnUpdate,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return MealTypeColumnPublic.model_validate(MenuService(session).update_meal_type_column(menu_id,meal_type_id,column_id,data,user.id),from_attributes=True)
+    except Exception as exc:raise error(exc) from exc
+
+
+@router.delete("/{menu_id}/meal-types/{meal_type_id}/columns/{column_id}",status_code=204)
+def delete_meal_column(menu_id:uuid.UUID,meal_type_id:uuid.UUID,column_id:uuid.UUID,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:MenuService(session).delete_meal_type_column(menu_id,meal_type_id,column_id,user.id)
     except Exception as exc:raise error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

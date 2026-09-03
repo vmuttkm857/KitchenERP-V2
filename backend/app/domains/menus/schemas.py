@@ -75,6 +75,31 @@ class MealTypePublic(BaseModel):
     updated_by: uuid.UUID
 
 
+class MealTypeColumnCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    sort_order: int = Field(default=1, ge=1)
+
+
+class MealTypeColumnUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class MealTypeColumnReorder(BaseModel):
+    ordered_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+
+class MealTypeColumnPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    menu_meal_type_id: uuid.UUID
+    name: str
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+    created_by: uuid.UUID
+    updated_by: uuid.UUID
+
+
 class MenuDishInput(BaseModel):
     id: uuid.UUID | None = None
     dish_id: uuid.UUID
@@ -120,6 +145,7 @@ class MenuEditorAggregate(BaseModel):
     menu: MenuPublic
     dates: list[date]
     meal_types: list[MealTypePublic]
+    meal_type_columns: list[MealTypeColumnPublic]
     slots: list[MenuSlotPublic]
 
 

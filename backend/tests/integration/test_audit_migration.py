@@ -39,7 +39,7 @@ def test_fresh_postgresql_base_to_head_includes_audit_logs(migrated_test_databas
         command.upgrade(config(), "head")
         assert inspect(migrated_test_database).has_table("audit_logs")
         with migrated_test_database.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260901_0012"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260903_0013"
             for table in ("nutrition_foods", "nutrition_nutrients", "nutrition_food_values", "nutrition_import_batches"):
                 assert inspect(migrated_test_database).has_table(table)
     finally:
@@ -77,3 +77,18 @@ def test_0011_to_0012_adds_standard_recipe_card_schema(migrated_test_database) -
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260901_0012"
     finally:
         command.upgrade(config(), "head")
+
+
+def test_0012_to_0013_adds_only_menu_meal_type_columns(migrated_test_database) -> None:
+    command.downgrade(config(),"20260901_0012")
+    try:
+        before_menu_dishes={column["name"] for column in inspect(migrated_test_database).get_columns("menu_dishes")}
+        command.upgrade(config(),"20260903_0013")
+        inspector=inspect(migrated_test_database)
+        assert inspector.has_table("menu_meal_type_columns")
+        assert {column["name"] for column in inspector.get_columns("menu_meal_type_columns")}=={
+            "id","menu_meal_type_id","name","sort_order","created_at","updated_at","created_by","updated_by"
+        }
+        assert {column["name"] for column in inspector.get_columns("menu_dishes")}==before_menu_dishes
+    finally:
+        command.upgrade(config(),"head")

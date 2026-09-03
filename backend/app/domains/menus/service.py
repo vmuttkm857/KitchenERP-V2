@@ -9,12 +9,14 @@ from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.domains.menus.exceptions import (
     DuplicateMenuDishError, InvalidMenuCategoryError, InvalidMenuCopyError,
     InvalidMenuDateRangeError, InvalidMenuStructureError, MealTypeInUseError,
+    MealTypeColumnNameExistsError, MealTypeColumnNotFoundError,
     MealTypeNameExistsError, MealTypeNotFoundError, MenuInUseError, MenuNotFoundError,
 )
-from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType
+from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType, MenuMealTypeColumn
 from app.domains.menus.repository import MenuRepository
 from app.domains.menus.schemas import (
-    CopyDayCommand, CopyWeekCommand, MealTypeCreate, MealTypeReorder, MealTypeUpdate, MenuCreate,
+    CopyDayCommand, CopyWeekCommand, MealTypeColumnCreate, MealTypeColumnReorder,
+    MealTypeColumnUpdate, MealTypeCreate, MealTypeReorder, MealTypeUpdate, MenuCreate,
     MenuEditorSave, MenuUpdate,
 )
 
@@ -144,6 +146,60 @@ class MenuService:
         try: self.session.commit()
         except IntegrityError as exc: self.session.rollback(); raise MealTypeNameExistsError() from exc
 
+    def meal_type_columns(self, menu_id, meal_type_id):
+        self._meal(menu_id,meal_type_id)
+        return self.repository.meal_type_columns(meal_type_id)
+
+    def _column(self, menu_id, meal_type_id, column_id):
+        self._meal(menu_id,meal_type_id)
+        value=self.repository.meal_type_column(column_id)
+        if value is None or value.menu_meal_type_id!=meal_type_id: raise MealTypeColumnNotFoundError()
+        return value
+
+    def create_meal_type_column(self, menu_id, meal_type_id, data: MealTypeColumnCreate, actor_id):
+        self._meal(menu_id,meal_type_id); name=data.name.strip()
+        if self.repository.column_name_exists(meal_type_id,name): raise MealTypeColumnNameExistsError()
+        value=MenuMealTypeColumn(id=uuid.uuid4(),menu_meal_type_id=meal_type_id,name=name,sort_order=data.sort_order,
+            created_by=actor_id,updated_by=actor_id)
+        self.repository.add(value)
+        self.audit.record(actor_id=actor_id,action="meal_type_column_create",entity_type="menu_meal_type_column",
+            entity_id=value.id,entity_label=value.name,after_data=audit_snapshot(value,"menu_meal_type_id","name","sort_order"))
+        self._commit_column(); return value
+
+    def update_meal_type_column(self, menu_id, meal_type_id, column_id, data: MealTypeColumnUpdate, actor_id):
+        value=self._column(menu_id,meal_type_id,column_id); name=data.name.strip()
+        if self.repository.column_name_exists(meal_type_id,name,column_id): raise MealTypeColumnNameExistsError()
+        before=audit_snapshot(value,"menu_meal_type_id","name","sort_order")
+        value.name=name; value.updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="meal_type_column_update",entity_type="menu_meal_type_column",
+            entity_id=value.id,entity_label=value.name,before_data=before,
+            after_data=audit_snapshot(value,"menu_meal_type_id","name","sort_order"))
+        self._commit_column(); return value
+
+    def reorder_meal_type_columns(self, menu_id, meal_type_id, data: MealTypeColumnReorder, actor_id):
+        self._meal(menu_id,meal_type_id); values=self.repository.meal_type_columns(meal_type_id)
+        by_id={item.id:item for item in values}
+        if len(set(data.ordered_ids))!=len(data.ordered_ids) or set(data.ordered_ids)!=set(by_id):
+            raise InvalidMenuStructureError("Reorder must contain every column exactly once")
+        for order,column_id in enumerate(data.ordered_ids,1):
+            by_id[column_id].sort_order=order; by_id[column_id].updated_by=actor_id
+        self.audit.record(actor_id=actor_id,action="meal_type_column_reorder",entity_type="menu_meal_type",
+            entity_id=meal_type_id,entity_label=self._meal(menu_id,meal_type_id).name,
+            after_data={"ordered_ids":data.ordered_ids})
+        self.session.commit(); return self.repository.meal_type_columns(meal_type_id)
+
+    def delete_meal_type_column(self, menu_id, meal_type_id, column_id, actor_id):
+        value=self._column(menu_id,meal_type_id,column_id)
+        before=audit_snapshot(value,"menu_meal_type_id","name","sort_order")
+        self.repository.delete(value)
+        self.audit.record(actor_id=actor_id,action="meal_type_column_delete",entity_type="menu_meal_type_column",
+            entity_id=value.id,entity_label=value.name,before_data=before)
+        self.session.commit()
+
+    def _commit_column(self):
+        try:self.session.commit()
+        except IntegrityError as exc:self.session.rollback();raise MealTypeColumnNameExistsError() from exc
+
     def aggregate(self, menu_id):
         menu=self.get(menu_id); meal_types=self.repository.meal_types(menu_id)
         grouped={}
@@ -159,7 +215,8 @@ class MenuService:
                     "created_by":row["created_by"],"updated_by":row["updated_by"]})
         dates=[]; current=menu["start_date"]
         while current <= menu["end_date"]: dates.append(current); current += timedelta(days=1)
-        return {"menu":menu,"dates":dates,"meal_types":meal_types,"slots":list(grouped.values())}
+        return {"menu":menu,"dates":dates,"meal_types":meal_types,
+            "meal_type_columns":self.repository.menu_columns(menu_id),"slots":list(grouped.values())}
 
     def save_editor(self, menu_id, data: MenuEditorSave, actor_id):
         menu=self.model(menu_id)
