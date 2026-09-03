@@ -29,8 +29,16 @@ def _display_nutrition(value: Decimal | None) -> str:
 
 def menu_week_plan(result: dict, nutrition_results: dict | None = None) -> list[dict]:
     used = {slot["menu_meal_type_id"] for slot in result["slots"]}
+    labels_by_meal = {}
+    for column in sorted(
+        result.get("meal_type_columns", []),
+        key=lambda item: (item.menu_meal_type_id, item.sort_order, str(item.id)),
+    ):
+        labels_by_meal.setdefault(column.menu_meal_type_id, []).append(str(column.name))
     meals = sorted(
-        ({"id": meal.id, "name": str(meal.name), "sort_order": meal.sort_order} for meal in result["meal_types"] if meal.is_active or meal.id in used),
+        ({"id": meal.id, "name": str(meal.name), "sort_order": meal.sort_order,
+          "labels": labels_by_meal.get(meal.id, [])}
+         for meal in result["meal_types"] if meal.is_active or meal.id in used),
         key=lambda item: (item["sort_order"], str(item["id"])),
     )
     slots = {}
@@ -62,27 +70,28 @@ def _sheet(workbook: Workbook, title: str):
     sheet = workbook.create_sheet(title[:31]); sheet.sheet_view.showGridLines = False
     sheet.page_setup.paperSize = sheet.PAPERSIZE_A4; sheet.page_setup.orientation = sheet.ORIENTATION_LANDSCAPE
     sheet.page_margins.left = sheet.page_margins.right = .18; sheet.page_margins.top = sheet.page_margins.bottom = .25
-    sheet.column_dimensions["A"].width = 12
-    for column in "BCDEFGH": sheet.column_dimensions[column].width = 20
+    sheet.column_dimensions["A"].width = 11
+    sheet.column_dimensions["B"].width = 13
+    for column in "CDEFGHI": sheet.column_dimensions[column].width = 19
     return sheet
 
 
 def _single(sheet, last_row: int):
     sheet.page_setup.fitToWidth = sheet.page_setup.fitToHeight = 1
-    sheet.sheet_properties.pageSetUpPr.fitToPage = True; sheet.print_area = f"A1:H{last_row}"
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True; sheet.print_area = f"A1:I{last_row}"
 
 
 def _poster(sheet, last_row: int, ends: list[int]):
     sheet.sheet_properties.pageSetUpPr.fitToPage = False; sheet.page_setup.scale = 175
     sheet.page_setup.fitToWidth = sheet.page_setup.fitToHeight = 0; sheet.page_setup.pageOrder = "overThenDown"
-    sheet.print_area = f"A1:H{last_row}"; sheet.col_breaks.append(Break(id=4))
+    sheet.print_area = f"A1:I{last_row}"; sheet.col_breaks.append(Break(id=5))
     sheet.row_breaks.append(Break(id=ends[(len(ends)-1)//2] if len(ends) > 1 else max(3, last_row//2)))
 
 
 def _header(sheet, title: str, plan: dict, pretty: bool):
-    sheet.merge_cells("A1:H1"); sheet["A1"] = safe_cell_text(title)
+    sheet.merge_cells("A1:I1"); sheet["A1"] = safe_cell_text(title)
     sheet["A1"].font = Font(size=17 if pretty else 15, bold=True, color="244B32"); sheet["A1"].alignment = Alignment(horizontal="center", vertical="center"); sheet.row_dimensions[1].height = 30
-    headers = ["餐別"] + [_date_text(day) for day in plan["dates"]] + [""] * (7-len(plan["dates"]))
+    headers = ["餐別", "菜單欄位"] + [_date_text(day) for day in plan["dates"]] + [""] * (7-len(plan["dates"]))
     for column, value in enumerate(headers, 1):
         cell = sheet.cell(2, column, value); cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="42725A" if pretty else "356B48")
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True); cell.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -103,18 +112,18 @@ def _append_menu_sheets(workbook: Workbook, result: dict, layout: str, variant: 
         row, ends = 3, []
         for meal in plan["meals"]:
             counts = [len(plan["slots"].get((day, meal["id"]), [])) for day in plan["dates"]]
-            rows = max(1, max(counts, default=0)) if layout == "grid" else 1
+            rows = max(len(meal["labels"]), max(counts, default=0), 1)
             for offset in range(rows):
                 sheet.cell(row, 1, safe_cell_text(meal["name"]) if offset == 0 else "")
+                sheet.cell(row, 2, safe_cell_text(meal["labels"][offset]) if offset < len(meal["labels"]) else "")
                 for day_index in range(7):
                     dishes = plan["slots"].get((plan["dates"][day_index], meal["id"]), []) if day_index < len(plan["dates"]) else []
-                    value = dishes[offset] if layout == "grid" and offset < len(dishes) else ("\n".join(dishes) if offset == 0 else "")
-                    sheet.cell(row, day_index + 2, safe_cell_text(value))
-                for column in range(1, 9):
-                    cell = sheet.cell(row, column); cell.font = Font(size=size + (1 if column == 1 else 0), bold=column == 1, color="244B32" if column == 1 else INK.lstrip("#"))
-                    cell.fill = PatternFill("solid", fgColor="F3F8F4" if column == 1 else ("FAFCFA" if layout == "pretty" else "FFFFFF"))
-                    cell.alignment = Alignment(horizontal="center" if column == 1 or layout == "pretty" else "left", vertical="center", wrap_text=True); cell.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-                sheet.row_dimensions[row].height = height/rows if layout == "grid" else height; row += 1
+                    sheet.cell(row, day_index + 3, safe_cell_text(dishes[offset]) if offset < len(dishes) else "")
+                for column in range(1, 10):
+                    cell = sheet.cell(row, column); cell.font = Font(size=size + (1 if column == 1 else 0), bold=column <= 2, color="244B32" if column <= 2 else INK.lstrip("#"))
+                    cell.fill = PatternFill("solid", fgColor="F3F8F4" if column <= 2 else ("FAFCFA" if layout == "pretty" else "FFFFFF"))
+                    cell.alignment = Alignment(horizontal="center" if column <= 2 or layout == "pretty" else "left", vertical="center", wrap_text=True); cell.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+                sheet.row_dimensions[row].height = max(18, height/rows); row += 1
             ends.append(row-1)
         last = max(2, row-1); _poster(sheet, last, ends) if variant == "poster" else _single(sheet, last)
 
@@ -191,26 +200,30 @@ def _menu_images(result: dict, layout: str, nutrition_results: dict | None = Non
         image = page_image("landscape"); draw = ImageDraw.Draw(image); margin, top = 65, 105
         suffix = " 含熱量" if nutrition_results is not None else ""
         draw.text((image.width//2, 42), f'{result["menu"]["name"]} {label}{suffix}', font=font(17), fill=GREEN, anchor="ma")
-        meal_w = 150; day_w = (image.width-margin*2-meal_w)/7; header_h = 60
-        headers = ["餐別"] + [_date_text(day) for day in plan["dates"]] + [""]*(7-len(plan["dates"])); x = margin
+        meal_w, label_w = 115, 145; day_w = (image.width-margin*2-meal_w-label_w)/7; header_h = 60
+        headers = ["餐別", "菜單欄位"] + [_date_text(day) for day in plan["dates"]] + [""]*(7-len(plan["dates"])); x = margin
         for i, value in enumerate(headers):
-            width = meal_w if i == 0 else day_w; draw.rectangle((x, top, x+width, top+header_h), fill=GREEN, outline=LINE, width=2)
+            width = meal_w if i == 0 else label_w if i == 1 else day_w; draw.rectangle((x, top, x+width, top+header_h), fill=GREEN, outline=LINE, width=2)
             draw.text((x+width/2, top+header_h/2), value, font=font(8.5), fill="white", anchor="mm"); x += width
         row_h = (image.height-top-header_h-55)/max(1, len(plan["meals"])); body_size = max(7, min(11, row_h/8)); y = top+header_h
         for meal in plan["meals"]:
             draw.rectangle((margin, y, margin+meal_w, y+row_h), fill=PALE_GREEN, outline=LINE, width=2); draw.text((margin+meal_w/2, y+row_h/2), meal["name"], font=font(body_size+1), fill=GREEN, anchor="mm")
+            counts = [len(plan["slots"].get((day, meal["id"]), [])) for day in plan["dates"]]
+            rows = max(len(meal["labels"]), max(counts, default=0), 1); part = row_h/rows
+            for row_index in range(rows):
+                row_top = y+row_index*part
+                draw.rectangle((margin+meal_w, row_top, margin+meal_w+label_w, row_top+part), fill=PALE_GREEN, outline=LINE, width=2)
+                label = meal["labels"][row_index] if row_index < len(meal["labels"]) else ""
+                draw.text((margin+meal_w+label_w/2, row_top+part/2), label, font=font(body_size), fill=GREEN, anchor="mm")
             for day_i in range(7):
-                left = margin+meal_w+day_i*day_w; draw.rectangle((left, y, left+day_w, y+row_h), fill="#FAFCFA" if layout == "pretty" else "white", outline=LINE, width=2)
+                left = margin+meal_w+label_w+day_i*day_w
                 dishes = plan["slots"].get((plan["dates"][day_i], meal["id"]), []) if day_i < len(plan["dates"]) else []
-                if layout == "grid" and dishes:
-                    part = row_h/len(dishes)
-                    for j, dish in enumerate(dishes):
-                        if j: draw.line((left, y+j*part, left+day_w, y+j*part), fill=LINE, width=1)
-                        lines = wrap_text(draw, dish, font(body_size), day_w-18); draw.multiline_text((left+day_w/2, y+(j+.5)*part), "\n".join(lines), font=font(body_size), fill=INK, anchor="mm", align="center", spacing=3)
-                elif nutrition_results is not None:
-                    lines = [line for dish in dishes for line in wrap_text(draw, dish, font(body_size), day_w-18)]
-                    draw.multiline_text((left+day_w/2, y+row_h/2), "\n".join(lines), font=font(body_size), fill=INK, anchor="mm", align="center", spacing=5)
-                else: draw.multiline_text((left+day_w/2, y+row_h/2), "\n".join(dishes), font=font(body_size), fill=INK, anchor="mm", align="center", spacing=5)
+                for row_index in range(rows):
+                    row_top = y+row_index*part
+                    draw.rectangle((left, row_top, left+day_w, row_top+part), fill="#FAFCFA" if layout == "pretty" else "white", outline=LINE, width=2)
+                    if row_index < len(dishes):
+                        lines = wrap_text(draw, dishes[row_index], font(body_size), day_w-18)
+                        draw.multiline_text((left+day_w/2, row_top+part/2), "\n".join(lines), font=font(body_size), fill=INK, anchor="mm", align="center", spacing=3)
             y += row_h
         images.append(image)
     return images

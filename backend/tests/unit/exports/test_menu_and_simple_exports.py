@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from openpyxl import load_workbook
+from PIL import ImageDraw
 from pypdf import PdfReader
 
 from app.domains.exports.kitchen_simple import WARNING_TEXT, display_ingredient, kitchen_simple_pdf, kitchen_simple_workbook, simple_page_plan
@@ -12,11 +13,15 @@ from app.domains.exports.menu_exports import menu_full_pdf, menu_full_workbook, 
 from app.domains.nutrition.calculator import NutrientDefinition
 
 
-def menu_result(days=7, meal_count=3, dishes_per_slot=2):
+def menu_result(days=7, meal_count=3, dishes_per_slot=2, columns_per_meal=2):
     dates=[date(2026,8,31)+timedelta(days=i) for i in range(days)]
     meals=[SimpleNamespace(id=f"meal-{i}",name=f"自訂餐別{i+1}",sort_order=i+1,is_active=True) for i in range(meal_count)]
     slots=[{"menu_date":day,"menu_meal_type_id":meal.id,"dishes":[{"dish_id":f"dish-{j}","dish_name":"=長菜名"+"香菇雞腿"*(j+1),"diner_count":100+j,"sort_order":j+1} for j in range(dishes_per_slot)]} for day in dates for meal in meals]
-    return {"menu":{"name":"中文測試菜單"},"dates":dates,"meal_types":meals,"slots":slots}
+    columns=[SimpleNamespace(id=f"column-{meal_index}-{column_index}",menu_meal_type_id=meal.id,
+              name=f"欄位{column_index+1}",sort_order=column_index+1)
+             for meal_index,meal in enumerate(meals) for column_index in reversed(range(columns_per_meal))]
+    return {"menu":{"name":"中文測試菜單"},"dates":dates,"meal_types":meals,
+            "meal_type_columns":columns,"slots":slots}
 
 
 def kitchen_result(meal_count=3):
@@ -33,9 +38,9 @@ def kitchen_result(meal_count=3):
 def values(sheet): return [cell.value for row in sheet.iter_rows() for cell in row]
 
 
-def assert_single_a4(sheet):
+def assert_single_a4(sheet, last_column="I"):
     assert str(sheet.page_setup.paperSize)=="9"; assert sheet.page_setup.orientation=="landscape"
-    assert sheet.page_setup.fitToWidth==1 and sheet.page_setup.fitToHeight==1; assert sheet.print_area=="'"+sheet.title+"'!$A$1:$H$"+str(sheet.max_row)
+    assert sheet.page_setup.fitToWidth==1 and sheet.page_setup.fitToHeight==1; assert sheet.print_area=="'"+sheet.title+f"'!$A$1:${last_column}$"+str(sheet.max_row)
 
 
 def assert_image_only(payload):
@@ -47,19 +52,67 @@ def assert_image_only(payload):
 @pytest.mark.parametrize("meal_count",[3,5,6])
 def test_merged_week_is_dynamic_single_a4_without_diner_counts(meal_count):
     workbook=load_workbook(BytesIO(menu_full_workbook(menu_result(meal_count=meal_count)))); sheet=workbook.active; assert_single_a4(sheet)
-    assert sheet.max_column==8 and sheet.max_row==meal_count+2; assert "\n" in sheet["B3"].value; assert "100人" not in "".join(str(v) for v in values(sheet))
+    assert sheet.max_column==9 and sheet.max_row==meal_count*2+2
+    assert sheet["B2"].value=="菜單欄位" and sheet["C3"].value.startswith("'=長菜名")
+    assert "100人" not in "".join(str(v) for v in values(sheet))
 
 
 def test_grid_week_keeps_one_dish_per_cell_and_unmerged_meal_rows():
     sheet=load_workbook(BytesIO(menu_grid_workbook(menu_result(dishes_per_slot=4)))).active; assert_single_a4(sheet)
     assert sheet.max_row==14; assert sheet["A3"].value=="自訂餐別1" and sheet["A4"].value is None
-    assert sheet["B3"].value.startswith("'=長菜名") and "\n" not in sheet["B3"].value
-    assert all(str(region)=="A1:H1" for region in sheet.merged_cells.ranges)
+    assert sheet["B3"].value=="欄位1" and sheet["C3"].value.startswith("'=長菜名") and "\n" not in sheet["C3"].value
+    assert all(str(region)=="A1:I1" for region in sheet.merged_cells.ranges)
 
 
 def test_pretty_week_remains_one_landscape_grid_without_metadata():
     sheet=load_workbook(BytesIO(menu_pretty_workbook(menu_result(meal_count=6,dishes_per_slot=6)))).active; assert_single_a4(sheet)
-    text="".join(str(v) for v in values(sheet)); assert "100人" not in text and "第 1 頁" not in text and sheet.max_column==8
+    text="".join(str(v) for v in values(sheet)); assert "100人" not in text and "第 1 頁" not in text and sheet.max_column==9
+
+
+def test_menu_columns_and_dishes_align_only_by_independently_sorted_index():
+    result=menu_result(days=2,meal_count=1,dishes_per_slot=0,columns_per_meal=0); meal=result["meal_types"][0]
+    result["meal_type_columns"]=[
+        SimpleNamespace(id="label-2",menu_meal_type_id=meal.id,name="青菜1",sort_order=2),
+        SimpleNamespace(id="label-1",menu_meal_type_id=meal.id,name="主菜",sort_order=1),
+        SimpleNamespace(id="label-3",menu_meal_type_id=meal.id,name="湯",sort_order=3),
+    ]
+    result["slots"]=[
+        {"menu_date":result["dates"][0],"menu_meal_type_id":meal.id,"dishes":[
+            {"dish_id":"dish-b","dish_name":"菜B","sort_order":2},
+            {"dish_id":"dish-a","dish_name":"菜A","sort_order":1},
+            {"dish_id":"dish-d","dish_name":"菜D","sort_order":4},
+            {"dish_id":"dish-c","dish_name":"菜C","sort_order":3},
+            {"dish_id":"dish-e","dish_name":"菜E","sort_order":5},
+        ]},
+        {"menu_date":result["dates"][1],"menu_meal_type_id":meal.id,"dishes":[
+            {"dish_id":"dish-y","dish_name":"菜Y","sort_order":2},
+            {"dish_id":"dish-x","dish_name":"菜X","sort_order":1},
+        ]},
+    ]
+    plan=menu_week_plan(result)[0]
+    assert plan["meals"][0]["labels"]==["主菜","青菜1","湯"]
+    assert plan["slots"][(result["dates"][0],meal.id)]==["菜A","菜B","菜C","菜D","菜E"]
+    sheet=load_workbook(BytesIO(menu_grid_workbook(result))).active
+    assert [sheet.cell(row,2).value for row in range(3,8)]==["主菜","青菜1","湯",None,None]
+    assert [sheet.cell(row,3).value for row in range(3,8)]==["菜A","菜B","菜C","菜D","菜E"]
+    assert [sheet.cell(row,4).value for row in range(3,8)]==["菜X","菜Y",None,None,None]
+
+
+def test_more_labels_than_dishes_keeps_blank_dish_cells():
+    result=menu_result(days=1,meal_count=1,dishes_per_slot=2,columns_per_meal=5)
+    sheet=load_workbook(BytesIO(menu_full_workbook(result))).active
+    assert sheet.max_row==7
+    assert [sheet.cell(row,2).value for row in range(3,8)]==[f"欄位{i}" for i in range(1,6)]
+    assert sheet["C5"].value is None and sheet["C7"].value is None
+
+
+def test_menu_pdf_draws_menu_column_header(monkeypatch):
+    drawn=[]; original=ImageDraw.ImageDraw.text
+    def capture(draw,xy,value,*args,**kwargs):
+        drawn.append(value); return original(draw,xy,value,*args,**kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw,"text",capture)
+    menu_full_pdf(menu_result(days=1,meal_count=1,dishes_per_slot=1,columns_per_meal=1))
+    assert "菜單欄位" in drawn
 
 
 @pytest.mark.parametrize("builder",[menu_full_pdf,menu_grid_pdf,menu_pretty_pdf])
@@ -70,7 +123,7 @@ def test_menu_pdfs_are_single_landscape_image_pages(builder): assert_image_only(
 def test_menu_poster_has_manual_two_by_two_breaks(builder):
     sheet=load_workbook(BytesIO(builder(menu_result(meal_count=6,dishes_per_slot=4),"poster"))).active
     assert sheet.page_setup.fitToWidth==0 and sheet.page_setup.fitToHeight==0 and sheet.page_setup.pageOrder=="overThenDown"
-    assert [b.id for b in sheet.col_breaks.brk]==[4] and len(sheet.row_breaks.brk)==1; assert sheet.print_area.endswith(f"$H${sheet.max_row}")
+    assert [b.id for b in sheet.col_breaks.brk]==[5] and len(sheet.row_breaks.brk)==1; assert sheet.print_area.endswith(f"$I${sheet.max_row}")
 
 
 def test_kitchen_display_conversion_is_report_only_and_safe():
@@ -83,13 +136,46 @@ def test_kitchen_display_conversion_is_report_only_and_safe():
 def test_kitchen_week_keeps_hierarchy_safe_rows_and_human_warning():
     plan=simple_page_plan(kitchen_result()); assert len(plan)==1 and len(plan[0]["dates"])==7
     sheet=load_workbook(BytesIO(kitchen_simple_workbook(kitchen_result()))).active; assert_single_a4(sheet)
+    assert sheet["B2"].value=="菜單欄位" and sheet["C2"].value=="8/31（一）"
     text="\n".join(str(v) for v in values(sheet)); assert "香菇雞　100人" in text and "雞腿　12 kg" in text and "米酒　1.5 L" in text
     assert WARNING_TEXT in text and "ZERO_RECIPE_QUANTITY" not in text and "薑　不可計算 g" in text
 
 
+def test_kitchen_simple_columns_align_by_index_and_ignore_label_only_meals():
+    result=kitchen_result(meal_count=1);meal_id=result["days"][0]["meals"][0]["meal_type_id"]
+    result["meal_type_columns"]=[
+        {"id":"column-2","menu_meal_type_id":meal_id,"name":"青菜1","sort_order":2},
+        {"id":"column-1","menu_meal_type_id":meal_id,"name":"主菜","sort_order":1},
+        {"id":"column-3","menu_meal_type_id":meal_id,"name":"湯","sort_order":3},
+        {"id":"ghost-1","menu_meal_type_id":"ghost-meal","name":"不應出現","sort_order":1},
+    ]
+    second={**result["days"][0]["meals"][0]["dishes"][0],"dish_id":"dish-second","dish_name":"第二道菜"}
+    second_day_meal=result["days"][1]["meals"][0]
+    result["days"][1]["meals"]=[{**second_day_meal,"dishes":[second_day_meal["dishes"][0],second]}]
+    plan=simple_page_plan(result)[0]
+    assert [(meal["name"],meal["labels"],meal["row_count"]) for meal in plan["meals"]]==[("餐別1",["主菜","青菜1","湯"],3)]
+    sheet=load_workbook(BytesIO(kitchen_simple_workbook(result))).active
+    assert [sheet.cell(row,2).value for row in range(3,6)]==["主菜","青菜1","湯"]
+    assert sheet["C3"].value.startswith("香菇雞") and sheet["C4"].value is None
+    assert sheet["D3"].value.startswith("香菇雞") and sheet["D4"].value.startswith("第二道菜") and sheet["D5"].value is None
+    assert all("不應出現" not in str(value) for value in values(sheet))
+    assert all("menu_column" not in dish for day in result["days"] for meal in day["meals"] for dish in meal["dishes"])
+
+
+def test_kitchen_simple_pdf_draws_menu_column_header(monkeypatch):
+    result=kitchen_result(meal_count=1);meal_id=result["days"][0]["meals"][0]["meal_type_id"]
+    result["meal_type_columns"]=[{"id":"column-1","menu_meal_type_id":meal_id,"name":"主菜","sort_order":1}]
+    drawn=[];original=ImageDraw.ImageDraw.text
+    def capture(draw,xy,value,*args,**kwargs):
+        drawn.append(value);return original(draw,xy,value,*args,**kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw,"text",capture)
+    kitchen_simple_pdf(result)
+    assert "菜單欄位" in drawn and "主菜" in drawn and WARNING_TEXT in drawn
+
+
 def test_kitchen_poster_and_pdf_print_contracts():
     poster=load_workbook(BytesIO(kitchen_simple_workbook(kitchen_result(6),"poster"))).active
-    assert [b.id for b in poster.col_breaks.brk]==[4] and len(poster.row_breaks.brk)==1 and poster.page_setup.pageOrder=="overThenDown"
+    assert [b.id for b in poster.col_breaks.brk]==[5] and len(poster.row_breaks.brk)==1 and poster.page_setup.pageOrder=="overThenDown"
     assert_image_only(kitchen_simple_pdf(kitchen_result(6)))
 
 

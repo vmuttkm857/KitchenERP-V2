@@ -50,11 +50,13 @@ def test_kitchen_export_query_count_does_not_grow_per_row(client,db_session):
 
 def test_menu_full_and_pretty_exports_are_authenticated_binary_downloads(client,db_session):
     headers=auth(client,db_session);category,dishes=foundations(client,headers);value=menu(client,headers,category["id"],name="中文匯出菜單",start="2026-09-01",end="2026-09-07");meal_types=meals(client,headers,value["id"],("早餐","早點","午餐","午點","晚餐","晚點","特殊餐"))
+    assert client.post(f"/api/v1/menus/{value['id']}/meal-types/{meal_types[0]['id']}/columns",headers=headers,json={"name":"主菜","sort_order":1}).status_code==201
     assert client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes,days=7)).status_code==200
     for layout in ("full","grid","pretty"):
         xlsx=client.get(f"/api/v1/exports/menus/{value['id']}/{layout}/xlsx",headers=headers)
         assert xlsx.status_code==200,xlsx.text;assert xlsx.content[:2]==b"PK";assert "attachment" in xlsx.headers["content-disposition"]
-        assert load_workbook(BytesIO(xlsx.content)).sheetnames
+        workbook=load_workbook(BytesIO(xlsx.content));assert workbook.sheetnames
+        assert workbook.active["B2"].value=="菜單欄位" and workbook.active["B3"].value=="主菜"
         pdf=client.get(f"/api/v1/exports/menus/{value['id']}/{layout}/pdf",headers=headers)
         assert pdf.status_code==200,pdf.text;reader=PdfReader(BytesIO(pdf.content));assert reader.pages
         assert "".join(page.extract_text() or "" for page in reader.pages)==""
@@ -77,7 +79,7 @@ def test_menu_export_query_budget_is_constant(client,db_session):
     try:response=client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx",headers=headers)
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=4
+    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=5
 
 
 def test_menu_nutrition_exports_are_opt_in_complete_and_deduplicated(client,db_session):
@@ -102,7 +104,7 @@ def test_menu_nutrition_exports_are_opt_in_complete_and_deduplicated(client,db_s
     assert calories.status_code==200,calories.text
     calorie_text="\n".join(str(cell.value) for sheet in load_workbook(BytesIO(calories.content)) for row in sheet.iter_rows() for cell in row)
     assert "測試菜色1（300 kcal）" in calorie_text and "測試菜色2（無）" in calorie_text
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=8
+    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=9
 
     detailed=client.get(f"/api/v1/exports/menus/{value['id']}/grid/xlsx?nutrition=detailed",headers=headers)
     workbook=load_workbook(BytesIO(detailed.content));assert workbook.sheetnames==["原版-菜色分格週表","熱量-菜色分格週表","詳細營養"]
@@ -118,7 +120,8 @@ def test_menu_nutrition_exports_are_opt_in_complete_and_deduplicated(client,db_s
     assert client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx?variant=poster&nutrition=detailed",headers=headers).status_code==422
 
 def test_kitchen_simple_excel_pdf_known_answer_anomaly_and_query_budget(client,db_session):
-    headers=auth(client,db_session);value,*_=kitchen_fixture(client,headers,db_session);body={"menu_id":value["id"],"selected_dates":["2026-10-01"]};statements=[]
+    headers=auth(client,db_session);value,lunch,*_=kitchen_fixture(client,headers,db_session);body={"menu_id":value["id"],"selected_dates":["2026-10-01"]};statements=[]
+    assert client.post(f"/api/v1/menus/{value['id']}/meal-types/{lunch['id']}/columns",headers=headers,json={"name":"主菜","sort_order":1}).status_code==201
     def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
     event.listen(process_engine,"before_cursor_execute",record)
     try:xlsx=client.post("/api/v1/exports/kitchen-operations/simple/xlsx",headers=headers,json=body)
@@ -126,8 +129,9 @@ def test_kitchen_simple_excel_pdf_known_answer_anomaly_and_query_budget(client,d
     assert xlsx.status_code==200,xlsx.text
     workbook=load_workbook(BytesIO(xlsx.content));values=[cell.value for sheet in workbook for row in sheet.iter_rows() for cell in row]
     text="\n".join(str(value) for value in values)
+    assert workbook.active["B2"].value=="菜單欄位" and workbook.active["B3"].value=="主菜"
     assert "雞肉" in text and "16.5 kg" in text and "⚠ 此菜有配方資料異常，請確認" in text
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=4
+    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=5
     pdf=client.post("/api/v1/exports/kitchen-operations/simple/pdf",headers=headers,json=body)
     assert pdf.status_code==200,pdf.text
     assert "".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf.content)).pages)==""
