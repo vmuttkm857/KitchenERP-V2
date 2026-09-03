@@ -9,9 +9,11 @@ const menuEditor=read('../src/features/menus/MenuEditor.tsx')
 const page=read('../src/features/production/ProductionProfilePage.tsx')
 const plan=read('../src/features/production/MenuProductionDialog.tsx')
 const presentation=read('../src/features/production/presentation.ts')
+const profileLoading=read('../src/features/production/profileLoading.ts')
 const client=read('../src/api/client.ts')
 const styles=read('../src/styles/global.css')
 const {aggregateBatches,durationFromInput,durationToInput,formatDuration,formatProductionNumber}=await import('../src/features/production/presentation.ts')
+const {resolveProfileLoad}=await import('../src/features/production/profileLoading.ts')
 
 test('dish management opens a full recipe-card work page instead of a dialog',()=>{
   assert.match(dishes,/onEditProduction\(item\)/)
@@ -30,12 +32,33 @@ test('first creation is a four-step guided flow with recipe seeding',()=>{
 })
 
 test('missing profile is a normal empty state and real errors remain distinct',()=>{
-  assert.match(page,/cause instanceof ApiError&&cause\.status===404/)
-  assert.match(page,/setProfile\(null\)/)
+  assert.match(page,/const \[profile,setProfile\]=useState<Profile\|null>\(null\)/)
+  assert.match(page,/const \[profile,setProfile\].*\[loading,setLoading\].*\[notFound,setNotFound\].*\[loadError,setLoadError\]/)
+  assert.match(page,/result\.kind==='not-found'.*setNotFound\(true\)/)
+  assert.match(page,/\.finally\(\(\)=>\{if\(requestId===loadRequestId\.current\)setLoading\(false\)\}\)/)
   assert.match(page,/尚未建立標準食譜卡/)
   assert.match(page,/>建立標準食譜卡</)
   assert.match(page,/標準食譜卡載入失敗，請稍後重試/)
   assert.match(page,/標準食譜卡載入中/)
+})
+
+test('profile loader resolves 200, 404, 500 and request failures without a pending state',async()=>{
+  const profile={id:'profile-1'}
+  assert.deepEqual(await resolveProfileLoad(async()=>profile),{kind:'found',profile})
+  assert.deepEqual(await resolveProfileLoad(async()=>{throw {status:404}}),{kind:'not-found'})
+  const serverError={status:500}
+  assert.deepEqual(await resolveProfileLoad(async()=>{throw serverError}),{kind:'error',cause:serverError})
+  const networkError=new Error('network failed')
+  assert.deepEqual(await resolveProfileLoad(async()=>{throw networkError}),{kind:'error',cause:networkError})
+  assert.match(profileLoading,/catch\(cause\).*not-found.*error/)
+})
+
+test('profile loading cancels stale dish requests and only the latest request may finish loading',()=>{
+  assert.match(page,/const loadRequestId=useRef\(0\)/)
+  assert.match(page,/const requestId=\+\+loadRequestId\.current,controller=new AbortController\(\)/)
+  assert.match(page,/if\(requestId!==loadRequestId\.current\)return/)
+  assert.match(page,/controller\.abort\(\)/)
+  assert.match(page,/if\(requestId===loadRequestId\.current\)loadRequestId\.current\+=1/)
 })
 
 test('established cards separate the five maintenance sections',()=>{
@@ -130,6 +153,8 @@ test('existing authenticated API routes and PDF export remain unchanged',()=>{
   assert.match(page,/apiBlobUrl/)
   assert.match(plan,/\/exports\/menus\/\$\{menu\.id\}\/recipe-cards\/pdf/)
   assert.match(client,/Authorization.*Bearer/)
+  assert.match(client,/response\.status === 401.*refreshAccessToken/s)
+  assert.doesNotMatch(client,/response\.status === 404.*refreshAccessToken/s)
 })
 
 test('responsive work page avoids fixed width and horizontal page overflow',()=>{
