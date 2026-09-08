@@ -13,5 +13,9 @@ from app.domains.snapshots.models import RequirementSnapshot, RequirementSnapsho
 from app.domains.purchases.models import PurchaseBatch, PurchaseOrder, PurchaseOrderItem
 from app.domains.production.models import DishProductionProfile, ProductionBatchIngredient, ProductionBatchVersion, ProductionProcessStep
 from app.domains.users.models import User
+from app.domains.postpartum.models import PostpartumCase, PostpartumRoomHistory, PostpartumServicePause
+from app.domains.postpartum.models import PostpartumCase, PostpartumRoomHistory, PostpartumServicePause
 
 __all__ = ["AuditLog", "Dish", "DishCategory", "DishIngredient", "DishProductionProfile", "Ingredient", "IngredientCategory", "IngredientNutritionUnitConversion", "IngredientPriceHistory", "Menu", "MenuCategory", "MenuDay", "MenuDish", "MenuMealType", "MenuMealTypeColumn", "NutritionFood", "NutritionFoodValue", "NutritionImportBatch", "NutritionNutrient", "ProductionBatchIngredient", "ProductionBatchVersion", "ProductionProcessStep", "PurchaseBatch", "PurchaseOrder", "PurchaseOrderItem", "RefreshSession", "RequirementSnapshot", "RequirementSnapshotItem", "Supplier", "User"]
+__all__ += ["PostpartumCase", "PostpartumRoomHistory", "PostpartumServicePause"]
+__all__ += ["PostpartumCase", "PostpartumRoomHistory", "PostpartumServicePause"]

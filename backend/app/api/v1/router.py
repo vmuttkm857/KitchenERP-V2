@@ -17,6 +17,7 @@ from app.api.v1.routes.kitchen_operations import router as kitchen_operations_ro
 from app.api.v1.routes.exports import router as exports_router
 from app.api.v1.routes.users import router as users_router
 from app.api.v1.routes.audit_logs import router as audit_logs_router
+from app.api.v1.routes.postpartum import router as postpartum_router
 
 
 api_v1_router = APIRouter()
@@ -38,3 +39,4 @@ api_v1_router.include_router(kitchen_operations_router)
 api_v1_router.include_router(exports_router)
 api_v1_router.include_router(users_router)
 api_v1_router.include_router(audit_logs_router)
+api_v1_router.include_router(postpartum_router)

@@ -13,6 +13,7 @@ import { MenusPage } from '../features/menus/MenusPage'
 import { Menu } from '../features/menus/types'
 import { NutritionPage } from '../features/nutrition/NutritionPage'
 import { PurchasesPage } from '../features/purchases/PurchasesPage'
+import { PostpartumCasesPage } from '../features/postpartum/PostpartumCasesPage'
 import { RecipeEditor } from '../features/recipes/RecipeEditor'
 import { ProductionProfilePage } from '../features/production/ProductionProfilePage'
 import { RequirementsPage } from '../features/requirements/RequirementsPage'
@@ -21,10 +22,11 @@ import { SuppliersPage } from '../features/suppliers/SuppliersPage'
 import { ChangePasswordDialog, UsersPage } from '../features/users/UsersPage'
 import { NavigationBlockerProvider, useNavigationBlocker } from './NavigationBlocker'
 
-type Page='categories'|'suppliers'|'ingredients'|'nutrition'|'dishes'|'recipe'|'production-profile'|'menus'|'menu-editor'|'requirements'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
+type Page='categories'|'suppliers'|'ingredients'|'nutrition'|'dishes'|'recipe'|'production-profile'|'menus'|'menu-editor'|'postpartum'|'requirements'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
 const businessGroups=[
   {label:'主檔管理',items:[['categories','分類'],['suppliers','供應商'],['ingredients','食材'],['nutrition','營養資料'],['dishes','菜色／配方']]},
   {label:'菜單',items:[['menus','菜單管理'],['kitchen','廚房作業']]},
+  {label:'月子餐',items:[['postpartum','個案管理']]},
   {label:'需求／採購',items:[['requirements','食材需求'],['snapshots','固定需求快照'],['purchases','正式採購']]},
 ] as const
 const systemGroup={label:'系統管理',items:[['users','使用者管理'],['audit','操作紀錄']]} as const
@@ -43,6 +45,7 @@ function NavIcon({page}:{page:NavPage}){
     dishes:'M4 12a8 8 0 0 1 16 0H4Zm-1 3h18M12 4V2',
     menus:'M5 3h14v18H5V3Zm4 0v4m6-4v4M8 11h8m-8 4h8',
     kitchen:'M5 3v7a3 3 0 0 0 3 3V3m-3 4h3m0 6v8m8-18v18m0-18c3 2 4 5 0 9',
+    postpartum:'M12 21s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.6-7 10-7 10Z',
     requirements:'M7 3h10v4H7V3ZM5 5H3v16h18V5h-2M7 11h10M7 15h7',
     snapshots:'M5 4h14v16H5V4Zm3-2h8v4H8V2Zm0 8h8m-8 4h8',
     purchases:'M3 5h2l2 10h10l3-7H6m3 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z',
@@ -83,6 +86,7 @@ function Application(){
       {page==='categories'&&<CategoriesPage/>}{page==='suppliers'&&<SuppliersPage/>}{page==='ingredients'&&<IngredientsPage/>}{page==='nutrition'&&<NutritionPage isAdmin={user.role==='admin'}/>}
       {page==='dishes'&&<DishesPage listState={dishListState} onListStateChange={setDishListState} onEditRecipe={dish=>{setRecipeDish(dish);navigate('recipe')}} onEditProduction={dish=>{setProductionDish(dish);navigate('production-profile')}}/>}{page==='recipe'&&recipeDish&&<RecipeEditor dish={recipeDish} onClose={()=>navigate('dishes')}/>} {page==='production-profile'&&productionDish&&<ProductionProfilePage dish={productionDish} isAdmin={user.role==='admin'} onClose={()=>navigate('dishes')}/>}
       {page==='menus'&&<MenusPage onOpen={menu=>{setEditingMenu(menu);navigate('menu-editor')}}/>}{page==='menu-editor'&&editingMenu&&<MenuEditor menu={editingMenu} onClose={()=>navigate('menus')}/>}
+      {page==='postpartum'&&<PostpartumCasesPage/>}
       {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage/>}{page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
       {page==='users'&&user.role==='admin'&&<UsersPage/>}{page==='audit'&&user.role==='admin'&&<AuditLogsPage/>}
     </main>
