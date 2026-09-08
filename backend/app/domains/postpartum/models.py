@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -73,3 +73,38 @@ class PostpartumServicePause(AuditColumns, Base):
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_meal: Mapped[str] = mapped_column(String(20), nullable=False)
     note: Mapped[str | None] = mapped_column(Text)
+
+
+class PostpartumRestrictionGroup(AuditColumns, Base):
+    __tablename__ = "postpartum_restriction_groups"
+    __table_args__ = (
+        Index("uq_postpartum_restriction_groups_name_normalized", text("lower(btrim(name))"), unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    color: Mapped[str] = mapped_column(String(7), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true", index=True)
+
+
+class PostpartumRestrictionGroupIngredient(Base):
+    __tablename__ = "postpartum_restriction_group_ingredients"
+
+    restriction_group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("postpartum_restriction_groups.id", ondelete="CASCADE"), primary_key=True,
+    )
+    ingredient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ingredients.id", ondelete="RESTRICT"), primary_key=True, index=True,
+    )
+
+
+class PostpartumRestrictionGroupDish(Base):
+    __tablename__ = "postpartum_restriction_group_dishes"
+
+    restriction_group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("postpartum_restriction_groups.id", ondelete="CASCADE"), primary_key=True,
+    )
+    dish_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("dishes.id", ondelete="RESTRICT"), primary_key=True, index=True,
+    )

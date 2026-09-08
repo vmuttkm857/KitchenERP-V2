@@ -2,3 +2,6 @@ class PostpartumError(Exception): pass
 class PostpartumCaseNotFoundError(PostpartumError): pass
 class PostpartumPauseNotFoundError(PostpartumError): pass
 class InvalidPostpartumDataError(PostpartumError): pass
+class PostpartumRestrictionGroupNotFoundError(PostpartumError): pass
+class PostpartumRestrictionGroupNameExistsError(PostpartumError): pass
+class InvalidPostpartumRestrictionAssociationError(PostpartumError): pass

@@ -35,6 +35,9 @@ class DishService:
     def list(self, page: int, page_size: int, active: bool | None, search: str | None, category_id: uuid.UUID | None):
         return self.repository.list(page, page_size, active, search, category_id)
 
+    def selection_options(self, search: str | None, category_id: uuid.UUID | None, limit: int):
+        return self.repository.selection_options(search, category_id, limit)
+
     def _validate_category(self, category_id: uuid.UUID | None) -> None:
         if category_id is None:
             return

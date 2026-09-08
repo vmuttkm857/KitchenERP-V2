@@ -1,11 +1,19 @@
 import uuid
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.audit.service import AuditLogService, audit_snapshot
-from app.domains.postpartum.exceptions import InvalidPostpartumDataError, PostpartumCaseNotFoundError, PostpartumPauseNotFoundError
-from app.domains.postpartum.models import PostpartumCase, PostpartumRoomHistory, PostpartumServicePause
+from app.domains.postpartum.exceptions import (
+    InvalidPostpartumDataError, InvalidPostpartumRestrictionAssociationError,
+    PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
+    PostpartumRestrictionGroupNameExistsError, PostpartumRestrictionGroupNotFoundError,
+)
+from app.domains.postpartum.models import PostpartumCase, PostpartumRestrictionGroup, PostpartumRoomHistory, PostpartumServicePause
 from app.domains.postpartum.repository import PostpartumRepository
-from app.domains.postpartum.schemas import CaseCreate, CaseUpdate, PauseCreate, PauseUpdate, RoomChangeCreate
+from app.domains.postpartum.schemas import (
+    CaseCreate, CaseUpdate, PauseCreate, PauseUpdate, RestrictionAssociationsReplace,
+    RestrictionGroupCreate, RestrictionGroupUpdate, RoomChangeCreate,
+)
 from app.domains.postpartum.timeline import valid_interval
 
 
@@ -124,3 +132,125 @@ class PostpartumService:
         self.audit.record(actor_id=actor_id,action="postpartum_pause_delete",entity_type="postpartum_service_pause",
             entity_id=value.id,before_data=before)
         self.session.commit()
+
+    def restriction_group(self, group_id):
+        value = self.repository.restriction_group(group_id)
+        if value is None:
+            raise PostpartumRestrictionGroupNotFoundError()
+        return value
+
+    def list_restriction_groups(self, page, page_size, active, search):
+        return self.repository.list_restriction_groups(page, page_size, active, search)
+
+    def restriction_group_detail(self, group_id):
+        value = self.restriction_group(group_id)
+        ingredients = self.repository.restriction_ingredients(group_id)
+        dishes = self.repository.restriction_dishes(group_id)
+        group = {
+            "id": value.id, "name": value.name, "color": value.color, "notes": value.notes,
+            "is_active": value.is_active, "ingredient_count": len(ingredients), "dish_count": len(dishes),
+            "created_at": value.created_at, "updated_at": value.updated_at,
+            "created_by": value.created_by, "updated_by": value.updated_by,
+        }
+        return {"group": group, "ingredients": ingredients, "dishes": dishes}
+
+    def create_restriction_group(self, data: RestrictionGroupCreate, actor_id):
+        name = data.name.strip()
+        if self.repository.restriction_group_name_exists(name):
+            raise PostpartumRestrictionGroupNameExistsError()
+        value = PostpartumRestrictionGroup(
+            id=uuid.uuid4(), name=name, color=data.color.upper(), notes=data.notes,
+            created_by=actor_id, updated_by=actor_id,
+        )
+        self.repository.add(value)
+        self.audit.record(
+            actor_id=actor_id, action="postpartum_restriction_group_create",
+            entity_type="postpartum_restriction_group", entity_id=value.id, entity_label=value.name,
+            after_data=audit_snapshot(value, "name", "color", "notes", "is_active"),
+        )
+        self._commit_restriction_group()
+        self.session.refresh(value)
+        return value
+
+    def update_restriction_group(self, group_id, data: RestrictionGroupUpdate, actor_id):
+        value = self.restriction_group(group_id)
+        before = audit_snapshot(value, "name", "color", "notes", "is_active")
+        changes = data.model_dump(exclude_unset=True)
+        if "name" in changes:
+            changes["name"] = changes["name"].strip()
+            if self.repository.restriction_group_name_exists(changes["name"], group_id):
+                raise PostpartumRestrictionGroupNameExistsError()
+        if "color" in changes:
+            changes["color"] = changes["color"].upper()
+        for field, item in changes.items():
+            setattr(value, field, item)
+        value.updated_by = actor_id
+        self.audit.record(
+            actor_id=actor_id, action="postpartum_restriction_group_update",
+            entity_type="postpartum_restriction_group", entity_id=value.id, entity_label=value.name,
+            before_data=before, after_data=audit_snapshot(value, "name", "color", "notes", "is_active"),
+        )
+        self._commit_restriction_group()
+        self.session.refresh(value)
+        return value
+
+    def set_restriction_group_active(self, group_id, active, actor_id):
+        value = self.restriction_group(group_id)
+        before = audit_snapshot(value, "is_active")
+        value.is_active = active
+        value.updated_by = actor_id
+        self.audit.record(
+            actor_id=actor_id,
+            action="postpartum_restriction_group_reactivate" if active else "postpartum_restriction_group_deactivate",
+            entity_type="postpartum_restriction_group", entity_id=value.id, entity_label=value.name,
+            before_data=before, after_data=audit_snapshot(value, "is_active"),
+        )
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(value)
+        return value
+
+    def replace_restriction_associations(self, group_id, data: RestrictionAssociationsReplace, actor_id):
+        value = self.restriction_group(group_id)
+        requested_ingredients = set(data.ingredient_ids)
+        requested_dishes = set(data.dish_ids)
+        existing_ingredients = self.repository.restriction_ingredient_ids(group_id)
+        existing_dishes = self.repository.restriction_dish_ids(group_id)
+        ingredient_models = self.repository.ingredient_models(requested_ingredients)
+        dish_models = self.repository.dish_models(requested_dishes)
+        if set(ingredient_models) != requested_ingredients:
+            raise InvalidPostpartumRestrictionAssociationError("Every requested Ingredient must exist")
+        if set(dish_models) != requested_dishes:
+            raise InvalidPostpartumRestrictionAssociationError("Every requested Dish must exist")
+        if any(not ingredient_models[item].is_active for item in requested_ingredients - existing_ingredients):
+            raise InvalidPostpartumRestrictionAssociationError("New Ingredient associations must be active")
+        if any(not dish_models[item].is_active for item in requested_dishes - existing_dishes):
+            raise InvalidPostpartumRestrictionAssociationError("New Dish associations must be active")
+        try:
+            self.repository.replace_restriction_ingredients(group_id, existing_ingredients, requested_ingredients)
+            self.repository.replace_restriction_dishes(group_id, existing_dishes, requested_dishes)
+            value.updated_by = actor_id
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_restriction_associations_replace",
+                entity_type="postpartum_restriction_group", entity_id=value.id, entity_label=value.name,
+                before_data={"ingredient_ids": sorted(existing_ingredients, key=str), "dish_ids": sorted(existing_dishes, key=str)},
+                after_data={"ingredient_ids": sorted(requested_ingredients, key=str), "dish_ids": sorted(requested_dishes, key=str)},
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return self.restriction_group_detail(group_id)
+
+    def _commit_restriction_group(self):
+        try:
+            self.session.commit()
+        except IntegrityError as exc:
+            self.session.rollback()
+            constraint = getattr(getattr(getattr(exc, "orig", None), "diag", None), "constraint_name", None)
+            if constraint == "uq_postpartum_restriction_groups_name_normalized":
+                raise PostpartumRestrictionGroupNameExistsError() from exc
+            raise

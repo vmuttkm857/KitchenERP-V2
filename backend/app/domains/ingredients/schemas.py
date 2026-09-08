@@ -73,6 +73,14 @@ class IngredientList(BaseModel):
     pagination: PaginationMeta
 
 
+class IngredientSelectionOption(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    code: str
+    name: str
+    is_active: bool
+
+
 class PriceHistoryPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID

@@ -8,7 +8,7 @@ from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user, require_admin
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.ingredients.exceptions import IngredientCodeExistsError, IngredientInUseError, IngredientNameExistsError, IngredientNotFoundError, InvalidIngredientReferenceError
-from app.domains.ingredients.schemas import IngredientCreate, IngredientList, IngredientPublic, IngredientUpdate, PriceHistoryPublic
+from app.domains.ingredients.schemas import IngredientCreate, IngredientList, IngredientPublic, IngredientSelectionOption, IngredientUpdate, PriceHistoryPublic
 from app.domains.ingredients.service import IngredientService
 from app.domains.nutrition.exceptions import NutritionFoodNotFoundError, NutritionUnitConversionExistsError, NutritionUnitConversionNotFoundError
 from app.domains.nutrition.schemas import IngredientNutritionUpdate, NutritionUnitConversionCreate, NutritionUnitConversionPublic, NutritionUnitConversionUpdate
@@ -18,6 +18,7 @@ from app.shared.schemas import PaginationMeta, PasswordConfirmation
 
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"], dependencies=[Depends(get_current_user)])
+SELECTION_LIMIT = 5000
 
 
 def map_error(exc: Exception) -> HTTPException:
@@ -37,6 +38,14 @@ def map_error(exc: Exception) -> HTTPException:
 def list_ingredients(session: Annotated[Session, Depends(get_db_session)], page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), active: bool | None = None, search: str | None = None, category_id: uuid.UUID | None = None, supplier_id: uuid.UUID | None = None, nutrition_status: str | None = Query(None,pattern="^(official|manual|none)$")) -> IngredientList:
     items, total = IngredientService(session).list(page, page_size, active, search, category_id, supplier_id, nutrition_status)
     return IngredientList(items=[IngredientPublic.model_validate(item) for item in items], pagination=PaginationMeta(page=page, page_size=page_size, total=total))
+
+
+@router.get("/selection-options", response_model=list[IngredientSelectionOption])
+def ingredient_selection_options(session: Annotated[Session, Depends(get_db_session)], active: bool = True, search: str | None = None, category_id: uuid.UUID | None = None):
+    if not active: raise HTTPException(422, "Bulk selection only supports active records")
+    items = IngredientService(session).selection_options(search, category_id, SELECTION_LIMIT)
+    if len(items) > SELECTION_LIMIT: raise HTTPException(422, f"Too many matches; narrow the search to {SELECTION_LIMIT} records or fewer")
+    return [IngredientSelectionOption.model_validate(item) for item in items]
 
 
 @router.get("/{ingredient_id}", response_model=IngredientPublic)

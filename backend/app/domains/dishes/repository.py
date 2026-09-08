@@ -81,6 +81,17 @@ class DishRepository:
             select(DishIngredient.id).where(DishIngredient.dish_id == dish_id).limit(1)
         ) is not None
 
+    def selection_options(self, search: str | None, category_id: uuid.UUID | None, limit: int):
+        filters = [Dish.is_active.is_(True)]
+        if category_id: filters.append(Dish.category_id == category_id)
+        if search:
+            term = f"%{search.strip().lower()}%"
+            filters.append(or_(func.lower(Dish.code).like(term), func.lower(Dish.name).like(term)))
+        statement = select(Dish.id, Dish.code, Dish.name, Dish.is_active).where(*filters).order_by(
+            *natural_code_order(Dish.code), Dish.id,
+        ).limit(limit + 1)
+        return [dict(row) for row in self.session.execute(statement).mappings()]
+
     def has_menu_references(self, dish_id: uuid.UUID) -> bool:
         from app.domains.menus.models import MenuDish
         return self.session.scalar(select(MenuDish.id).where(MenuDish.dish_id == dish_id).limit(1)) is not None

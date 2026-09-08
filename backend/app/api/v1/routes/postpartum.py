@@ -5,8 +5,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user
-from app.domains.postpartum.exceptions import InvalidPostpartumDataError, PostpartumCaseNotFoundError, PostpartumPauseNotFoundError
-from app.domains.postpartum.schemas import CaseCreate, CaseDetail, CaseList, CasePublic, CaseStatus, CaseUpdate, PauseCreate, PausePublic, PauseUpdate, RoomChangeCreate, RoomHistoryPublic
+from app.domains.postpartum.exceptions import (
+    InvalidPostpartumDataError, InvalidPostpartumRestrictionAssociationError,
+    PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
+    PostpartumRestrictionGroupNameExistsError, PostpartumRestrictionGroupNotFoundError,
+)
+from app.domains.postpartum.schemas import (
+    CaseCreate, CaseDetail, CaseList, CasePublic, CaseStatus, CaseUpdate, PauseCreate, PausePublic,
+    PauseUpdate, RestrictionAssociationsReplace, RestrictionGroupCreate, RestrictionGroupDetail,
+    RestrictionGroupList, RestrictionGroupPublic, RestrictionGroupUpdate, RoomChangeCreate, RoomHistoryPublic,
+)
 from app.domains.postpartum.service import PostpartumService
 from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta
@@ -14,8 +22,9 @@ from app.shared.schemas import PaginationMeta
 router = APIRouter(prefix="/postpartum", tags=["postpartum"], dependencies=[Depends(get_current_user)])
 
 def error(exc):
-    if isinstance(exc, (PostpartumCaseNotFoundError, PostpartumPauseNotFoundError)): return HTTPException(404, "Postpartum case resource not found")
-    if isinstance(exc, InvalidPostpartumDataError): return HTTPException(422, str(exc))
+    if isinstance(exc, (PostpartumCaseNotFoundError, PostpartumPauseNotFoundError, PostpartumRestrictionGroupNotFoundError)): return HTTPException(404, "Postpartum resource not found")
+    if isinstance(exc, PostpartumRestrictionGroupNameExistsError): return HTTPException(409, "禁忌群組名稱已存在")
+    if isinstance(exc, (InvalidPostpartumDataError, InvalidPostpartumRestrictionAssociationError)): return HTTPException(422, str(exc))
     return HTTPException(400, "Postpartum operation failed")
 
 @router.get("/cases", response_model=CaseList)
@@ -70,3 +79,45 @@ def delete_pause(case_id:uuid.UUID,pause_id:uuid.UUID,user:Annotated[User,Depend
     try:PostpartumService(session).delete_pause(case_id,pause_id,user.id)
     except Exception as exc:raise error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/restriction-groups", response_model=RestrictionGroupList)
+def restriction_groups(session: Annotated[Session, Depends(get_db_session)], page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), active: bool | None = None, search: str | None = None):
+    items, total = PostpartumService(session).list_restriction_groups(page, page_size, active, search)
+    return RestrictionGroupList(items=[RestrictionGroupPublic.model_validate(item) for item in items], pagination=PaginationMeta(page=page, page_size=page_size, total=total))
+
+
+@router.post("/restriction-groups", response_model=RestrictionGroupPublic, status_code=201)
+def create_restriction_group(data: RestrictionGroupCreate, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try: return RestrictionGroupPublic.model_validate(PostpartumService(session).create_restriction_group(data, user.id))
+    except Exception as exc: raise error(exc) from exc
+
+
+@router.get("/restriction-groups/{group_id}", response_model=RestrictionGroupDetail)
+def restriction_group_detail(group_id: uuid.UUID, session: Annotated[Session, Depends(get_db_session)]):
+    try: return RestrictionGroupDetail.model_validate(PostpartumService(session).restriction_group_detail(group_id))
+    except Exception as exc: raise error(exc) from exc
+
+
+@router.patch("/restriction-groups/{group_id}", response_model=RestrictionGroupPublic)
+def update_restriction_group(group_id: uuid.UUID, data: RestrictionGroupUpdate, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try: return RestrictionGroupPublic.model_validate(PostpartumService(session).update_restriction_group(group_id, data, user.id))
+    except Exception as exc: raise error(exc) from exc
+
+
+@router.post("/restriction-groups/{group_id}/deactivate", response_model=RestrictionGroupPublic)
+def deactivate_restriction_group(group_id: uuid.UUID, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try: return RestrictionGroupPublic.model_validate(PostpartumService(session).set_restriction_group_active(group_id, False, user.id))
+    except Exception as exc: raise error(exc) from exc
+
+
+@router.post("/restriction-groups/{group_id}/reactivate", response_model=RestrictionGroupPublic)
+def reactivate_restriction_group(group_id: uuid.UUID, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try: return RestrictionGroupPublic.model_validate(PostpartumService(session).set_restriction_group_active(group_id, True, user.id))
+    except Exception as exc: raise error(exc) from exc
+
+
+@router.put("/restriction-groups/{group_id}/associations", response_model=RestrictionGroupDetail)
+def replace_restriction_associations(group_id: uuid.UUID, data: RestrictionAssociationsReplace, user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try: return RestrictionGroupDetail.model_validate(PostpartumService(session).replace_restriction_associations(group_id, data, user.id))
+    except Exception as exc: raise error(exc) from exc

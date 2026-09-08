@@ -38,3 +38,10 @@ class DishPublic(BaseModel):
 class DishList(BaseModel):
     items: list[DishPublic]
     pagination: PaginationMeta
+
+
+class DishSelectionOption(BaseModel):
+    id: uuid.UUID
+    code: str
+    name: str
+    is_active: bool

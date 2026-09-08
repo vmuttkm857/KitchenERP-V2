@@ -11,7 +11,7 @@ from app.domains.dishes.exceptions import (
     DishCodeExistsError, DishIdentityExistsError, DishInUseError, DishNameExistsError,
     DishNotFoundError, InvalidDishCategoryError,
 )
-from app.domains.dishes.schemas import DishCreate, DishList, DishPublic, DishUpdate
+from app.domains.dishes.schemas import DishCreate, DishList, DishPublic, DishSelectionOption, DishUpdate
 from app.domains.dishes.service import DishService
 from app.domains.nutrition.dish_service import DishNutritionService
 from app.domains.nutrition.schemas import DishNutritionBulkPublic, DishNutritionBulkRequest, DishNutritionPublic
@@ -20,6 +20,7 @@ from app.shared.schemas import PaginationMeta, PasswordConfirmation
 
 
 router = APIRouter(prefix="/dishes", tags=["dishes"], dependencies=[Depends(get_current_user)])
+SELECTION_LIMIT = 5000
 
 
 def nutrition_public(result) -> DishNutritionPublic:
@@ -56,6 +57,15 @@ def list_dishes(session: Annotated[Session, Depends(get_db_session)], page: int 
     items, total = DishService(session).list(page, page_size, active, search, category_id)
     return DishList(items=[DishPublic.model_validate(item) for item in items],
                     pagination=PaginationMeta(page=page, page_size=page_size, total=total))
+
+
+@router.get("/selection-options", response_model=list[DishSelectionOption])
+def dish_selection_options(session: Annotated[Session, Depends(get_db_session)], active: bool = True,
+                           search: str | None = None, category_id: uuid.UUID | None = None):
+    if not active: raise HTTPException(422, "Bulk selection only supports active records")
+    items = DishService(session).selection_options(search, category_id, SELECTION_LIMIT)
+    if len(items) > SELECTION_LIMIT: raise HTTPException(422, f"Too many matches; narrow the search to {SELECTION_LIMIT} records or fewer")
+    return [DishSelectionOption.model_validate(item) for item in items]
 
 
 @router.post("/nutrition/bulk", response_model=DishNutritionBulkPublic)

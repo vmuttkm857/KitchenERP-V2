@@ -60,6 +60,16 @@ class IngredientRepository:
     def price_history(self, ingredient_id: uuid.UUID) -> list[IngredientPriceHistory]:
         statement = select(IngredientPriceHistory).where(IngredientPriceHistory.ingredient_id == ingredient_id).order_by(IngredientPriceHistory.effective_date.desc(), IngredientPriceHistory.created_at.desc())
         return list(self.session.scalars(statement))
+    def selection_options(self, search: str | None, category_id: uuid.UUID | None, limit: int):
+        filters = [Ingredient.is_active.is_(True)]
+        if category_id: filters.append(Ingredient.category_id == category_id)
+        if search:
+            term = f"%{search.strip().lower()}%"
+            filters.append(or_(func.lower(Ingredient.code).like(term), func.lower(Ingredient.name).like(term)))
+        statement = select(Ingredient.id, Ingredient.code, Ingredient.name, Ingredient.is_active).where(*filters).order_by(
+            *natural_code_order(Ingredient.code), Ingredient.id,
+        ).limit(limit + 1)
+        return [dict(row) for row in self.session.execute(statement).mappings()]
     def has_history(self, ingredient_id: uuid.UUID) -> bool:
         return self.session.scalar(select(IngredientPriceHistory.id).where(IngredientPriceHistory.ingredient_id == ingredient_id).limit(1)) is not None
     def has_recipe_references(self, ingredient_id: uuid.UUID) -> bool:

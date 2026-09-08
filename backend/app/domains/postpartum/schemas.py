@@ -142,3 +142,69 @@ class CaseDetail(BaseModel):
     case: CasePublic
     room_history: list[RoomHistoryPublic]
     pauses: list[PausePublic]
+
+
+class RestrictionGroupCreate(BaseModel):
+    name: str = Field(max_length=150)
+    color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+    notes: str | None = Field(default=None, max_length=5000)
+
+    _strip_name = field_validator("name")(_required)
+
+
+class RestrictionGroupUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=150)
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    notes: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str | None) -> str | None:
+        return _required(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def required_fields_cannot_be_null(self):
+        if "name" in self.model_fields_set and self.name is None:
+            raise ValueError("name must not be null")
+        if "color" in self.model_fields_set and self.color is None:
+            raise ValueError("color must not be null")
+        return self
+
+
+class RestrictionGroupPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+    color: str
+    notes: str | None
+    is_active: bool
+    ingredient_count: int = 0
+    dish_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+    created_by: uuid.UUID
+    updated_by: uuid.UUID
+
+
+class RestrictionGroupList(BaseModel):
+    items: list[RestrictionGroupPublic]
+    pagination: PaginationMeta
+
+
+class RestrictionTargetPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    code: str
+    name: str
+    is_active: bool
+
+
+class RestrictionGroupDetail(BaseModel):
+    group: RestrictionGroupPublic
+    ingredients: list[RestrictionTargetPublic]
+    dishes: list[RestrictionTargetPublic]
+
+
+class RestrictionAssociationsReplace(BaseModel):
+    ingredient_ids: list[uuid.UUID] = Field(default_factory=list)
+    dish_ids: list[uuid.UUID] = Field(default_factory=list)
