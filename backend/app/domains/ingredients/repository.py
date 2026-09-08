@@ -9,6 +9,7 @@ from app.domains.categories.models import IngredientCategory
 from app.domains.ingredients.models import Ingredient, IngredientPriceHistory
 from app.domains.nutrition.models import NutritionFood, NutritionFoodValue, NutritionNutrient
 from app.domains.suppliers.models import Supplier
+from app.shared.sorting import natural_code_order
 
 
 class IngredientRepository:
@@ -54,7 +55,7 @@ class IngredientRepository:
             term = f"%{search.strip().lower()}%"
             filters.append(or_(func.lower(Ingredient.code).like(term), func.lower(Ingredient.name).like(term)))
         total = self.session.scalar(select(func.count()).select_from(Ingredient).where(*filters)) or 0
-        statement = self._view_statement().where(*filters).order_by(func.lower(Ingredient.code), Ingredient.id).offset((page-1)*page_size).limit(page_size)
+        statement = self._view_statement().where(*filters).order_by(*natural_code_order(Ingredient.code), Ingredient.id).offset((page-1)*page_size).limit(page_size)
         return [dict(row) for row in self.session.execute(statement).mappings()], total
     def price_history(self, ingredient_id: uuid.UUID) -> list[IngredientPriceHistory]:
         statement = select(IngredientPriceHistory).where(IngredientPriceHistory.ingredient_id == ingredient_id).order_by(IngredientPriceHistory.effective_date.desc(), IngredientPriceHistory.created_at.desc())

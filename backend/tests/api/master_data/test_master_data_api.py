@@ -209,3 +209,31 @@ def test_ingredient_list_supplier_filter_combinations_and_pagination(client: Tes
     assert response.json()["pagination"]["total"] == 2
     selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
     assert len(selects) <= 3
+
+
+def test_ingredient_and_dish_codes_use_natural_numeric_order_across_pages(client: TestClient, db_session: Session) -> None:
+    headers, _ = auth_headers(client, db_session)
+    ingredient_category = client.post("/api/v1/categories/ingredient", headers=headers, json={"name": "自然排序食材"}).json()
+    dish_category = client.post("/api/v1/categories/dish", headers=headers, json={"name": "自然排序菜色"}).json()
+    codes = ["100", "01", "A2", "11", "002", "10", "A10"]
+    for index, code in enumerate(codes):
+        ingredient = client.post("/api/v1/ingredients", headers=headers, json={
+            "code": code, "name": f"排序食材{index}", "category_id": ingredient_category["id"],
+            "unit": "kg", "current_price": "1",
+        })
+        dish = client.post("/api/v1/dishes", headers=headers, json={
+            "code": code, "name": f"排序菜色{index}", "category_id": dish_category["id"],
+        })
+        assert ingredient.status_code == dish.status_code == 201
+
+    def listed_codes(path: str) -> list[str]:
+        result = []
+        for page in range(1, 4):
+            response = client.get(f"{path}?page={page}&page_size=3", headers=headers)
+            assert response.status_code == 200, response.text
+            result.extend(item["code"] for item in response.json()["items"])
+        return result
+
+    expected = ["01", "002", "10", "11", "100", "A10", "A2"]
+    assert listed_codes("/api/v1/ingredients") == expected
+    assert listed_codes("/api/v1/dishes") == expected

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.categories.models import DishCategory
 from app.domains.dishes.models import Dish
+from app.shared.sorting import natural_code_order
 
 
 class DishRepository:
@@ -69,7 +70,7 @@ class DishRepository:
         total = self.session.scalar(select(func.count()).select_from(Dish).where(*filters)) or 0
         statement = (
             self._view_statement().where(*filters)
-            .order_by(func.lower(Dish.code), Dish.id)
+            .order_by(*natural_code_order(Dish.code), Dish.id)
             .offset((page - 1) * page_size).limit(page_size)
         )
         return [dict(row) for row in self.session.execute(statement).mappings()], total

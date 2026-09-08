@@ -17,6 +17,7 @@ export function buildListQuery(value:ListQuery){
 }
 
 export function totalPages(total:number,pageSize:number){return Math.max(1,Math.ceil(total/pageSize))}
+export function validPage(page:number,total:number,pageSize:number){return Math.min(Math.max(1,page),totalPages(total,pageSize))}
 export function nextFilterPage(){return 1}
 export function menuCandidateDateParams(startDate:string,endDate:string){return {startDate:startDate||undefined,endDate:endDate||undefined}}
 export function dateRangeError(startDate:string,endDate:string){return startDate&&endDate&&startDate>endDate?'開始日期不可晚於結束日期。':''}

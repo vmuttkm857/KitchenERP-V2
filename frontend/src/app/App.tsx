@@ -5,7 +5,7 @@ import { LoadingState } from '../components/ui/Page'
 import { AuditLogsPage } from '../features/audit/AuditLogsPage'
 import { LoginPage } from '../features/auth/LoginPage'
 import { CategoriesPage } from '../features/categories/CategoriesPage'
-import { Dish, DishesPage } from '../features/dishes/DishesPage'
+import { Dish, DishesPage, DishListState, initialDishListState } from '../features/dishes/DishesPage'
 import { IngredientsPage } from '../features/ingredients/IngredientsPage'
 import { KitchenOperationsPage } from '../features/kitchen_operations/KitchenOperationsPage'
 import { MenuEditor } from '../features/menus/MenuEditor'
@@ -58,7 +58,7 @@ function Application(){
   const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>{
     try{const saved=localStorage.getItem(sidebarPreferenceKey);return saved===null?window.matchMedia('(max-width: 1100px)').matches:saved==='true'}catch{return false}
   })
-  const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [productionDish,setProductionDish]=useState<Dish|null>(null);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null)
+  const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [productionDish,setProductionDish]=useState<Dish|null>(null);const [dishListState,setDishListState]=useState<DishListState>(initialDishListState);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null)
   const [passwordOpen,setPasswordOpen]=useState(false),[passwordBusy,setPasswordBusy]=useState(false),[passwordError,setPasswordError]=useState('')
   useEffect(()=>{try{localStorage.setItem(sidebarPreferenceKey,String(sidebarCollapsed))}catch{/* UI preference remains in memory. */}},[sidebarCollapsed])
   useEffect(()=>{
@@ -81,7 +81,7 @@ function Application(){
     {navOpen&&<button className="nav-backdrop" aria-label="關閉導覽" onClick={()=>setNavOpen(false)}/>}
     <main className="workspace" id="main-content">
       {page==='categories'&&<CategoriesPage/>}{page==='suppliers'&&<SuppliersPage/>}{page==='ingredients'&&<IngredientsPage/>}{page==='nutrition'&&<NutritionPage isAdmin={user.role==='admin'}/>}
-      {page==='dishes'&&<DishesPage onEditRecipe={dish=>{setRecipeDish(dish);navigate('recipe')}} onEditProduction={dish=>{setProductionDish(dish);navigate('production-profile')}}/>}{page==='recipe'&&recipeDish&&<RecipeEditor dish={recipeDish} onClose={()=>navigate('dishes')}/>} {page==='production-profile'&&productionDish&&<ProductionProfilePage dish={productionDish} isAdmin={user.role==='admin'} onClose={()=>navigate('dishes')}/>}
+      {page==='dishes'&&<DishesPage listState={dishListState} onListStateChange={setDishListState} onEditRecipe={dish=>{setRecipeDish(dish);navigate('recipe')}} onEditProduction={dish=>{setProductionDish(dish);navigate('production-profile')}}/>}{page==='recipe'&&recipeDish&&<RecipeEditor dish={recipeDish} onClose={()=>navigate('dishes')}/>} {page==='production-profile'&&productionDish&&<ProductionProfilePage dish={productionDish} isAdmin={user.role==='admin'} onClose={()=>navigate('dishes')}/>}
       {page==='menus'&&<MenusPage onOpen={menu=>{setEditingMenu(menu);navigate('menu-editor')}}/>}{page==='menu-editor'&&editingMenu&&<MenuEditor menu={editingMenu} onClose={()=>navigate('menus')}/>}
       {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage/>}{page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
       {page==='users'&&user.role==='admin'&&<UsersPage/>}{page==='audit'&&user.role==='admin'&&<AuditLogsPage/>}
