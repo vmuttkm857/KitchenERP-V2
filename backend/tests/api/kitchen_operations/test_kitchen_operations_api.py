@@ -78,7 +78,8 @@ def test_auth_query_budget_read_only_and_no_snapshot_purchase_dependency(client,
     try:response=client.post("/api/v1/kitchen-operations/calculate",headers=headers,json={"menu_id":menu["id"]})
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
-    selects=[sql for sql in statements if sql.lstrip().upper().startswith("SELECT")];assert len(selects)<=3
+    # Fixed reads: authenticated user, menu metadata, menu-column metadata, and the kitchen aggregate.
+    selects=[sql for sql in statements if sql.lstrip().upper().startswith("SELECT")];assert len(selects)<=4
     assert not [sql for sql in statements if sql.lstrip().upper().startswith(("INSERT","UPDATE","DELETE"))]
     combined=" ".join(selects).lower();assert "requirement_snapshot" not in combined and "purchase_" not in combined
 

@@ -39,7 +39,7 @@ def test_fresh_postgresql_base_to_head_includes_audit_logs(migrated_test_databas
         command.upgrade(config(), "head")
         assert inspect(migrated_test_database).has_table("audit_logs")
         with migrated_test_database.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260903_0013"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260908_0014"
             for table in ("nutrition_foods", "nutrition_nutrients", "nutrition_food_values", "nutrition_import_batches"):
                 assert inspect(migrated_test_database).has_table(table)
     finally:
@@ -90,5 +90,28 @@ def test_0012_to_0013_adds_only_menu_meal_type_columns(migrated_test_database) -
             "id","menu_meal_type_id","name","sort_order","created_at","updated_at","created_by","updated_by"
         }
         assert {column["name"] for column in inspector.get_columns("menu_dishes")}==before_menu_dishes
+    finally:
+        command.upgrade(config(),"head")
+
+
+def test_0013_to_0014_adds_nullable_menu_dish_column_assignment(migrated_test_database) -> None:
+    command.downgrade(config(),"20260903_0013")
+    try:
+        before={column["name"] for column in inspect(migrated_test_database).get_columns("menu_dishes")}
+        assert "menu_meal_type_column_id" not in before
+        command.upgrade(config(),"20260908_0014")
+        inspector=inspect(migrated_test_database)
+        columns={column["name"]:column for column in inspector.get_columns("menu_dishes")}
+        assert columns["menu_meal_type_column_id"]["nullable"] is True
+        indexes={index["name"] for index in inspector.get_indexes("menu_dishes")}
+        assert "ix_menu_dishes_meal_type_column_id" in indexes
+        unique={constraint["name"] for constraint in inspector.get_unique_constraints("menu_dishes")}
+        assert "uq_menu_dishes_day_meal_type_column" in unique
+        foreign_keys={key["name"]:key for key in inspector.get_foreign_keys("menu_dishes")}
+        assignment=foreign_keys["fk_menu_dishes_menu_meal_type_column_id_menu_meal_type_columns"]
+        assert assignment["referred_table"]=="menu_meal_type_columns"
+        assert assignment["options"].get("ondelete")=="SET NULL"
+        with migrated_test_database.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version"))=="20260908_0014"
     finally:
         command.upgrade(config(),"head")

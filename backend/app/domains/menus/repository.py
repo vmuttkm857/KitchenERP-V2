@@ -20,6 +20,9 @@ class MenuRepository:
     def dish_models(self, ids: set[uuid.UUID]):
         if not ids: return {}
         return {row.id: row for row in self.session.scalars(select(Dish).where(Dish.id.in_(ids)))}
+    def meal_type_column_models(self, ids: set[uuid.UUID]):
+        if not ids: return {}
+        return {row.id:row for row in self.session.scalars(select(MenuMealTypeColumn).where(MenuMealTypeColumn.id.in_(ids)))}
     def _menu_view(self):
         return select(Menu.id, Menu.name, Menu.start_date, Menu.end_date, Menu.category_id,
                       MenuCategory.name.label("category_name"), Menu.notes, Menu.is_active,
@@ -63,7 +66,7 @@ class MenuRepository:
     def aggregate_rows(self, menu_id):
         return list(self.session.execute(select(
             MenuDay.id.label("menu_day_id"), MenuDay.menu_date, MenuDay.menu_meal_type_id, MenuDay.notes.label("slot_notes"),
-            MenuDish.id.label("menu_dish_id"), MenuDish.dish_id, Dish.code.label("dish_code"), Dish.name.label("dish_name"),
+            MenuDish.id.label("menu_dish_id"), MenuDish.dish_id, MenuDish.menu_meal_type_column_id, Dish.code.label("dish_code"), Dish.name.label("dish_name"),
             DishCategory.name.label("dish_category_name"), MenuDish.diner_count, MenuDish.notes, MenuDish.sort_order,
             MenuDish.created_by, MenuDish.updated_by,
         ).outerjoin(MenuDish, MenuDish.menu_day_id==MenuDay.id).outerjoin(Dish, Dish.id==MenuDish.dish_id)

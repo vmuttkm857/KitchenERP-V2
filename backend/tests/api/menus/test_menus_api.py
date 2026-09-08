@@ -79,6 +79,69 @@ def test_meal_type_columns_are_independent_crud_and_do_not_touch_menu_dishes(cli
     assert client.patch(f"/api/v1/menus/{value['id']}/meal-types/{lunch['id']}/columns/{vegetable['id']}",headers=headers,json={"name":"錯誤餐別"}).status_code==404
 
 
+def test_menu_dish_column_assignment_validation_null_compatibility_and_delete_set_null(client,db_session):
+    headers,_=auth(client,db_session);category,dishes=foundations(client,headers)
+    value=menu(client,headers,category["id"]);breakfast,lunch=meals(client,headers,value["id"],("早餐","午餐"))
+    other=menu(client,headers,category["id"],"其他菜單");other_breakfast=meals(client,headers,other["id"],("早餐",))[0]
+    def create_column(menu_id,meal,name):
+        response=client.post(f"/api/v1/menus/{menu_id}/meal-types/{meal['id']}/columns",headers=headers,json={"name":name,"sort_order":1})
+        assert response.status_code==201,response.text;return response.json()
+    breakfast_column=create_column(value["id"],breakfast,"主菜")
+    lunch_column=create_column(value["id"],lunch,"午餐主菜")
+    other_column=create_column(other["id"],other_breakfast,"其他主菜")
+    payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":breakfast["id"],"dishes":[
+        {"dish_id":dishes[0]["id"],"menu_meal_type_column_id":breakfast_column["id"],"diner_count":100,"sort_order":1},
+        {"dish_id":dishes[1]["id"],"menu_meal_type_column_id":None,"diner_count":80,"sort_order":2},
+        {"dish_id":dishes[2]["id"],"diner_count":60,"sort_order":3},
+    ]}]}
+    saved=client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload)
+    assert saved.status_code==200,saved.text
+    saved_dishes=saved.json()["slots"][0]["dishes"]
+    assert [dish["menu_meal_type_column_id"] for dish in saved_dishes]==[breakfast_column["id"],None,None]
+
+    def invalid(column_ids):
+        dishes_payload=[{"dish_id":dishes[index]["id"],"menu_meal_type_column_id":column_id,"diner_count":1,"sort_order":index+1} for index,column_id in enumerate(column_ids)]
+        return client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-02","menu_meal_type_id":breakfast["id"],"dishes":dishes_payload}]})
+    assert invalid([lunch_column["id"]]).status_code==422
+    assert invalid([other_column["id"]]).status_code==422
+    assert invalid(["00000000-0000-0000-0000-000000000099"]).status_code==422
+    assert invalid([breakfast_column["id"],breakfast_column["id"]]).status_code==422
+
+    assert client.delete(f"/api/v1/menus/{value['id']}/meal-types/{breakfast['id']}/columns/{breakfast_column['id']}",headers=headers).status_code==204
+    after=client.get(f"/api/v1/menus/{value['id']}/editor",headers=headers).json()
+    assert len(after["slots"][0]["dishes"])==3
+    assert all(dish["menu_meal_type_column_id"] is None for dish in after["slots"][0]["dishes"])
+
+
+def test_copy_day_preserves_same_menu_column_and_maps_cross_menu_by_exact_name(client,db_session):
+    headers,_=auth(client,db_session);category,dishes=foundations(client,headers)
+    source=menu(client,headers,category["id"],"欄位來源");source_meal=meals(client,headers,source["id"],("早餐",))[0]
+    matching=menu(client,headers,category["id"],"同名目的");matching_meal=meals(client,headers,matching["id"],("早餐",))[0]
+    missing=menu(client,headers,category["id"],"缺少欄位目的");meals(client,headers,missing["id"],("早餐",))
+    def create_column(menu_id,meal,name):
+        response=client.post(f"/api/v1/menus/{menu_id}/meal-types/{meal['id']}/columns",headers=headers,json={"name":name,"sort_order":1})
+        assert response.status_code==201,response.text;return response.json()
+    source_column=create_column(source["id"],source_meal,"主菜")
+    matching_column=create_column(matching["id"],matching_meal,"主菜")
+    payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":source_meal["id"],"dishes":[{
+        "dish_id":dishes[0]["id"],"menu_meal_type_column_id":source_column["id"],"diner_count":100,"sort_order":1,
+    }]}]}
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+
+    same=client.post(f"/api/v1/menus/{source['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
+    assert same.status_code==200,same.text
+    same_dish=next(slot for slot in same.json()["slots"] if slot["menu_date"]=="2026-09-02")["dishes"][0]
+    assert same_dish["menu_meal_type_column_id"]==source_column["id"]
+
+    mapped=client.post(f"/api/v1/menus/{matching['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
+    assert mapped.status_code==200,mapped.text
+    assert mapped.json()["slots"][0]["dishes"][0]["menu_meal_type_column_id"]==matching_column["id"]
+
+    unmapped=client.post(f"/api/v1/menus/{missing['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
+    assert unmapped.status_code==200,unmapped.text
+    assert unmapped.json()["slots"][0]["dishes"][0]["menu_meal_type_column_id"] is None
+
+
 def test_unauthorized_menu_requests(client):
     assert client.get("/api/v1/menus").status_code==401
     assert client.post("/api/v1/menus",json={"name":"x","start_date":"2026-01-01","end_date":"2026-01-01"}).status_code==401
@@ -430,6 +493,6 @@ def test_aggregate_query_count_constant_and_fk(client,db_session):
     try: response=client.get(f"/api/v1/menus/{value['id']}/editor",headers=headers)
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
-    assert len([s for s in statements if s.lstrip().upper().startswith("SELECT")])<=4
+    assert len([s for s in statements if s.lstrip().upper().startswith("SELECT")])<=5
     fk=db_session.execute(text("SELECT confdeltype FROM pg_constraint WHERE conname='menu_days_menu_meal_type_id_fkey'")).scalar_one()
     assert fk=="r"

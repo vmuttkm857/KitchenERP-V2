@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
 from PIL import Image, ImageDraw
 
+from app.domains.exports.menu_row_planner import plan_menu_dish_rows
 from app.domains.exports.raster_pdf import GREEN, INK, LINE, PALE_GREEN, font, images_to_pdf, page_image, wrap_text
 from app.domains.exports.safety import safe_cell_text
 from app.domains.nutrition.calculator import NutrientDefinition
@@ -29,19 +30,18 @@ def _display_nutrition(value: Decimal | None) -> str:
 
 def menu_week_plan(result: dict, nutrition_results: dict | None = None) -> list[dict]:
     used = {slot["menu_meal_type_id"] for slot in result["slots"]}
-    labels_by_meal = {}
+    columns_by_meal = {}
     for column in sorted(
         result.get("meal_type_columns", []),
         key=lambda item: (item.menu_meal_type_id, item.sort_order, str(item.id)),
     ):
-        labels_by_meal.setdefault(column.menu_meal_type_id, []).append(str(column.name))
+        columns_by_meal.setdefault(column.menu_meal_type_id, []).append(column)
     meals = sorted(
-        ({"id": meal.id, "name": str(meal.name), "sort_order": meal.sort_order,
-          "labels": labels_by_meal.get(meal.id, [])}
+        ({"id": meal.id, "name": str(meal.name), "sort_order": meal.sort_order}
          for meal in result["meal_types"] if meal.is_active or meal.id in used),
         key=lambda item: (item["sort_order"], str(item["id"])),
     )
-    slots = {}
+    source_slots = {}
     for slot in result["slots"]:
         dishes = []
         for item in sorted(slot["dishes"], key=lambda item: (item["sort_order"], str(item["dish_id"]))):
@@ -50,10 +50,20 @@ def menu_week_plan(result: dict, nutrition_results: dict | None = None) -> list[
                 nutrition = nutrition_results.get(item["dish_id"])
                 calorie = _display_nutrition(nutrition.calorie_value) if nutrition and nutrition.calorie_complete else "無"
                 name = f"{name}（{calorie}{' kcal' if calorie != '無' else ''}）"
-            dishes.append(name)
-        slots[(slot["menu_date"], slot["menu_meal_type_id"])] = dishes
+            dishes.append({**item, "display_name": name})
+        source_slots[(slot["menu_date"], slot["menu_meal_type_id"])] = dishes
     dates = list(result["dates"])
-    return [{"dates": dates[start:start + 7], "meals": meals, "slots": slots} for start in range(0, len(dates), 7)] or [{"dates": [], "meals": meals, "slots": slots}]
+    plans = []
+    for start in range(0, len(dates), 7):
+        plan_dates = dates[start:start + 7]; plan_meals = []; plan_slots = {}
+        for meal in meals:
+            dishes_by_date = {day: source_slots.get((day, meal["id"]), []) for day in plan_dates}
+            row_plan = plan_menu_dish_rows(columns_by_meal.get(meal["id"], []), dishes_by_date)
+            plan_meals.append({**meal, "labels": [str(column.name) for column in row_plan["columns"]], "row_count": row_plan["row_count"]})
+            for day, rows in row_plan["slots"].items():
+                plan_slots[(day, meal["id"])] = [item["display_name"] if item is not None else None for item in rows]
+        plans.append({"dates": plan_dates, "meals": plan_meals, "slots": plan_slots})
+    return plans or [{"dates": [], "meals": [{**meal, "labels": [], "row_count": 1} for meal in meals], "slots": {}}]
 
 
 def full_page_plan(result: dict) -> list[dict]: return menu_week_plan(result)
@@ -111,14 +121,13 @@ def _append_menu_sheets(workbook: Workbook, result: dict, layout: str, variant: 
         if variant == "poster": size, height = size + 2, height * 1.45
         row, ends = 3, []
         for meal in plan["meals"]:
-            counts = [len(plan["slots"].get((day, meal["id"]), [])) for day in plan["dates"]]
-            rows = max(len(meal["labels"]), max(counts, default=0), 1)
+            rows = meal["row_count"]
             for offset in range(rows):
                 sheet.cell(row, 1, safe_cell_text(meal["name"]) if offset == 0 else "")
                 sheet.cell(row, 2, safe_cell_text(meal["labels"][offset]) if offset < len(meal["labels"]) else "")
                 for day_index in range(7):
                     dishes = plan["slots"].get((plan["dates"][day_index], meal["id"]), []) if day_index < len(plan["dates"]) else []
-                    sheet.cell(row, day_index + 3, safe_cell_text(dishes[offset]) if offset < len(dishes) else "")
+                    sheet.cell(row, day_index + 3, safe_cell_text(dishes[offset]) if offset < len(dishes) and dishes[offset] is not None else "")
                 for column in range(1, 10):
                     cell = sheet.cell(row, column); cell.font = Font(size=size + (1 if column == 1 else 0), bold=column <= 2, color="244B32" if column <= 2 else INK.lstrip("#"))
                     cell.fill = PatternFill("solid", fgColor="F3F8F4" if column <= 2 else ("FAFCFA" if layout == "pretty" else "FFFFFF"))
@@ -208,8 +217,7 @@ def _menu_images(result: dict, layout: str, nutrition_results: dict | None = Non
         row_h = (image.height-top-header_h-55)/max(1, len(plan["meals"])); body_size = max(7, min(11, row_h/8)); y = top+header_h
         for meal in plan["meals"]:
             draw.rectangle((margin, y, margin+meal_w, y+row_h), fill=PALE_GREEN, outline=LINE, width=2); draw.text((margin+meal_w/2, y+row_h/2), meal["name"], font=font(body_size+1), fill=GREEN, anchor="mm")
-            counts = [len(plan["slots"].get((day, meal["id"]), [])) for day in plan["dates"]]
-            rows = max(len(meal["labels"]), max(counts, default=0), 1); part = row_h/rows
+            rows = meal["row_count"]; part = row_h/rows
             for row_index in range(rows):
                 row_top = y+row_index*part
                 draw.rectangle((margin+meal_w, row_top, margin+meal_w+label_w, row_top+part), fill=PALE_GREEN, outline=LINE, width=2)
@@ -221,7 +229,7 @@ def _menu_images(result: dict, layout: str, nutrition_results: dict | None = Non
                 for row_index in range(rows):
                     row_top = y+row_index*part
                     draw.rectangle((left, row_top, left+day_w, row_top+part), fill="#FAFCFA" if layout == "pretty" else "white", outline=LINE, width=2)
-                    if row_index < len(dishes):
+                    if row_index < len(dishes) and dishes[row_index] is not None:
                         lines = wrap_text(draw, dishes[row_index], font(body_size), day_w-18)
                         draw.multiline_text((left+day_w/2, row_top+part/2), "\n".join(lines), font=font(body_size), fill=INK, anchor="mm", align="center", spacing=3)
             y += row_h

@@ -8,6 +8,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.pagebreak import Break
 from PIL import Image, ImageDraw
 
+from app.domains.exports.menu_row_planner import plan_menu_dish_rows
 from app.domains.exports.raster_pdf import GREEN, INK, LINE, MUTED, PALE_GREEN, font, images_to_pdf, page_image, wrap_text
 from app.domains.exports.safety import safe_cell_text
 from app.shared.domain.quantities import convert_quantity, normalize_unit
@@ -36,23 +37,25 @@ def display_ingredient(line: dict) -> tuple[str, str]:
 
 def simple_page_plan(result: dict) -> list[dict]:
     days = result["days"]
-    labels_by_meal = {}
+    columns_by_meal = {}
     for column in sorted(result.get("meal_type_columns", []),key=lambda item:(item["menu_meal_type_id"],item["sort_order"],str(item["id"]))):
-        labels_by_meal.setdefault(column["menu_meal_type_id"],[]).append(str(column["name"]))
+        columns_by_meal.setdefault(column["menu_meal_type_id"],[]).append(column)
     meal_order, seen = [], set()
     for day in days:
         for meal in day["meals"]:
             meal_id = meal.get("meal_type_id", meal["meal_type_name"])
-            if meal_id not in seen: seen.add(meal_id); meal_order.append({"id": meal_id, "name": meal["meal_type_name"],"labels":labels_by_meal.get(meal_id,[])})
+            if meal_id not in seen: seen.add(meal_id); meal_order.append({"id": meal_id, "name": meal["meal_type_name"]})
     lookup = {(day["menu_date"], meal.get("meal_type_id", meal["meal_type_name"])): meal["dishes"] for day in days for meal in day["meals"]}
     plans=[]
     for start in range(0,len(days),7):
         dates=[day["menu_date"] for day in days[start:start+7]]
-        meals=[]
+        meals=[]; slots={}
         for meal in meal_order:
-            row_count=max(len(meal["labels"]),max((len(lookup.get((day,meal["id"]),[])) for day in dates),default=0),1)
-            meals.append({**meal,"row_count":row_count})
-        plans.append({"dates":dates,"meals":meals,"slots":lookup})
+            dishes_by_date={day:lookup.get((day,meal["id"]),[]) for day in dates}
+            row_plan=plan_menu_dish_rows(columns_by_meal.get(meal["id"],[]),dishes_by_date)
+            meals.append({**meal,"labels":[str(column["name"]) for column in row_plan["columns"]],"row_count":row_plan["row_count"]})
+            for day,rows in row_plan["slots"].items():slots[(day,meal["id"])]=rows
+        plans.append({"dates":dates,"meals":meals,"slots":slots})
     return plans
 
 
@@ -88,7 +91,7 @@ def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
                 max_lines=1
                 for day_i in range(7):
                     dishes=plan["slots"].get((plan["dates"][day_i],meal["id"]),[]) if day_i<len(plan["dates"]) else []
-                    text="\n".join(_dish_lines(dishes[offset])) if offset<len(dishes) else ""
+                    text="\n".join(_dish_lines(dishes[offset])) if offset<len(dishes) and dishes[offset] is not None else ""
                     max_lines=max(max_lines,text.count("\n")+1 if text else 1);sheet.cell(row,day_i+3,safe_cell_text(text))
                 for col in range(1,10):
                     cell=sheet.cell(row,col);cell.font=Font(size=base_size+(2 if col==1 else 0),bold=col<=2,color="244B32" if col<=2 else INK.lstrip("#"))
@@ -140,7 +143,7 @@ def kitchen_simple_pdf(result: dict) -> bytes:
                 left=margin+meal_w+label_w+day_i*day_w;dishes=plan["slots"].get((plan["dates"][day_i],meal["id"]),[]) if day_i<len(plan["dates"]) else []
                 for offset in range(meal["row_count"]):
                     row_top=y+offset*part;draw.rectangle((left,row_top,left+day_w,row_top+part),fill="white",outline=LINE,width=2)
-                    if offset<len(dishes):_draw_pdf_dish(draw,dishes[offset],left,row_top,day_w,part)
+                    if offset<len(dishes) and dishes[offset] is not None:_draw_pdf_dish(draw,dishes[offset],left,row_top,day_w,part)
             y+=row_h
         images.append(image)
     return images_to_pdf(images,"landscape")

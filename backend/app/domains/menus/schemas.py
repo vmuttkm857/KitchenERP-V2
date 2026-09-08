@@ -103,6 +103,7 @@ class MealTypeColumnPublic(BaseModel):
 class MenuDishInput(BaseModel):
     id: uuid.UUID | None = None
     dish_id: uuid.UUID
+    menu_meal_type_column_id: uuid.UUID | None = None
     diner_count: int = Field(default=1, ge=0)
     notes: str | None = Field(default=None, max_length=1000)
     sort_order: int = Field(default=1, ge=1)
@@ -123,6 +124,7 @@ class MenuEditorSave(BaseModel):
 class MenuDishPublic(BaseModel):
     id: uuid.UUID
     dish_id: uuid.UUID
+    menu_meal_type_column_id: uuid.UUID | None
     dish_code: str
     dish_name: str
     dish_category_name: str | None

@@ -121,7 +121,15 @@ def test_menu_nutrition_exports_are_opt_in_complete_and_deduplicated(client,db_s
 
 def test_kitchen_simple_excel_pdf_known_answer_anomaly_and_query_budget(client,db_session):
     headers=auth(client,db_session);value,lunch,*_=kitchen_fixture(client,headers,db_session);body={"menu_id":value["id"],"selected_dates":["2026-10-01"]};statements=[]
-    assert client.post(f"/api/v1/menus/{value['id']}/meal-types/{lunch['id']}/columns",headers=headers,json={"name":"主菜","sort_order":1}).status_code==201
+    main=client.post(f"/api/v1/menus/{value['id']}/meal-types/{lunch['id']}/columns",headers=headers,json={"name":"主菜","sort_order":1}).json()
+    soup=client.post(f"/api/v1/menus/{value['id']}/meal-types/{lunch['id']}/columns",headers=headers,json={"name":"湯","sort_order":2}).json()
+    aggregate=client.get(f"/api/v1/menus/{value['id']}/editor",headers=headers).json()
+    target=next(slot for slot in aggregate["slots"] if slot["menu_date"]=="2026-10-01" and slot["menu_meal_type_id"]==lunch["id"])
+    target["dishes"][0]["menu_meal_type_column_id"]=soup["id"]
+    payload={"slots":[{"menu_day_id":slot["menu_day_id"],"menu_date":slot["menu_date"],"menu_meal_type_id":slot["menu_meal_type_id"],"notes":slot["notes"],"dishes":[
+        {key:dish.get(key) for key in ("id","dish_id","menu_meal_type_column_id","diner_count","notes","sort_order")}
+        for dish in slot["dishes"]]} for slot in aggregate["slots"]]}
+    assert client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).status_code==200
     def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
     event.listen(process_engine,"before_cursor_execute",record)
     try:xlsx=client.post("/api/v1/exports/kitchen-operations/simple/xlsx",headers=headers,json=body)
@@ -129,7 +137,8 @@ def test_kitchen_simple_excel_pdf_known_answer_anomaly_and_query_budget(client,d
     assert xlsx.status_code==200,xlsx.text
     workbook=load_workbook(BytesIO(xlsx.content));values=[cell.value for sheet in workbook for row in sheet.iter_rows() for cell in row]
     text="\n".join(str(value) for value in values)
-    assert workbook.active["B2"].value=="菜單欄位" and workbook.active["B3"].value=="主菜"
+    assert workbook.active["B2"].value=="菜單欄位" and [workbook.active.cell(row,2).value for row in range(3,5)]==[main["name"],soup["name"]]
+    assert "紅燒雞腿" not in (workbook.active["C3"].value or "") and "紅燒雞腿" in workbook.active["C4"].value
     assert "雞肉" in text and "16.5 kg" in text and "⚠ 此菜有配方資料異常，請確認" in text
     assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=5
     pdf=client.post("/api/v1/exports/kitchen-operations/simple/pdf",headers=headers,json=body)

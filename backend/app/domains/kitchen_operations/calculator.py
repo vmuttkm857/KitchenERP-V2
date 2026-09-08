@@ -9,7 +9,7 @@ def build_preparation(source_rows,automatic_display=True):
     for row in source_rows:
         day=days.setdefault(row["menu_date"],{"menu_date":row["menu_date"],"meals":OrderedDict(),"anomalies":[]})
         meal=day["meals"].setdefault(row["meal_type_id"],{"meal_type_id":row["meal_type_id"],"meal_type_name":row["meal_type_name"],"sort_order":row["meal_type_sort_order"],"dishes":OrderedDict(),"anomalies":[]})
-        dish=meal["dishes"].setdefault(row["menu_dish_id"],{"dish_id":row["dish_id"],"dish_code":row["dish_code"],"dish_name":row["dish_name"],"diner_count":row["diner_count"],"notes":row["dish_notes"],"sort_order":row["dish_sort_order"],"recipe_ready":True,"ingredients":[],"anomalies":[]})
+        dish=meal["dishes"].setdefault(row["menu_dish_id"],{"dish_id":row["dish_id"],"menu_meal_type_column_id":row.get("menu_meal_type_column_id"),"dish_code":row["dish_code"],"dish_name":row["dish_name"],"diner_count":row["diner_count"],"notes":row["dish_notes"],"sort_order":row["dish_sort_order"],"recipe_ready":True,"ingredients":[],"anomalies":[]})
         context={"menu_date":row["menu_date"].isoformat(),"meal_type_id":str(row["meal_type_id"]),"meal_type_name":row["meal_type_name"],"dish_id":str(row["dish_id"]),"dish_name":row["dish_name"]}
         if not row["dish_is_active"] and not any(a["code"]=="INACTIVE_DISH" for a in dish["anomalies"]):dish["anomalies"].append(anomaly("INACTIVE_DISH","warning","Inactive dish is retained for scheduled kitchen work",row["dish_id"],row["dish_name"],**context))
         if row["recipe_line_id"] is None:

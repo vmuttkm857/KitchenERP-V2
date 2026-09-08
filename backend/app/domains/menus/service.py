@@ -209,6 +209,7 @@ class MenuService:
                 "menu_meal_type_id":row["menu_meal_type_id"],"notes":row["slot_notes"],"dishes":[]})
             if row["menu_dish_id"] is not None:
                 slot["dishes"].append({"id":row["menu_dish_id"],"dish_id":row["dish_id"],
+                    "menu_meal_type_column_id":row["menu_meal_type_column_id"],
                     "dish_code":row["dish_code"],"dish_name":row["dish_name"],
                     "dish_category_name":row["dish_category_name"],"diner_count":row["diner_count"],
                     "notes":row["notes"],"sort_order":row["sort_order"],
@@ -226,8 +227,11 @@ class MenuService:
         existing_details={item.id:item for item in self.repository.details(set(existing_days))}
         retained_days=set(); retained_details=set(); seen_slots=set()
         all_dish_ids={detail.dish_id for slot in data.slots for detail in slot.dishes}
+        all_column_ids={detail.menu_meal_type_column_id for slot in data.slots for detail in slot.dishes if detail.menu_meal_type_column_id is not None}
         dishes=self.repository.dish_models(all_dish_ids)
+        columns=self.repository.meal_type_column_models(all_column_ids)
         if len(dishes) != len(all_dish_ids): raise InvalidMenuStructureError("Dish not found")
+        if len(columns) != len(all_column_ids): raise InvalidMenuStructureError("Menu column not found")
         try:
             for slot in data.slots:
                 key=(slot.menu_date,slot.menu_meal_type_id)
@@ -249,10 +253,15 @@ class MenuService:
                         raise InvalidMenuStructureError("Menu day identity mismatch")
                     retained_days.add(day.id)
                 day.notes=slot.notes; day.updated_by=actor_id
-                seen_dishes=set()
+                seen_dishes=set();seen_columns=set()
                 for order,payload in enumerate(sorted(slot.dishes,key=lambda value:value.sort_order),1):
                     if payload.dish_id in seen_dishes: raise DuplicateMenuDishError()
                     seen_dishes.add(payload.dish_id); dish=dishes[payload.dish_id]
+                    if payload.menu_meal_type_column_id is not None:
+                        column=columns[payload.menu_meal_type_column_id]
+                        if column.menu_meal_type_id != meal.id: raise InvalidMenuStructureError("Menu column does not belong to this meal type")
+                        if column.id in seen_columns: raise InvalidMenuStructureError("Menu column may be used only once in a meal slot")
+                        seen_columns.add(column.id)
                     if payload.id is None:
                         if not meal.is_active: raise InvalidMenuStructureError("Inactive meal type cannot receive a new dish assignment")
                         if not dish.is_active: raise InvalidMenuStructureError("Inactive dish cannot be newly assigned")
@@ -263,6 +272,7 @@ class MenuService:
                         if detail is None or detail.menu_day_id != day.id or detail.dish_id != dish.id:
                             raise InvalidMenuStructureError("Menu dish identity mismatch")
                         retained_details.add(detail.id)
+                    detail.menu_meal_type_column_id=payload.menu_meal_type_column_id
                     detail.diner_count=payload.diner_count; detail.notes=payload.notes
                     detail.sort_order=order; detail.updated_by=actor_id
             submitted_existing_day_ids={slot.menu_day_id for slot in data.slots if slot.menu_day_id}
@@ -311,6 +321,8 @@ class MenuService:
             raise InvalidMenuCopyError("Copy dates must fall within their menu ranges")
         source_rows=self.repository.source_rows(source_menu_id,source_date)
         source_meals={row[1].name.lower():row[1] for row in source_rows}
+        source_columns={column.id:column for column in self.repository.menu_columns(source_menu_id)}
+        destination_columns={(column.menu_meal_type_id,column.name):column for column in self.repository.menu_columns(destination_menu_id)}
         destination_meals=destination_meals_by_name
         if destination_meals is None:
             destination_meals=self._prepare_destination_meal_mapping(
@@ -325,7 +337,10 @@ class MenuService:
             self.session.flush(); destination_days=[]
         day_by_meal={day.menu_meal_type_id:day for day in destination_days}
         details_by_day={}
-        for detail in self.repository.details({day.id for day in destination_days}): details_by_day.setdefault(detail.menu_day_id,set()).add(detail.dish_id)
+        columns_by_day={}
+        for detail in self.repository.details({day.id for day in destination_days}):
+            details_by_day.setdefault(detail.menu_day_id,set()).add(detail.dish_id)
+            if detail.menu_meal_type_column_id is not None:columns_by_day.setdefault(detail.menu_day_id,set()).add(detail.menu_meal_type_column_id)
         next_orders={day.id:len(details_by_day.get(day.id,set())) for day in destination_days}
         source_days={}
         for source_day,source_meal,detail,dish in source_rows:
@@ -341,9 +356,19 @@ class MenuService:
             source_days[source_day.id]=dest_day
             if detail is not None and detail.dish_id not in details_by_day.setdefault(dest_day.id,set()):
                 next_orders[dest_day.id]=next_orders.get(dest_day.id,0)+1
+                column_id=None
+                if detail.menu_meal_type_column_id is not None:
+                    if source_menu_id==destination_menu_id and source_meal.id==dest_meal.id:
+                        column_id=detail.menu_meal_type_column_id
+                    else:
+                        source_column=source_columns.get(detail.menu_meal_type_column_id)
+                        destination_column=destination_columns.get((dest_meal.id,source_column.name)) if source_column else None
+                        column_id=destination_column.id if destination_column else None
+                    if column_id in columns_by_day.setdefault(dest_day.id,set()):column_id=None
                 self.repository.add(MenuDish(menu_day_id=dest_day.id,dish_id=detail.dish_id,diner_count=detail.diner_count,
-                    notes=detail.notes,sort_order=next_orders[dest_day.id],created_by=actor_id,updated_by=actor_id))
+                    menu_meal_type_column_id=column_id,notes=detail.notes,sort_order=next_orders[dest_day.id],created_by=actor_id,updated_by=actor_id))
                 details_by_day[dest_day.id].add(detail.dish_id)
+                if column_id is not None:columns_by_day[dest_day.id].add(column_id)
 
     def copy_week(self,destination_menu_id,command: CopyWeekCommand,actor_id):
         source=self.model(command.source_menu_id); destination=self.model(destination_menu_id)

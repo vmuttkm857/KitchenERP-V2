@@ -77,14 +77,17 @@ class MenuDish(AuditColumns, Base):
     __tablename__ = "menu_dishes"
     __table_args__ = (
         UniqueConstraint("menu_day_id", "dish_id", name="uq_menu_dishes_day_dish"),
+        UniqueConstraint("menu_day_id", "menu_meal_type_column_id", name="uq_menu_dishes_day_meal_type_column"),
         CheckConstraint("diner_count >= 0", name="ck_menu_dishes_diner_count_nonnegative"),
         CheckConstraint("sort_order >= 1", name="ck_menu_dishes_sort_order_positive"),
         Index("ix_menu_dishes_day_sort", "menu_day_id", "sort_order", "id"),
+        Index("ix_menu_dishes_meal_type_column_id", "menu_meal_type_column_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     menu_day_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("menu_days.id", ondelete="RESTRICT"), nullable=False, index=True)
     dish_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("dishes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    menu_meal_type_column_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("menu_meal_type_columns.id", ondelete="SET NULL"))
     diner_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     notes: Mapped[str | None] = mapped_column(String(1000))
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")

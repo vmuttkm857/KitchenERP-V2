@@ -1,11 +1,12 @@
 import { KeyboardEvent, RefObject, useRef } from 'react'
 import { Feedback } from '../../components/ui/Page'
-import { DishCategoryOption, DishOption, MealType, MenuDish, MenuSlot } from './types'
+import { DishCategoryOption, DishOption, MealType, MealTypeColumn, MenuDish, MenuSlot } from './types'
 import { DishSearchPicker } from './DishSearchPicker'
 
 interface Props {
   date: string
   meal: MealType
+  columns: MealTypeColumn[]
   slot: MenuSlot
   search: string
   categoryId: string
@@ -36,6 +37,10 @@ function headerDate(date: string) {
 
 export function MenuEditorPanel(props: Props) {
   const { date, meal, slot } = props
+  const columns=[...props.columns]
+    .filter(column=>column.menu_meal_type_id===meal.id)
+    .sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id))
+  const usedColumnIds=new Set(slot.dishes.map(dish=>dish.menu_meal_type_column_id).filter((value):value is string=>value!==null))
   const dialogRef = useRef<HTMLElement>(null)
   function keepFocusInside(event: KeyboardEvent<HTMLElement>) {
     if (event.key !== 'Tab' || !dialogRef.current) return
@@ -53,7 +58,7 @@ export function MenuEditorPanel(props: Props) {
         {slot.dishes.length ? slot.dishes.map((dish, index) => <article className="scheduled-dish" key={dish.id ?? dish.dish_id}>
           <div className="scheduled-dish-title" title={dish.dish_name}><strong>{dish.dish_name}</strong><small>{dish.dish_code}{dish.dish_category_name ? `・${dish.dish_category_name}` : ''}</small></div>
           <div className="dish-order-actions"><button className="secondary compact" disabled={index === 0} onClick={() => props.onMove(index, -1)} aria-label={`${dish.dish_name} 上移`}>↑ 上移</button><button className="secondary compact" disabled={index === slot.dishes.length - 1} onClick={() => props.onMove(index, 1)} aria-label={`${dish.dish_name} 下移`}>↓ 下移</button></div>
-          <div className="dish-fields"><label>人數<input type="number" min="0" step="1" inputMode="numeric" value={dish.diner_count} onChange={event => props.onDishChange(index, { diner_count: Math.max(0, Number.parseInt(event.target.value || '0', 10)) })}/></label><label>菜色備註<input value={dish.notes ?? ''} onChange={event => props.onDishChange(index, { notes: event.target.value || null })} placeholder="此菜色的備註"/></label></div>
+          <div className="dish-fields"><label>菜單欄位<select value={dish.menu_meal_type_column_id??''} onChange={event=>props.onDishChange(index,{menu_meal_type_column_id:event.target.value||null})}><option value="">未指定</option>{columns.map(column=><option key={column.id} value={column.id} disabled={usedColumnIds.has(column.id)&&dish.menu_meal_type_column_id!==column.id}>{column.name}</option>)}</select></label><label>人數<input type="number" min="0" step="1" inputMode="numeric" value={dish.diner_count} onChange={event => props.onDishChange(index, { diner_count: Math.max(0, Number.parseInt(event.target.value || '0', 10)) })}/></label><label>菜色備註<input value={dish.notes ?? ''} onChange={event => props.onDishChange(index, { notes: event.target.value || null })} placeholder="此菜色的備註"/></label></div>
           <button className="remove-dish-button" title="移除菜色" onClick={() => props.onRemove(index)} aria-label={`移除菜色：${dish.dish_name}`}>×</button>
         </article>) : <p className="drawer-empty">本餐尚未安排菜色，可從右側搜尋加入。</p>}
       </div></section>

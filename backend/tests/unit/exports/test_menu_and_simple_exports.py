@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
+from copy import deepcopy
 
 import pytest
 from openpyxl import load_workbook
@@ -9,6 +10,7 @@ from PIL import ImageDraw
 from pypdf import PdfReader
 
 from app.domains.exports.kitchen_simple import WARNING_TEXT, display_ingredient, kitchen_simple_pdf, kitchen_simple_workbook, simple_page_plan
+import app.domains.exports.kitchen_simple as kitchen_simple_module
 from app.domains.exports.menu_exports import menu_full_pdf, menu_full_workbook, menu_grid_pdf, menu_grid_workbook, menu_nutrition_pdf, menu_nutrition_workbook, menu_pretty_pdf, menu_pretty_workbook, menu_week_plan
 from app.domains.nutrition.calculator import NutrientDefinition
 
@@ -98,6 +100,33 @@ def test_menu_columns_and_dishes_align_only_by_independently_sorted_index():
     assert [sheet.cell(row,4).value for row in range(3,8)]==["菜X","菜Y",None,None,None]
 
 
+def test_menu_assignment_controls_excel_and_pdf_rows_without_hiding_fallback(monkeypatch):
+    result=menu_result(days=2,meal_count=1,dishes_per_slot=0,columns_per_meal=0);meal=result["meal_types"][0]
+    result["meal_type_columns"]=[
+        SimpleNamespace(id="soup",menu_meal_type_id=meal.id,name="湯",sort_order=6),
+        *[SimpleNamespace(id=value,menu_meal_type_id=meal.id,name=name,sort_order=index) for index,(value,name) in enumerate((("main-1","主菜1"),("main-2","主菜2"),("veg-1","青菜1"),("veg-2","青菜2"),("side-1","備菜1")),1)],
+    ]
+    result["slots"]=[{"menu_date":day,"menu_meal_type_id":meal.id,"dishes":[
+        {"dish_id":f"A-{index}","dish_name":f"A-{index}","menu_meal_type_column_id":"main-1","sort_order":1},
+        {"dish_id":f"B-{index}","dish_name":f"B-{index}","menu_meal_type_column_id":None,"sort_order":2},
+        {"dish_id":f"C-{index}","dish_name":f"C-{index}","menu_meal_type_column_id":None,"sort_order":3},
+        {"dish_id":f"D-{index}","dish_name":f"D-{index}","menu_meal_type_column_id":"soup","sort_order":4},
+    ]} for index,day in enumerate(result["dates"])]
+    plan=menu_week_plan(result)[0]
+    assert plan["slots"][(result["dates"][0],meal.id)]==["A-0","B-0","C-0",None,None,"D-0"]
+    assert plan["slots"][(result["dates"][1],meal.id)]==["A-1","B-1","C-1",None,None,"D-1"]
+    sheet=load_workbook(BytesIO(menu_grid_workbook(result))).active
+    assert [sheet.cell(row,2).value for row in range(3,9)]==["主菜1","主菜2","青菜1","青菜2","備菜1","湯"]
+    assert [sheet.cell(row,3).value for row in range(3,9)]==["A-0","B-0","C-0",None,None,"D-0"]
+    drawn=[];original=ImageDraw.ImageDraw.multiline_text
+    def capture(draw,xy,value,*args,**kwargs):
+        drawn.append((value,xy));return original(draw,xy,value,*args,**kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw,"multiline_text",capture)
+    menu_full_pdf(result)
+    positions={value:xy for value,xy in drawn if value in {"A-0","B-0","C-0","D-0"}}
+    assert set(positions)=={"A-0","B-0","C-0","D-0"} and positions["D-0"][1]>positions["C-0"][1]
+
+
 def test_more_labels_than_dishes_keeps_blank_dish_cells():
     result=menu_result(days=1,meal_count=1,dishes_per_slot=2,columns_per_meal=5)
     sheet=load_workbook(BytesIO(menu_full_workbook(result))).active
@@ -141,7 +170,7 @@ def test_kitchen_week_keeps_hierarchy_safe_rows_and_human_warning():
     assert WARNING_TEXT in text and "ZERO_RECIPE_QUANTITY" not in text and "薑　不可計算 g" in text
 
 
-def test_kitchen_simple_columns_align_by_index_and_ignore_label_only_meals():
+def test_kitchen_simple_columns_use_assignments_and_ignore_label_only_meals():
     result=kitchen_result(meal_count=1);meal_id=result["days"][0]["meals"][0]["meal_type_id"]
     result["meal_type_columns"]=[
         {"id":"column-2","menu_meal_type_id":meal_id,"name":"青菜1","sort_order":2},
@@ -149,17 +178,35 @@ def test_kitchen_simple_columns_align_by_index_and_ignore_label_only_meals():
         {"id":"column-3","menu_meal_type_id":meal_id,"name":"湯","sort_order":3},
         {"id":"ghost-1","menu_meal_type_id":"ghost-meal","name":"不應出現","sort_order":1},
     ]
-    second={**result["days"][0]["meals"][0]["dishes"][0],"dish_id":"dish-second","dish_name":"第二道菜"}
+    first_day_meal=result["days"][0]["meals"][0]
+    result["days"][0]["meals"]=[{**first_day_meal,"dishes":[{**first_day_meal["dishes"][0],"menu_meal_type_column_id":"column-3"}]}]
     second_day_meal=result["days"][1]["meals"][0]
-    result["days"][1]["meals"]=[{**second_day_meal,"dishes":[second_day_meal["dishes"][0],second]}]
+    second={**second_day_meal["dishes"][0],"dish_id":"dish-second","dish_name":"第二道菜","menu_meal_type_column_id":None}
+    result["days"][1]["meals"]=[{**second_day_meal,"dishes":[{**second_day_meal["dishes"][0],"menu_meal_type_column_id":"column-3"},second]}]
+    before=deepcopy(result)
     plan=simple_page_plan(result)[0]
     assert [(meal["name"],meal["labels"],meal["row_count"]) for meal in plan["meals"]]==[("餐別1",["主菜","青菜1","湯"],3)]
     sheet=load_workbook(BytesIO(kitchen_simple_workbook(result))).active
     assert [sheet.cell(row,2).value for row in range(3,6)]==["主菜","青菜1","湯"]
-    assert sheet["C3"].value.startswith("香菇雞") and sheet["C4"].value is None
-    assert sheet["D3"].value.startswith("香菇雞") and sheet["D4"].value.startswith("第二道菜") and sheet["D5"].value is None
+    assert sheet["C3"].value is None and sheet["C4"].value is None and sheet["C5"].value.startswith("香菇雞")
+    assert sheet["D3"].value.startswith("第二道菜") and sheet["D4"].value is None and sheet["D5"].value.startswith("香菇雞")
     assert all("不應出現" not in str(value) for value in values(sheet))
-    assert all("menu_column" not in dish for day in result["days"] for meal in day["meals"] for dish in meal["dishes"])
+    assert result==before
+
+
+def test_kitchen_simple_pdf_uses_the_same_assignment_rows(monkeypatch):
+    result=kitchen_result(meal_count=1);meal_id=result["days"][0]["meals"][0]["meal_type_id"]
+    result["meal_type_columns"]=[
+        {"id":"column-1","menu_meal_type_id":meal_id,"name":"主菜","sort_order":1},
+        {"id":"column-2","menu_meal_type_id":meal_id,"name":"青菜","sort_order":2},
+        {"id":"column-3","menu_meal_type_id":meal_id,"name":"湯","sort_order":3},
+    ]
+    meal=result["days"][0]["meals"][0]
+    meal["dishes"]=[{**meal["dishes"][0],"menu_meal_type_column_id":"column-3"}]
+    drawn=[]
+    monkeypatch.setattr(kitchen_simple_module,"_draw_pdf_dish",lambda draw,dish,left,top,width,height:drawn.append((dish["dish_name"],top)))
+    kitchen_simple_pdf(result)
+    assert drawn and drawn[0][0]=="香菇雞" and drawn[0][1]>160
 
 
 def test_kitchen_simple_pdf_draws_menu_column_header(monkeypatch):
@@ -198,6 +245,23 @@ def nutrition_results(result, definitions=None):
         nutrients={definition.code:SimpleNamespace(code=definition.code,name=definition.name,unit=definition.unit,value=Decimal("0") if definition.code.startswith("synthetic_") else (None if values.get(definition.code) is None else Decimal(values[definition.code])),complete=definition.code.startswith("synthetic_") or values.get(definition.code) is not None) for definition in definitions}
         output[dish_id]=SimpleNamespace(calorie_complete=True,calorie_value=Decimal("350"),nutrients=nutrients)
     return output
+
+
+def test_calorie_variant_preserves_assignment_aware_blank_rows():
+    result=menu_result(days=1,meal_count=1,dishes_per_slot=0,columns_per_meal=0);meal=result["meal_types"][0]
+    result["meal_type_columns"]=[
+        SimpleNamespace(id="main",menu_meal_type_id=meal.id,name="主菜",sort_order=1),
+        SimpleNamespace(id="veg",menu_meal_type_id=meal.id,name="青菜",sort_order=2),
+        SimpleNamespace(id="soup",menu_meal_type_id=meal.id,name="湯",sort_order=3),
+    ]
+    result["slots"]=[{"menu_date":result["dates"][0],"menu_meal_type_id":meal.id,"dishes":[
+        {"dish_id":"main-dish","dish_name":"主菜A","menu_meal_type_column_id":None,"sort_order":1},
+        {"dish_id":"soup-dish","dish_name":"湯D","menu_meal_type_column_id":"soup","sort_order":2},
+    ]}]
+    definitions=nutrient_definitions();nutrition=nutrition_results(result,definitions)
+    sheet=load_workbook(BytesIO(menu_nutrition_workbook(result,"merged","calories","single",nutrition,definitions))).active
+    assert [sheet.cell(row,2).value for row in range(3,6)]==["主菜","青菜","湯"]
+    assert sheet["C3"].value=="主菜A（350 kcal）" and sheet["C4"].value is None and sheet["C5"].value=="湯D（350 kcal）"
 
 
 @pytest.mark.parametrize("layout",["merged","grid","pretty"])
