@@ -108,3 +108,15 @@ class PostpartumRestrictionGroupDish(Base):
     dish_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("dishes.id", ondelete="RESTRICT"), primary_key=True, index=True,
     )
+
+
+class PostpartumCaseRestrictionGroup(Base):
+    __tablename__ = "postpartum_case_restriction_groups"
+
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("postpartum_cases.id", ondelete="CASCADE"), primary_key=True,
+    )
+    restriction_group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("postpartum_restriction_groups.id", ondelete="RESTRICT"),
+        primary_key=True, index=True,
+    )

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.domains.dishes.models import Dish
 from app.domains.ingredients.models import Ingredient
 from app.domains.postpartum.models import (
-    PostpartumCase, PostpartumRestrictionGroup, PostpartumRestrictionGroupDish,
+    PostpartumCase, PostpartumCaseRestrictionGroup, PostpartumRestrictionGroup, PostpartumRestrictionGroupDish,
     PostpartumRestrictionGroupIngredient, PostpartumRoomHistory, PostpartumServicePause,
 )
 from app.shared.sorting import natural_code_order
@@ -37,6 +37,53 @@ class PostpartumRepository:
             PostpartumCase.is_active.desc(), PostpartumCase.service_start_date.desc(),
             PostpartumCase.created_at.desc(), PostpartumCase.id).offset((page - 1) * page_size).limit(page_size))
         return list(rows), total
+
+    def case_restriction_groups(self, case_ids):
+        if not case_ids:
+            return {}
+        statement = select(
+            PostpartumCaseRestrictionGroup.case_id,
+            PostpartumRestrictionGroup.id,
+            PostpartumRestrictionGroup.name,
+            PostpartumRestrictionGroup.color,
+            PostpartumRestrictionGroup.is_active,
+        ).join(
+            PostpartumRestrictionGroup,
+            PostpartumRestrictionGroup.id == PostpartumCaseRestrictionGroup.restriction_group_id,
+        ).where(PostpartumCaseRestrictionGroup.case_id.in_(case_ids)).order_by(
+            PostpartumCaseRestrictionGroup.case_id,
+            func.lower(PostpartumRestrictionGroup.name),
+            PostpartumRestrictionGroup.id,
+        )
+        grouped = {case_id: [] for case_id in case_ids}
+        for row in self.session.execute(statement).mappings():
+            grouped[row["case_id"]].append({
+                "id": row["id"], "name": row["name"], "color": row["color"],
+                "is_active": row["is_active"],
+            })
+        return grouped
+
+    def case_restriction_group_ids(self, case_id):
+        return set(self.session.scalars(select(PostpartumCaseRestrictionGroup.restriction_group_id).where(
+            PostpartumCaseRestrictionGroup.case_id == case_id,
+        )))
+
+    def restriction_group_models(self, ids):
+        if not ids:
+            return {}
+        return {item.id: item for item in self.session.scalars(
+            select(PostpartumRestrictionGroup).where(PostpartumRestrictionGroup.id.in_(ids))
+        )}
+
+    def replace_case_restriction_groups(self, case_id, existing_ids, requested_ids):
+        removed = existing_ids - requested_ids
+        if removed:
+            self.session.execute(delete(PostpartumCaseRestrictionGroup).where(
+                PostpartumCaseRestrictionGroup.case_id == case_id,
+                PostpartumCaseRestrictionGroup.restriction_group_id.in_(removed),
+            ))
+        for group_id in requested_ids - existing_ids:
+            self.add(PostpartumCaseRestrictionGroup(case_id=case_id, restriction_group_id=group_id))
 
     @staticmethod
     def _meal_order(column):

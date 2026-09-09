@@ -11,7 +11,7 @@ from app.domains.postpartum.exceptions import (
 from app.domains.postpartum.models import PostpartumCase, PostpartumRestrictionGroup, PostpartumRoomHistory, PostpartumServicePause
 from app.domains.postpartum.repository import PostpartumRepository
 from app.domains.postpartum.schemas import (
-    CaseCreate, CaseUpdate, PauseCreate, PauseUpdate, RestrictionAssociationsReplace,
+    CaseCreate, CaseRestrictionGroupsReplace, CaseUpdate, PauseCreate, PauseUpdate, RestrictionAssociationsReplace,
     RestrictionGroupCreate, RestrictionGroupUpdate, RoomChangeCreate,
 )
 from app.domains.postpartum.timeline import valid_interval
@@ -29,11 +29,42 @@ class PostpartumService:
         return value
 
     def list(self, page, page_size, active, status, search):
-        return self.repository.list_cases(page, page_size, active, status, search)
+        values, total = self.repository.list_cases(page, page_size, active, status, search)
+        groups = self.repository.case_restriction_groups([value.id for value in values])
+        return [{"case": value, "restriction_groups": groups.get(value.id, [])} for value in values], total
 
     def detail(self, case_id):
         value = self.case(case_id)
-        return {"case": value, "room_history": self.repository.room_history(case_id), "pauses": self.repository.pauses(case_id)}
+        groups = self.repository.case_restriction_groups([case_id])
+        return {"case": value, "room_history": self.repository.room_history(case_id),
+                "pauses": self.repository.pauses(case_id), "restriction_groups": groups.get(case_id, [])}
+
+    def replace_case_restriction_groups(self, case_id, data: CaseRestrictionGroupsReplace, actor_id):
+        try:
+            value = self.repository.case_for_update(case_id)
+            if value is None:
+                raise PostpartumCaseNotFoundError()
+            requested_ids = set(data.restriction_group_ids)
+            existing_ids = self.repository.case_restriction_group_ids(case_id)
+            group_models = self.repository.restriction_group_models(requested_ids)
+            if set(group_models) != requested_ids:
+                raise InvalidPostpartumRestrictionAssociationError("Every requested restriction group must exist")
+            if any(not group_models[group_id].is_active for group_id in requested_ids - existing_ids):
+                raise InvalidPostpartumRestrictionAssociationError("New restriction group assignments must be active")
+            self.repository.replace_case_restriction_groups(case_id, existing_ids, requested_ids)
+            value.updated_by = actor_id
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_case_restriction_groups_replace",
+                entity_type="postpartum_case", entity_id=value.id, entity_label=value.name,
+                before_data={"restriction_group_ids": sorted(existing_ids, key=str)},
+                after_data={"restriction_group_ids": sorted(requested_ids, key=str)},
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        groups = self.repository.case_restriction_groups([case_id])
+        return {"case_id": case_id, "restriction_groups": groups.get(case_id, [])}
 
     @staticmethod
     def _validate_service(start_date, start_meal, end_date, end_meal):

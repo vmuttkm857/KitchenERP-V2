@@ -81,8 +81,20 @@ class CasePublic(BaseModel):
     updated_by: uuid.UUID
 
 
+class CaseRestrictionGroupSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+    color: str
+    is_active: bool
+
+
+class CaseListItem(CasePublic):
+    restriction_groups: list[CaseRestrictionGroupSummary] = Field(default_factory=list)
+
+
 class CaseList(BaseModel):
-    items: list[CasePublic]
+    items: list[CaseListItem]
     pagination: PaginationMeta
 
 
@@ -142,6 +154,16 @@ class CaseDetail(BaseModel):
     case: CasePublic
     room_history: list[RoomHistoryPublic]
     pauses: list[PausePublic]
+    restriction_groups: list[CaseRestrictionGroupSummary] = Field(default_factory=list)
+
+
+class CaseRestrictionGroupsReplace(BaseModel):
+    restriction_group_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class CaseRestrictionGroupsPublic(BaseModel):
+    case_id: uuid.UUID
+    restriction_groups: list[CaseRestrictionGroupSummary] = Field(default_factory=list)
 
 
 class RestrictionGroupCreate(BaseModel):

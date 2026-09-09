@@ -11,7 +11,8 @@ from app.domains.postpartum.exceptions import (
     PostpartumRestrictionGroupNameExistsError, PostpartumRestrictionGroupNotFoundError,
 )
 from app.domains.postpartum.schemas import (
-    CaseCreate, CaseDetail, CaseList, CasePublic, CaseStatus, CaseUpdate, PauseCreate, PausePublic,
+    CaseCreate, CaseDetail, CaseList, CaseListItem, CasePublic, CaseRestrictionGroupsPublic,
+    CaseRestrictionGroupsReplace, CaseStatus, CaseUpdate, PauseCreate, PausePublic,
     PauseUpdate, RestrictionAssociationsReplace, RestrictionGroupCreate, RestrictionGroupDetail,
     RestrictionGroupList, RestrictionGroupPublic, RestrictionGroupUpdate, RoomChangeCreate, RoomHistoryPublic,
 )
@@ -31,7 +32,10 @@ def error(exc):
 def cases(session: Annotated[Session, Depends(get_db_session)], page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), active: bool | None = None, status_filter: CaseStatus | None = Query(default=None, alias="status"), search: str | None = None):
     try:
         items,total=PostpartumService(session).list(page,page_size,active,status_filter,search)
-        return CaseList(items=[CasePublic.model_validate(item) for item in items],pagination=PaginationMeta(page=page,page_size=page_size,total=total))
+        return CaseList(items=[CaseListItem(
+            **CasePublic.model_validate(item["case"]).model_dump(),
+            restriction_groups=item["restriction_groups"],
+        ) for item in items],pagination=PaginationMeta(page=page,page_size=page_size,total=total))
     except Exception as exc: raise error(exc) from exc
 
 @router.post("/cases",response_model=CasePublic,status_code=201)
@@ -79,6 +83,17 @@ def delete_pause(case_id:uuid.UUID,pause_id:uuid.UUID,user:Annotated[User,Depend
     try:PostpartumService(session).delete_pause(case_id,pause_id,user.id)
     except Exception as exc:raise error(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put("/cases/{case_id}/restriction-groups", response_model=CaseRestrictionGroupsPublic)
+def replace_case_restriction_groups(case_id: uuid.UUID, data: CaseRestrictionGroupsReplace,
+    user: Annotated[User, Depends(get_current_user)], session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return CaseRestrictionGroupsPublic.model_validate(
+            PostpartumService(session).replace_case_restriction_groups(case_id, data, user.id)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
 
 
 @router.get("/restriction-groups", response_model=RestrictionGroupList)
