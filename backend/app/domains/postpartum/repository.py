@@ -9,6 +9,7 @@ from app.domains.postpartum.models import (
     PostpartumCase, PostpartumCaseRestrictionGroup, PostpartumRestrictionGroup, PostpartumRestrictionGroupDish,
     PostpartumRestrictionGroupIngredient, PostpartumRoomHistory, PostpartumServicePause,
 )
+from app.domains.postpartum.meals import MEAL_ORDER
 from app.shared.sorting import natural_code_order
 
 
@@ -87,7 +88,7 @@ class PostpartumRepository:
 
     @staticmethod
     def _meal_order(column):
-        return case((column == "breakfast", 0), (column == "lunch", 1), else_=2)
+        return case(*((column == meal, order) for meal, order in MEAL_ORDER.items()), else_=len(MEAL_ORDER))
 
     def room_history(self, case_id):
         return list(self.session.scalars(select(PostpartumRoomHistory).where(

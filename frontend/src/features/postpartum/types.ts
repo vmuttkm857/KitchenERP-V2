@@ -1,4 +1,13 @@
-export type Meal='breakfast'|'lunch'|'dinner'
+export const POSTPARTUM_MEALS=[
+  {value:'breakfast',label:'早餐'},
+  {value:'morning_snack',label:'早點'},
+  {value:'lunch',label:'午餐'},
+  {value:'afternoon_snack',label:'午點'},
+  {value:'dinner',label:'晚餐'},
+  {value:'evening_snack',label:'晚點'},
+] as const
+export type Meal=(typeof POSTPARTUM_MEALS)[number]['value']
+export function mealLabel(meal:Meal|null){return POSTPARTUM_MEALS.find(item=>item.value===meal)?.label??''}
 export type DeliveryType='vaginal'|'cesarean'
 export type CaseStatus='pending'|'active'|'paused'|'ended'
 export type PreparationMode='no_herbal'|'herbal'|'rice_wine_sesame'|'no_rice_wine_sesame'

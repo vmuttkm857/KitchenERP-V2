@@ -5,10 +5,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.shared.schemas import PaginationMeta
+from app.domains.postpartum.meals import Meal
 
 
 DeliveryType = Literal["vaginal", "cesarean"]
-Meal = Literal["breakfast", "lunch", "dinner"]
 CaseStatus = Literal["pending", "active", "paused", "ended"]
 PreparationMode = Literal["no_herbal", "herbal", "rice_wine_sesame", "no_rice_wine_sesame"]
 

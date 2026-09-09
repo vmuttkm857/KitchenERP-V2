@@ -1,6 +1,7 @@
 from datetime import date
 
-from app.domains.postpartum.timeline import postpartum_week, postpartum_week_ranges, valid_interval
+from app.domains.postpartum.meals import MEAL_ORDER, MEAL_VALUES
+from app.domains.postpartum.timeline import moment_in_interval, postpartum_week, postpartum_week_ranges, valid_interval
 
 
 def test_four_postpartum_weeks_are_calculated_from_delivery_date():
@@ -33,5 +34,24 @@ def test_week_ranges_and_every_boundary_start_on_the_delivery_date():
 
 def test_meal_order_controls_same_day_interval_validation():
     day = date(2026, 9, 8)
-    assert valid_interval(day, "breakfast", day, "dinner")
-    assert not valid_interval(day, "dinner", day, "breakfast")
+    assert MEAL_VALUES == (
+        "breakfast", "morning_snack", "lunch", "afternoon_snack", "dinner", "evening_snack",
+    )
+    assert list(MEAL_ORDER.values()) == list(range(6))
+    assert valid_interval(day, "breakfast", day, "evening_snack")
+    assert not valid_interval(day, "afternoon_snack", day, "lunch")
+
+
+def test_service_and_pause_interval_boundaries_are_inclusive_and_cross_day():
+    day = date(2026, 9, 8)
+    assert moment_in_interval(day, "afternoon_snack", day, "afternoon_snack", day, "evening_snack")
+    assert moment_in_interval(day, "evening_snack", day, "afternoon_snack", day, "evening_snack")
+    assert not moment_in_interval(day, "lunch", day, "afternoon_snack", day, "evening_snack")
+    assert moment_in_interval(
+        date(2026, 9, 9), "morning_snack",
+        day, "afternoon_snack", date(2026, 9, 9), "morning_snack",
+    )
+    assert not moment_in_interval(
+        date(2026, 9, 9), "lunch",
+        day, "afternoon_snack", date(2026, 9, 9), "morning_snack",
+    )

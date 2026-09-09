@@ -6,6 +6,7 @@ import ts from 'typescript'
 const page=readFileSync(new URL('../src/features/postpartum/PostpartumCasesPage.tsx',import.meta.url),'utf8')
 const app=readFileSync(new URL('../src/app/App.tsx',import.meta.url),'utf8')
 const timeline=readFileSync(new URL('../src/features/postpartum/timeline.ts',import.meta.url),'utf8')
+const types=readFileSync(new URL('../src/features/postpartum/types.ts',import.meta.url),'utf8')
 const compiledTimeline=ts.transpileModule(timeline,{compilerOptions:{module:ts.ModuleKind.ES2022}}).outputText
 const timelineModule=await import(`data:text/javascript;base64,${Buffer.from(compiledTimeline).toString('base64')}`)
 
@@ -59,4 +60,24 @@ test('room change refreshes both detail and list current room',()=>{
   assert.doesNotMatch(page,/max=\{localToday\(\)\}/)
   assert.doesNotMatch(page,/roomDate>localToday\(\)/)
   assert.doesNotMatch(page,/異動日期不可晚於今天/)
+})
+
+test('all postpartum forms share the canonical six meals in the required order',()=>{
+  const expected=[
+    ['breakfast','早餐'],['morning_snack','早點'],['lunch','午餐'],
+    ['afternoon_snack','午點'],['dinner','晚餐'],['evening_snack','晚點'],
+  ]
+  let previous=-1
+  for(const [value,label] of expected){
+    const index=types.indexOf(`{value:'${value}',label:'${label}'}`)
+    assert.ok(index>previous,`${value} should appear in canonical order`)
+    previous=index
+  }
+  assert.match(page,/const meals=POSTPARTUM_MEALS/)
+  assert.match(page,/service_start_meal:e\.target\.value as Meal/)
+  assert.match(page,/service_end_meal:e\.target\.value as EndMeal/)
+  assert.match(page,/start_meal:e\.target\.value as Meal/)
+  assert.match(page,/end_meal:e\.target\.value as Meal/)
+  assert.match(page,/effective_meal:roomMeal/)
+  assert.match(page,/mealLabel\(detail\.case\.service_start_meal\)/)
 })

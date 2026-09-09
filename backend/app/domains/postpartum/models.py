@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.domains.postpartum.meals import meal_check
 
 
 class AuditColumns:
@@ -19,8 +20,8 @@ class PostpartumCase(AuditColumns, Base):
     __tablename__ = "postpartum_cases"
     __table_args__ = (
         CheckConstraint("delivery_type IN ('vaginal','cesarean')", name="ck_postpartum_cases_delivery_type"),
-        CheckConstraint("service_start_meal IN ('breakfast','lunch','dinner')", name="ck_postpartum_cases_start_meal"),
-        CheckConstraint("service_end_meal IS NULL OR service_end_meal IN ('breakfast','lunch','dinner')", name="ck_postpartum_cases_end_meal"),
+        CheckConstraint(meal_check("service_start_meal"), name="ck_postpartum_cases_start_meal"),
+        CheckConstraint(f"service_end_meal IS NULL OR {meal_check('service_end_meal')}", name="ck_postpartum_cases_end_meal"),
         CheckConstraint("(service_end_date IS NULL) = (service_end_meal IS NULL)", name="ck_postpartum_cases_end_pair"),
         CheckConstraint("service_end_date IS NULL OR service_end_date >= service_start_date", name="ck_postpartum_cases_date_range"),
         CheckConstraint("status IN ('pending','active','paused','ended')", name="ck_postpartum_cases_status"),
@@ -46,7 +47,7 @@ class PostpartumCase(AuditColumns, Base):
 class PostpartumRoomHistory(AuditColumns, Base):
     __tablename__ = "postpartum_room_histories"
     __table_args__ = (
-        CheckConstraint("effective_meal IN ('breakfast','lunch','dinner')", name="ck_postpartum_room_histories_meal"),
+        CheckConstraint(meal_check("effective_meal"), name="ck_postpartum_room_histories_meal"),
         Index("ix_postpartum_room_histories_case_effective", "case_id", "effective_date", "effective_meal", "id"),
     )
 
@@ -60,8 +61,8 @@ class PostpartumRoomHistory(AuditColumns, Base):
 class PostpartumServicePause(AuditColumns, Base):
     __tablename__ = "postpartum_service_pauses"
     __table_args__ = (
-        CheckConstraint("start_meal IN ('breakfast','lunch','dinner')", name="ck_postpartum_service_pauses_start_meal"),
-        CheckConstraint("end_meal IN ('breakfast','lunch','dinner')", name="ck_postpartum_service_pauses_end_meal"),
+        CheckConstraint(meal_check("start_meal"), name="ck_postpartum_service_pauses_start_meal"),
+        CheckConstraint(meal_check("end_meal"), name="ck_postpartum_service_pauses_end_meal"),
         CheckConstraint("end_date >= start_date", name="ck_postpartum_service_pauses_date_range"),
         Index("ix_postpartum_service_pauses_case_start", "case_id", "start_date", "start_meal", "id"),
     )

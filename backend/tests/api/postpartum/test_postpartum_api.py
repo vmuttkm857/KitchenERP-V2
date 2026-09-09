@@ -128,3 +128,50 @@ def test_service_end_is_optional_but_date_and_meal_are_a_pair(client, db_session
     assert client.post("/api/v1/postpartum/cases",headers=headers,json=historical).status_code==201
     reversed_range={**historical,"case_number":"0074","service_end_date":"2025-01-01"}
     assert client.post("/api/v1/postpartum/cases",headers=headers,json=reversed_range).status_code==422
+
+
+@pytest.mark.parametrize("meal", ["morning_snack", "afternoon_snack", "evening_snack"])
+def test_case_create_accepts_each_snack_meal(client, db_session, meal):
+    headers=auth(client,db_session)
+    value={**payload(f"snack-{meal}"),"service_start_meal":meal,"service_end_meal":"evening_snack"}
+    response=client.post("/api/v1/postpartum/cases",headers=headers,json=value)
+    assert response.status_code==201,response.text
+    assert response.json()["service_start_meal"]==meal
+
+
+def test_case_update_pause_and_room_history_accept_six_meals(client, db_session):
+    headers=auth(client,db_session)
+    created=client.post("/api/v1/postpartum/cases",headers=headers,json=payload("six-meals")).json()
+    updated=client.patch(
+        f"/api/v1/postpartum/cases/{created['id']}",headers=headers,
+        json={"service_start_meal":"morning_snack","service_end_meal":"evening_snack"},
+    )
+    assert updated.status_code==200,updated.text
+    assert updated.json()["service_start_meal"]=="morning_snack"
+    assert updated.json()["service_end_meal"]=="evening_snack"
+
+    pause=client.post(
+        f"/api/v1/postpartum/cases/{created['id']}/pauses",headers=headers,
+        json={"start_date":"2026-09-12","start_meal":"afternoon_snack",
+              "end_date":"2026-09-13","end_meal":"morning_snack"},
+    )
+    assert pause.status_code==201,pause.text
+    assert pause.json()["start_meal"]=="afternoon_snack"
+    assert pause.json()["end_meal"]=="morning_snack"
+
+    room=client.post(
+        f"/api/v1/postpartum/cases/{created['id']}/room-changes",headers=headers,
+        json={"room":"S-601","effective_date":"2026-09-12","effective_meal":"evening_snack"},
+    )
+    assert room.status_code==201,room.text
+    detail=client.get(f"/api/v1/postpartum/cases/{created['id']}",headers=headers).json()
+    assert detail["room_history"][-1]["effective_meal"]=="evening_snack"
+
+
+def test_invalid_meal_remains_rejected(client, db_session):
+    headers=auth(client,db_session)
+    response=client.post(
+        "/api/v1/postpartum/cases",headers=headers,
+        json={**payload("invalid-meal"),"service_start_meal":"brunch"},
+    )
+    assert response.status_code==422

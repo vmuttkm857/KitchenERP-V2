@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-
-MEAL_ORDER = {"breakfast": 0, "lunch": 1, "dinner": 2}
+from app.domains.postpartum.meals import MEAL_ORDER
 
 
 def service_moment(date_value: date, meal: str) -> tuple[date, int]:
@@ -12,6 +11,18 @@ def service_moment(date_value: date, meal: str) -> tuple[date, int]:
 
 def valid_interval(start_date: date, start_meal: str, end_date: date, end_meal: str) -> bool:
     return service_moment(start_date, start_meal) <= service_moment(end_date, end_meal)
+
+
+def moment_in_interval(
+    target_date: date,
+    target_meal: str,
+    start_date: date,
+    start_meal: str,
+    end_date: date,
+    end_meal: str,
+) -> bool:
+    target = service_moment(target_date, target_meal)
+    return service_moment(start_date, start_meal) <= target <= service_moment(end_date, end_meal)
 
 
 def postpartum_week(delivery_date: date, as_of: date) -> int | str:
