@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text, func, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -120,4 +120,38 @@ class PostpartumCaseRestrictionGroup(Base):
     restriction_group_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("postpartum_restriction_groups.id", ondelete="RESTRICT"),
         primary_key=True, index=True,
+    )
+
+
+class PostpartumMenuSource(AuditColumns, Base):
+    __tablename__ = "postpartum_menu_sources"
+    __table_args__ = (
+        UniqueConstraint("menu_id", name="uq_postpartum_menu_sources_menu_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    menu_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("menus.id", ondelete="RESTRICT"), nullable=False, index=True,
+    )
+
+
+class PostpartumMenuMealMapping(Base):
+    __tablename__ = "postpartum_menu_meal_mappings"
+    __table_args__ = (
+        CheckConstraint(meal_check("postpartum_meal"), name="ck_postpartum_menu_meal_mappings_meal"),
+        UniqueConstraint(
+            "menu_source_id", "menu_meal_type_id",
+            name="uq_postpartum_menu_meal_mappings_source_meal_type",
+        ),
+        Index(
+            "ix_postpartum_menu_meal_mappings_menu_meal_type_id", "menu_meal_type_id",
+        ),
+    )
+
+    menu_source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("postpartum_menu_sources.id", ondelete="CASCADE"), primary_key=True,
+    )
+    postpartum_meal: Mapped[str] = mapped_column(String(30), primary_key=True)
+    menu_meal_type_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("menu_meal_types.id", ondelete="RESTRICT"), nullable=False,
     )

@@ -5,3 +5,5 @@ class InvalidPostpartumDataError(PostpartumError): pass
 class PostpartumRestrictionGroupNotFoundError(PostpartumError): pass
 class PostpartumRestrictionGroupNameExistsError(PostpartumError): pass
 class InvalidPostpartumRestrictionAssociationError(PostpartumError): pass
+class InvalidPostpartumMenuSourceError(PostpartumError): pass
+class PostpartumMenuSourceNotFoundError(PostpartumError): pass

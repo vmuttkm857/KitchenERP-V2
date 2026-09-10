@@ -46,6 +46,8 @@ def clean_auth_tables(migrated_test_database: Engine) -> Generator[None, None, N
     yield
     with migrated_test_database.begin() as connection:
         connection.execute(text("DELETE FROM audit_logs"))
+        connection.execute(text("DELETE FROM postpartum_menu_meal_mappings"))
+        connection.execute(text("DELETE FROM postpartum_menu_sources"))
         connection.execute(text("DELETE FROM postpartum_case_restriction_groups"))
         connection.execute(text("DELETE FROM postpartum_restriction_group_dishes"))
         connection.execute(text("DELETE FROM postpartum_restriction_group_ingredients"))

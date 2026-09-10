@@ -230,3 +230,59 @@ class RestrictionGroupDetail(BaseModel):
 class RestrictionAssociationsReplace(BaseModel):
     ingredient_ids: list[uuid.UUID] = Field(default_factory=list)
     dish_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class MenuSourceMappingInput(BaseModel):
+    postpartum_meal: Meal
+    menu_meal_type_id: uuid.UUID
+
+
+class MenuSourceReplace(BaseModel):
+    menu_id: uuid.UUID
+    mappings: list[MenuSourceMappingInput] = Field(min_length=1, max_length=6)
+
+
+class MenuSourceMenuSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    start_date: date
+    end_date: date
+    is_active: bool
+
+
+class MenuSourceMealTypeSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    sort_order: int
+    is_active: bool
+
+
+class MenuSourceMappingPublic(BaseModel):
+    postpartum_meal: Meal
+    menu_meal_type: MenuSourceMealTypeSummary
+
+
+class MenuSourceWarning(BaseModel):
+    code: str
+    message: str
+    postpartum_meal: Meal | None = None
+
+
+class MenuSourceMealStatus(BaseModel):
+    postpartum_meal: Meal
+    mapped: bool
+    menu_meal_type: MenuSourceMealTypeSummary | None = None
+
+
+class MenuSourcePublic(BaseModel):
+    id: uuid.UUID
+    configured: bool
+    usable: bool
+    menu: MenuSourceMenuSummary
+    mappings: list[MenuSourceMappingPublic] = Field(default_factory=list)
+    meal_statuses: list[MenuSourceMealStatus] = Field(default_factory=list)
+    warnings: list[MenuSourceWarning] = Field(default_factory=list)
+
+
+class MenuSourceList(BaseModel):
+    items: list[MenuSourcePublic] = Field(default_factory=list)

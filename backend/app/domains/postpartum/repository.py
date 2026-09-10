@@ -6,10 +6,12 @@ from sqlalchemy.orm import Session
 from app.domains.dishes.models import Dish
 from app.domains.ingredients.models import Ingredient
 from app.domains.postpartum.models import (
-    PostpartumCase, PostpartumCaseRestrictionGroup, PostpartumRestrictionGroup, PostpartumRestrictionGroupDish,
-    PostpartumRestrictionGroupIngredient, PostpartumRoomHistory, PostpartumServicePause,
+    PostpartumCase, PostpartumCaseRestrictionGroup, PostpartumMenuMealMapping, PostpartumMenuSource,
+    PostpartumRestrictionGroup, PostpartumRestrictionGroupDish, PostpartumRestrictionGroupIngredient,
+    PostpartumRoomHistory, PostpartumServicePause,
 )
 from app.domains.postpartum.meals import MEAL_ORDER
+from app.domains.menus.models import Menu, MenuMealType
 from app.shared.sorting import natural_code_order
 
 
@@ -23,6 +25,60 @@ class PostpartumRepository:
     def case_for_update(self, case_id):
         return self.session.scalar(select(PostpartumCase).where(PostpartumCase.id == case_id).with_for_update())
     def pause(self, pause_id): return self.session.get(PostpartumServicePause, pause_id)
+
+    def menu_source_for_update(self, source_id):
+        return self.session.scalar(select(PostpartumMenuSource).where(
+            PostpartumMenuSource.id == source_id).with_for_update())
+
+    def menu_source(self, source_id):
+        return self.session.get(PostpartumMenuSource, source_id)
+
+    def menu_source_by_menu(self, menu_id):
+        return self.session.scalar(select(PostpartumMenuSource).where(PostpartumMenuSource.menu_id == menu_id))
+
+    def menu_sources(self, from_date=None, to_date=None):
+        statement = select(PostpartumMenuSource, Menu).join(Menu, Menu.id == PostpartumMenuSource.menu_id)
+        if from_date is not None:
+            statement = statement.where(Menu.end_date >= from_date)
+        if to_date is not None:
+            statement = statement.where(Menu.start_date <= to_date)
+        return list(self.session.execute(statement.order_by(
+            Menu.start_date, Menu.end_date, func.lower(Menu.name), PostpartumMenuSource.id,
+        )).all())
+
+    def overlapping_menu_sources(self, start_date, end_date, exclude_source_id=None):
+        statement = select(PostpartumMenuSource, Menu).join(
+            Menu, Menu.id == PostpartumMenuSource.menu_id,
+        ).where(Menu.start_date <= end_date, Menu.end_date >= start_date)
+        if exclude_source_id is not None:
+            statement = statement.where(PostpartumMenuSource.id != exclude_source_id)
+        return list(self.session.execute(statement).all())
+
+    def menu(self, menu_id): return self.session.get(Menu, menu_id)
+
+    def menu_meal_types(self, ids):
+        if not ids:
+            return {}
+        return {item.id: item for item in self.session.scalars(
+            select(MenuMealType).where(MenuMealType.id.in_(ids))
+        )}
+
+    def menu_source_mappings(self, source_id):
+        statement = select(PostpartumMenuMealMapping, MenuMealType).join(
+            MenuMealType, MenuMealType.id == PostpartumMenuMealMapping.menu_meal_type_id,
+        ).where(PostpartumMenuMealMapping.menu_source_id == source_id)
+        return list(self.session.execute(statement).all())
+
+    def replace_menu_source_mappings(self, source_id, mappings):
+        self.session.execute(delete(PostpartumMenuMealMapping).where(
+            PostpartumMenuMealMapping.menu_source_id == source_id,
+        ))
+        for postpartum_meal, menu_meal_type_id in mappings:
+            self.add(PostpartumMenuMealMapping(
+                menu_source_id=source_id,
+                postpartum_meal=postpartum_meal,
+                menu_meal_type_id=menu_meal_type_id,
+            ))
 
     def list_cases(self, page, page_size, active, status, search):
         filters = []

@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -6,15 +7,17 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user
 from app.domains.postpartum.exceptions import (
-    InvalidPostpartumDataError, InvalidPostpartumRestrictionAssociationError,
+    InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError,
     PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
     PostpartumRestrictionGroupNameExistsError, PostpartumRestrictionGroupNotFoundError,
+    PostpartumMenuSourceNotFoundError,
 )
 from app.domains.postpartum.schemas import (
     CaseCreate, CaseDetail, CaseList, CaseListItem, CasePublic, CaseRestrictionGroupsPublic,
     CaseRestrictionGroupsReplace, CaseStatus, CaseUpdate, PauseCreate, PausePublic,
     PauseUpdate, RestrictionAssociationsReplace, RestrictionGroupCreate, RestrictionGroupDetail,
     RestrictionGroupList, RestrictionGroupPublic, RestrictionGroupUpdate, RoomChangeCreate, RoomHistoryPublic,
+    MenuSourceList, MenuSourcePublic, MenuSourceReplace,
 )
 from app.domains.postpartum.service import PostpartumService
 from app.domains.users.models import User
@@ -23,10 +26,41 @@ from app.shared.schemas import PaginationMeta
 router = APIRouter(prefix="/postpartum", tags=["postpartum"], dependencies=[Depends(get_current_user)])
 
 def error(exc):
-    if isinstance(exc, (PostpartumCaseNotFoundError, PostpartumPauseNotFoundError, PostpartumRestrictionGroupNotFoundError)): return HTTPException(404, "Postpartum resource not found")
+    if isinstance(exc, (PostpartumCaseNotFoundError, PostpartumPauseNotFoundError, PostpartumRestrictionGroupNotFoundError, PostpartumMenuSourceNotFoundError)): return HTTPException(404, "Postpartum resource not found")
     if isinstance(exc, PostpartumRestrictionGroupNameExistsError): return HTTPException(409, "禁忌群組名稱已存在")
-    if isinstance(exc, (InvalidPostpartumDataError, InvalidPostpartumRestrictionAssociationError)): return HTTPException(422, str(exc))
+    if isinstance(exc, (InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError)): return HTTPException(422, str(exc))
     return HTTPException(400, "Postpartum operation failed")
+
+
+@router.get("/menu-sources", response_model=MenuSourceList)
+def menu_sources(session: Annotated[Session, Depends(get_db_session)],
+                 from_date: date | None = None, to_date: date | None = None):
+    try: return MenuSourceList(items=[
+        MenuSourcePublic.model_validate(item)
+        for item in PostpartumService(session).menu_sources(from_date, to_date)
+    ])
+    except Exception as exc: raise error(exc) from exc
+
+
+@router.post("/menu-sources", response_model=MenuSourcePublic, status_code=201)
+def create_menu_source(data: MenuSourceReplace, user: Annotated[User, Depends(get_current_user)],
+                       session: Annotated[Session, Depends(get_db_session)]):
+    try: return MenuSourcePublic.model_validate(PostpartumService(session).create_menu_source(data, user.id))
+    except Exception as exc: raise error(exc) from exc
+
+
+@router.get("/menu-sources/{source_id}", response_model=MenuSourcePublic)
+def menu_source(source_id: uuid.UUID, session: Annotated[Session, Depends(get_db_session)]):
+    try: return MenuSourcePublic.model_validate(PostpartumService(session).menu_source(source_id))
+    except Exception as exc: raise error(exc) from exc
+
+
+@router.put("/menu-sources/{source_id}", response_model=MenuSourcePublic)
+def update_menu_source(source_id: uuid.UUID, data: MenuSourceReplace,
+                       user: Annotated[User, Depends(get_current_user)],
+                       session: Annotated[Session, Depends(get_db_session)]):
+    try: return MenuSourcePublic.model_validate(PostpartumService(session).update_menu_source(source_id, data, user.id))
+    except Exception as exc: raise error(exc) from exc
 
 @router.get("/cases", response_model=CaseList)
 def cases(session: Annotated[Session, Depends(get_db_session)], page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), active: bool | None = None, status_filter: CaseStatus | None = Query(default=None, alias="status"), search: str | None = None):

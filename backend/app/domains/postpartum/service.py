@@ -4,15 +4,21 @@ from sqlalchemy.orm import Session
 
 from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.domains.postpartum.exceptions import (
-    InvalidPostpartumDataError, InvalidPostpartumRestrictionAssociationError,
+    InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError,
     PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
     PostpartumRestrictionGroupNameExistsError, PostpartumRestrictionGroupNotFoundError,
+    PostpartumMenuSourceNotFoundError,
 )
-from app.domains.postpartum.models import PostpartumCase, PostpartumRestrictionGroup, PostpartumRoomHistory, PostpartumServicePause
+from app.domains.postpartum.meals import MEAL_ORDER, MEAL_VALUES
+from app.domains.postpartum.models import (
+    PostpartumCase, PostpartumMenuSource, PostpartumRestrictionGroup, PostpartumRoomHistory,
+    PostpartumServicePause,
+)
 from app.domains.postpartum.repository import PostpartumRepository
 from app.domains.postpartum.schemas import (
     CaseCreate, CaseRestrictionGroupsReplace, CaseUpdate, PauseCreate, PauseUpdate, RestrictionAssociationsReplace,
     RestrictionGroupCreate, RestrictionGroupUpdate, RoomChangeCreate,
+    MenuSourceReplace,
 )
 from app.domains.postpartum.timeline import valid_interval
 
@@ -27,6 +33,156 @@ class PostpartumService:
         value = self.repository.case(case_id)
         if value is None: raise PostpartumCaseNotFoundError()
         return value
+
+    @staticmethod
+    def _menu_source_snapshot(menu_id, mappings):
+        return {
+            "menu_id": menu_id,
+            "mappings": [
+                {"postpartum_meal": meal, "menu_meal_type_id": meal_type_id}
+                for meal, meal_type_id in sorted(mappings, key=lambda item: MEAL_ORDER[item[0]])
+            ],
+        }
+
+    def _menu_source_view(self, source, menu):
+        rows = self.repository.menu_source_mappings(source.id)
+        mappings = sorted(rows, key=lambda row: MEAL_ORDER.get(row[0].postpartum_meal, len(MEAL_ORDER)))
+        warnings = []
+        if not menu.is_active:
+            warnings.append({"code": "MENU_INACTIVE", "message": "目前菜單來源已停用", "postpartum_meal": None})
+        for mapping, meal_type in mappings:
+            if not meal_type.is_active:
+                warnings.append({
+                    "code": "MEAL_TYPE_INACTIVE", "message": f"餐別「{meal_type.name}」已停用",
+                    "postpartum_meal": mapping.postpartum_meal,
+                })
+            if meal_type.menu_id != source.menu_id:
+                warnings.append({
+                    "code": "MEAL_TYPE_MENU_MISMATCH", "message": "餐別不屬於目前菜單來源",
+                    "postpartum_meal": mapping.postpartum_meal,
+                })
+        overlapping = self.repository.overlapping_menu_sources(
+            menu.start_date, menu.end_date, exclude_source_id=source.id,
+        )
+        if overlapping:
+            warnings.append({
+                "code": "SOURCE_DATE_OVERLAP",
+                "message": "此菜單來源日期與其他月子餐菜單來源重疊",
+                "postpartum_meal": None,
+            })
+        mapped = {mapping.postpartum_meal: meal_type for mapping, meal_type in mappings}
+        return {
+            "id": source.id,
+            "configured": True,
+            "usable": bool(mappings),
+            "menu": {
+                "id": menu.id, "name": menu.name, "start_date": menu.start_date,
+                "end_date": menu.end_date, "is_active": menu.is_active,
+            },
+            "mappings": [{
+                "postpartum_meal": mapping.postpartum_meal,
+                "menu_meal_type": {
+                    "id": meal_type.id, "name": meal_type.name,
+                    "sort_order": meal_type.sort_order, "is_active": meal_type.is_active,
+                },
+            } for mapping, meal_type in mappings],
+            "meal_statuses": [{
+                "postpartum_meal": meal,
+                "mapped": meal in mapped,
+                "menu_meal_type": None if meal not in mapped else {
+                    "id": mapped[meal].id, "name": mapped[meal].name,
+                    "sort_order": mapped[meal].sort_order, "is_active": mapped[meal].is_active,
+                },
+            } for meal in MEAL_VALUES],
+            "warnings": warnings,
+        }
+
+    def menu_sources(self, from_date=None, to_date=None):
+        if from_date is not None and to_date is not None and from_date > to_date:
+            raise InvalidPostpartumMenuSourceError("from_date must not be later than to_date")
+        rows = self.repository.menu_sources(from_date, to_date)
+        return [self._menu_source_view(source, menu) for source, menu in rows]
+
+    def menu_source(self, source_id):
+        rows = self.repository.menu_sources()
+        for source, menu in rows:
+            if source.id == source_id:
+                return self._menu_source_view(source, menu)
+        raise PostpartumMenuSourceNotFoundError()
+
+    def _validate_menu_source(self, data, exclude_source_id=None):
+        mapping_meals = [item.postpartum_meal for item in data.mappings]
+        meal_type_ids = [item.menu_meal_type_id for item in data.mappings]
+        if not data.mappings:
+            raise InvalidPostpartumMenuSourceError("At least one postpartum meal mapping is required")
+        if len(set(mapping_meals)) != len(mapping_meals):
+            raise InvalidPostpartumMenuSourceError("A postpartum meal may be mapped only once")
+        if len(set(meal_type_ids)) != len(meal_type_ids):
+            raise InvalidPostpartumMenuSourceError("A MenuMealType may be mapped only once")
+        menu = self.repository.menu(data.menu_id)
+        if menu is None or not menu.is_active:
+            raise InvalidPostpartumMenuSourceError("Selected menu must exist and be active")
+        meal_types = self.repository.menu_meal_types(set(meal_type_ids))
+        if set(meal_types) != set(meal_type_ids):
+            raise InvalidPostpartumMenuSourceError("Every mapped MenuMealType must exist")
+        if any(item.menu_id != menu.id for item in meal_types.values()):
+            raise InvalidPostpartumMenuSourceError("Every mapped MenuMealType must belong to the selected menu")
+        if any(not item.is_active for item in meal_types.values()):
+            raise InvalidPostpartumMenuSourceError("Every mapped MenuMealType must be active")
+        existing_for_menu = self.repository.menu_source_by_menu(menu.id)
+        if existing_for_menu is not None and existing_for_menu.id != exclude_source_id:
+            raise InvalidPostpartumMenuSourceError("This menu already has a postpartum source")
+        if self.repository.overlapping_menu_sources(menu.start_date, menu.end_date, exclude_source_id):
+            raise InvalidPostpartumMenuSourceError("Configured postpartum menu date ranges must not overlap")
+        return menu
+
+    def create_menu_source(self, data: MenuSourceReplace, actor_id):
+        try:
+            menu = self._validate_menu_source(data)
+            source = PostpartumMenuSource(
+                id=uuid.uuid4(), menu_id=menu.id, created_by=actor_id, updated_by=actor_id,
+            )
+            self.repository.add(source)
+            self.session.flush()
+            requested = [(item.postpartum_meal, item.menu_meal_type_id) for item in data.mappings]
+            self.repository.replace_menu_source_mappings(source.id, requested)
+            after = self._menu_source_snapshot(menu.id, requested)
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_menu_source_create",
+                entity_type="postpartum_menu_source", entity_id=source.id, entity_label=menu.name,
+                after_data=after,
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return self.menu_source(source.id)
+
+    def update_menu_source(self, source_id, data: MenuSourceReplace, actor_id):
+        try:
+            source = self.repository.menu_source_for_update(source_id)
+            if source is None:
+                raise PostpartumMenuSourceNotFoundError()
+            menu = self._validate_menu_source(data, source.id)
+            existing = self.repository.menu_source_mappings(source.id)
+            before = self._menu_source_snapshot(
+                source.menu_id,
+                [(mapping.postpartum_meal, mapping.menu_meal_type_id) for mapping, _ in existing],
+            )
+            requested = [(item.postpartum_meal, item.menu_meal_type_id) for item in data.mappings]
+            source.menu_id = menu.id
+            source.updated_by = actor_id
+            self.repository.replace_menu_source_mappings(source.id, requested)
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_menu_source_update",
+                entity_type="postpartum_menu_source", entity_id=source.id, entity_label=menu.name,
+                before_data=before, after_data=self._menu_source_snapshot(menu.id, requested),
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return self.menu_source(source.id)
 
     def list(self, page, page_size, active, status, search):
         values, total = self.repository.list_cases(page, page_size, active, status, search)
