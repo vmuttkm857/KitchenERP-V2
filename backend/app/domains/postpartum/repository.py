@@ -11,7 +11,8 @@ from app.domains.postpartum.models import (
     PostpartumRoomHistory, PostpartumServicePause,
 )
 from app.domains.postpartum.meals import MEAL_ORDER
-from app.domains.menus.models import Menu, MenuMealType
+from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType
+from app.domains.recipes.models import DishIngredient
 from app.shared.sorting import natural_code_order
 
 
@@ -251,3 +252,133 @@ class PostpartumRepository:
             ))
         for dish_id in requested_ids - existing_ids:
             self.add(PostpartumRestrictionGroupDish(restriction_group_id=group_id, dish_id=dish_id))
+
+    def conflict_sources_range(self, start_date, end_date):
+        statement = select(
+            PostpartumMenuSource.id.label("source_id"),
+            Menu.id.label("menu_id"), Menu.name.label("menu_name"),
+            Menu.start_date, Menu.end_date, Menu.is_active.label("menu_is_active"),
+            PostpartumMenuMealMapping.postpartum_meal,
+            PostpartumMenuMealMapping.menu_meal_type_id.label("mapped_menu_meal_type_id"),
+            MenuMealType.id.label("menu_meal_type_id"), MenuMealType.name.label("menu_meal_type_name"),
+            MenuMealType.sort_order.label("menu_meal_type_sort_order"),
+            MenuMealType.is_active.label("menu_meal_type_is_active"),
+            MenuMealType.menu_id.label("menu_meal_type_menu_id"),
+        ).join(
+            Menu, Menu.id == PostpartumMenuSource.menu_id,
+        ).outerjoin(
+            PostpartumMenuMealMapping,
+            PostpartumMenuMealMapping.menu_source_id == PostpartumMenuSource.id,
+        ).outerjoin(
+            MenuMealType, MenuMealType.id == PostpartumMenuMealMapping.menu_meal_type_id,
+        ).where(
+            Menu.start_date <= end_date, Menu.end_date >= start_date,
+        ).order_by(
+            Menu.start_date, Menu.end_date, func.lower(Menu.name), PostpartumMenuSource.id,
+            self._meal_order(PostpartumMenuMealMapping.postpartum_meal),
+        )
+        return [dict(row) for row in self.session.execute(statement).mappings()]
+
+    def conflict_menu_rows_range(self, menu_ids, start_date, end_date):
+        if not menu_ids:
+            return []
+        statement = select(
+            MenuDay.id.label("menu_day_id"), MenuDay.menu_id,
+            MenuDay.menu_meal_type_id, MenuDay.menu_date,
+            MenuDish.id.label("menu_dish_id"), MenuDish.sort_order,
+            Dish.id.label("dish_id"), Dish.code.label("dish_code"), Dish.name.label("dish_name"),
+            Dish.is_active.label("dish_is_active"),
+        ).outerjoin(
+            MenuDish, MenuDish.menu_day_id == MenuDay.id,
+        ).outerjoin(
+            Dish, Dish.id == MenuDish.dish_id,
+        ).where(
+            MenuDay.menu_id.in_(menu_ids),
+            MenuDay.menu_date >= start_date,
+            MenuDay.menu_date <= end_date,
+        ).order_by(
+            MenuDay.menu_date, MenuDay.menu_id, MenuDay.menu_meal_type_id,
+            MenuDish.sort_order, MenuDish.id,
+        )
+        return [dict(row) for row in self.session.execute(statement).mappings()]
+
+    def conflict_case_candidates_range(self, start_date, end_date):
+        statement = select(PostpartumCase).where(
+            PostpartumCase.is_active.is_(True),
+            PostpartumCase.service_start_date <= end_date,
+            or_(PostpartumCase.service_end_date.is_(None), PostpartumCase.service_end_date >= start_date),
+        ).order_by(
+            func.lower(PostpartumCase.case_number), func.lower(PostpartumCase.name), PostpartumCase.id,
+        )
+        return list(self.session.scalars(statement))
+
+    def conflict_pauses(self, case_ids):
+        if not case_ids:
+            return []
+        statement = select(PostpartumServicePause).where(
+            PostpartumServicePause.case_id.in_(case_ids),
+        ).order_by(
+            PostpartumServicePause.case_id, PostpartumServicePause.start_date,
+            self._meal_order(PostpartumServicePause.start_meal), PostpartumServicePause.id,
+        )
+        return list(self.session.scalars(statement))
+
+    def conflict_case_groups(self, case_ids):
+        if not case_ids:
+            return []
+        statement = select(
+            PostpartumCaseRestrictionGroup.case_id,
+            PostpartumRestrictionGroup.id.label("restriction_group_id"),
+            PostpartumRestrictionGroup.name, PostpartumRestrictionGroup.color,
+            PostpartumRestrictionGroup.notes, PostpartumRestrictionGroup.is_active,
+        ).join(
+            PostpartumRestrictionGroup,
+            PostpartumRestrictionGroup.id == PostpartumCaseRestrictionGroup.restriction_group_id,
+        ).where(
+            PostpartumCaseRestrictionGroup.case_id.in_(case_ids),
+        ).order_by(
+            PostpartumCaseRestrictionGroup.case_id,
+            func.lower(PostpartumRestrictionGroup.name), PostpartumRestrictionGroup.id,
+        )
+        return [dict(row) for row in self.session.execute(statement).mappings()]
+
+    def conflict_group_dishes(self, group_ids):
+        if not group_ids:
+            return []
+        statement = select(
+            PostpartumRestrictionGroupDish.restriction_group_id,
+            Dish.id, Dish.code, Dish.name, Dish.is_active,
+        ).join(Dish, Dish.id == PostpartumRestrictionGroupDish.dish_id).where(
+            PostpartumRestrictionGroupDish.restriction_group_id.in_(group_ids),
+        ).order_by(
+            PostpartumRestrictionGroupDish.restriction_group_id,
+            *natural_code_order(Dish.code), Dish.id,
+        )
+        return [dict(row) for row in self.session.execute(statement).mappings()]
+
+    def conflict_group_ingredients(self, group_ids):
+        if not group_ids:
+            return []
+        statement = select(
+            PostpartumRestrictionGroupIngredient.restriction_group_id,
+            Ingredient.id, Ingredient.code, Ingredient.name, Ingredient.is_active,
+        ).join(Ingredient, Ingredient.id == PostpartumRestrictionGroupIngredient.ingredient_id).where(
+            PostpartumRestrictionGroupIngredient.restriction_group_id.in_(group_ids),
+        ).order_by(
+            PostpartumRestrictionGroupIngredient.restriction_group_id,
+            *natural_code_order(Ingredient.code), Ingredient.id,
+        )
+        return [dict(row) for row in self.session.execute(statement).mappings()]
+
+    def conflict_recipe_ingredients(self, dish_ids):
+        if not dish_ids:
+            return []
+        statement = select(
+            DishIngredient.dish_id,
+            Ingredient.id, Ingredient.code, Ingredient.name, Ingredient.is_active,
+        ).join(Ingredient, Ingredient.id == DishIngredient.ingredient_id).where(
+            DishIngredient.dish_id.in_(dish_ids),
+        ).order_by(
+            DishIngredient.dish_id, DishIngredient.sort_order, DishIngredient.id,
+        )
+        return [dict(row) for row in self.session.execute(statement).mappings()]

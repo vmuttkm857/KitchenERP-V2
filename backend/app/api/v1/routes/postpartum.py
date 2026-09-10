@@ -17,8 +17,10 @@ from app.domains.postpartum.schemas import (
     CaseRestrictionGroupsReplace, CaseStatus, CaseUpdate, PauseCreate, PausePublic,
     PauseUpdate, RestrictionAssociationsReplace, RestrictionGroupCreate, RestrictionGroupDetail,
     RestrictionGroupList, RestrictionGroupPublic, RestrictionGroupUpdate, RoomChangeCreate, RoomHistoryPublic,
+    MenuConflictDailyResponse, MenuConflictResponse, MenuConflictWeeklyResponse,
     MenuSourceList, MenuSourcePublic, MenuSourceReplace,
 )
+from app.domains.postpartum.meals import Meal
 from app.domains.postpartum.service import PostpartumService
 from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta
@@ -30,6 +32,39 @@ def error(exc):
     if isinstance(exc, PostpartumRestrictionGroupNameExistsError): return HTTPException(409, "禁忌群組名稱已存在")
     if isinstance(exc, (InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError)): return HTTPException(422, str(exc))
     return HTTPException(400, "Postpartum operation failed")
+
+
+@router.get("/menu-conflicts/daily", response_model=MenuConflictDailyResponse)
+def menu_conflicts_daily(target_date: date,
+                         session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return MenuConflictDailyResponse.model_validate(
+            PostpartumService(session).menu_conflicts_daily(target_date)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.get("/menu-conflicts/weekly", response_model=MenuConflictWeeklyResponse)
+def menu_conflicts_weekly(anchor_date: date,
+                          session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return MenuConflictWeeklyResponse.model_validate(
+            PostpartumService(session).menu_conflicts_weekly(anchor_date)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.get("/menu-conflicts", response_model=MenuConflictResponse)
+def menu_conflicts(target_date: date, postpartum_meal: Meal,
+                   session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return MenuConflictResponse.model_validate(
+            PostpartumService(session).menu_conflicts(target_date, postpartum_meal)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
 
 
 @router.get("/menu-sources", response_model=MenuSourceList)

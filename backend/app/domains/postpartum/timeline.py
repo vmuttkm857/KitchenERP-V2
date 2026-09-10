@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, timedelta
 
 from app.domains.postpartum.meals import MEAL_ORDER
@@ -23,6 +24,27 @@ def moment_in_interval(
 ) -> bool:
     target = service_moment(target_date, target_meal)
     return service_moment(start_date, start_meal) <= target <= service_moment(end_date, end_meal)
+
+
+def service_is_eligible_at(
+    target_date: date,
+    target_meal: str,
+    start_date: date,
+    start_meal: str,
+    end_date: date | None,
+    end_meal: str | None,
+    pauses: Iterable[tuple[date, str, date, str]] = (),
+) -> bool:
+    """Resolve one meal from stored service dates, independent of the case's current status."""
+    target = service_moment(target_date, target_meal)
+    if target < service_moment(start_date, start_meal):
+        return False
+    if end_date is not None and end_meal is not None and target > service_moment(end_date, end_meal):
+        return False
+    return not any(
+        moment_in_interval(target_date, target_meal, pause_start, pause_start_meal, pause_end, pause_end_meal)
+        for pause_start, pause_start_meal, pause_end, pause_end_meal in pauses
+    )
 
 
 def postpartum_week(delivery_date: date, as_of: date) -> int | str:

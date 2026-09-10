@@ -1,0 +1,42 @@
+.postpartum-conflict-control-panel{display:grid;gap:.55rem;margin-bottom:1rem;padding:.65rem;border:1px solid #dce5de;border-radius:.7rem;background:#fff}
+.postpartum-conflict-control-panel .postpartum-conflict-toolbar{margin:0;padding:0 0 .55rem;background:transparent;border-bottom:1px solid #e5ebe6;border-radius:0}
+.postpartum-conflict-control-panel .postpartum-conflict-overall{padding:.5rem .75rem;font-size:.88rem}
+.postpartum-conflict-control-panel .postpartum-conflict-day-notices{margin-top:0}
+.postpartum-conflict-meal-summary{grid-template-columns:repeat(7,minmax(5.5rem,1fr));gap:.3rem;margin:0}
+.postpartum-conflict-meal-summary button{align-content:center;gap:.18rem;min-height:3.55rem;padding:.42rem .35rem;border-color:#dfe6e0;border-radius:.48rem}
+.postpartum-conflict-meal-summary button:hover{border-color:#8ca996;background:#f4f8f5}
+.postpartum-conflict-meal-summary button.is-highlighted{border-color:#39724a;background:#edf6ef;box-shadow:inset 0 -3px #39724a}
+.postpartum-conflict-meal-summary button>strong{font-size:.88rem}
+.postpartum-conflict-selector-status{display:flex;align-items:center;justify-content:center;gap:.32rem;min-height:1.25rem;color:#6b756e;font-size:.78rem}
+.postpartum-conflict-selector-status.is-conflict{color:#9e2222}
+.postpartum-conflict-selector-status.is-warning,.postpartum-conflict-selector-status.is-unavailable{color:#805507}
+.postpartum-conflict-selector-status.is-complete{color:#276a39}
+.postpartum-conflict-selector-status b{font-weight:800;white-space:nowrap}
+.postpartum-conflict-status-mark{display:inline-grid;flex:none;place-items:center;font-weight:900;line-height:1}
+.postpartum-conflict-status-mark.is-conflict{width:18px;height:18px;background:#c92f2f;border:2px solid #9e2020;border-radius:50%;box-shadow:0 0 0 2px #f8dada}
+.postpartum-conflict-status-mark.is-warning{width:17px;height:17px;color:#684500;background:#f3bd3f;border-radius:50%;font-size:.75rem}
+.postpartum-conflict-status-mark.is-complete{width:17px;height:17px;color:#fff;background:#3f8b53;border-radius:50%;font-size:.72rem}
+.postpartum-conflict-status-mark.is-unmapped{width:17px;height:17px;color:#858d88;font-size:1rem}
+.postpartum-conflict-case-card{padding:.8rem .9rem}
+.postpartum-conflict-case-card>header h3{font-size:1.02rem}
+.postpartum-conflict-case-summary-lines{display:flex;gap:.35rem 1rem;flex-wrap:wrap;margin:.55rem 0}
+.postpartum-conflict-case-summary-lines p{display:flex;gap:.45rem;margin:0}
+.postpartum-conflict-case-summary-lines .is-conflict{color:#a62121;font-weight:800}
+.postpartum-conflict-case-summary-lines .is-partial{color:#8a5b07;font-weight:750}
+.postpartum-conflict-detail-toggle{margin-top:.45rem;padding:.35rem .65rem}
+.postpartum-conflict-expanded{display:grid;gap:.55rem;margin-top:.7rem;padding-top:.7rem;border-top:1px solid #e0e6e1}
+.postpartum-conflict-dish-rows{display:grid;gap:.15rem}
+.postpartum-conflict-dish-rows article{display:grid;grid-template-columns:minmax(8rem,12rem) minmax(0,1fr);gap:.25rem .7rem;padding:.45rem .55rem;border-bottom:1px solid #e5e9e6}
+.postpartum-conflict-dish-rows article:last-child{border-bottom:0}
+.postpartum-conflict-dish-rows article>strong{grid-row:1/-1}
+.postpartum-conflict-hit-lines{display:grid;gap:.2rem}
+.postpartum-conflict-hit-lines p{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin:0;color:#5b2a2a}
+.postpartum-conflict-hit-lines em{color:#76520c;font-size:.8rem}
+.postpartum-conflict-manual{margin:0;color:#76520c}
+.postpartum-conflict-dish-rows .postpartum-conflict-warnings{grid-column:2;margin:.15rem 0}
+.postpartum-conflict-weekly tbody tr.is-today{background:#edf5ef}
+.postpartum-conflict-weekly tbody th small{display:block;color:#39724a}
+.postpartum-conflict-week-cell{min-height:2.7rem}
+.postpartum-conflict-week-cell .postpartum-conflict-summary-value{white-space:nowrap}
+@media(max-width:1050px){.postpartum-conflict-meal-summary{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:620px){.postpartum-conflict-meal-summary{grid-template-columns:repeat(2,1fr)}.postpartum-conflict-dish-rows article{grid-template-columns:1fr}.postpartum-conflict-dish-rows .postpartum-conflict-warnings{grid-column:1}}

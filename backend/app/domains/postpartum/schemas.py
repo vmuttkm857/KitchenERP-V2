@@ -286,3 +286,149 @@ class MenuSourcePublic(BaseModel):
 
 class MenuSourceList(BaseModel):
     items: list[MenuSourcePublic] = Field(default_factory=list)
+
+
+ConflictCoverage = Literal["complete", "partial", "unavailable"]
+ConflictOutcome = Literal["conflict", "no_conflict", "unknown"]
+
+
+class MenuConflictWarning(BaseModel):
+    code: str
+    message: str
+    case_id: uuid.UUID | None = None
+    menu_dish_id: uuid.UUID | None = None
+    restriction_group_id: uuid.UUID | None = None
+    ingredient_id: uuid.UUID | None = None
+    target_id: uuid.UUID | None = None
+
+
+class MenuConflictSourceSummary(BaseModel):
+    source_id: uuid.UUID
+    menu_id: uuid.UUID
+    menu_name: str
+    start_date: date
+    end_date: date
+    is_active: bool
+
+
+class MenuConflictSourceResolution(BaseModel):
+    status: Literal["available", "not_configured", "ambiguous", "inactive"]
+    source: MenuConflictSourceSummary | None = None
+    candidates: list[MenuConflictSourceSummary] = Field(default_factory=list)
+
+
+class MenuConflictMealTypeSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    sort_order: int
+    is_active: bool
+
+
+class MenuConflictMappingResolution(BaseModel):
+    status: Literal["mapped", "not_mapped", "inactive", "inconsistent", "not_checked"]
+    menu_meal_type: MenuConflictMealTypeSummary | None = None
+
+
+class MenuConflictDaySummary(BaseModel):
+    id: uuid.UUID
+    menu_date: date
+
+
+class MenuConflictTargetSummary(BaseModel):
+    id: uuid.UUID
+    code: str
+    name: str
+    is_active: bool
+
+
+class MenuConflictDishPublic(BaseModel):
+    menu_dish_id: uuid.UUID
+    sort_order: int
+    dish: MenuConflictTargetSummary
+    ingredient_coverage: Literal["complete", "partial"]
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class MenuConflictRestrictionGroupSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    color: str
+    notes: str | None
+    is_active: bool
+
+
+class MenuConflictCasePublic(BaseModel):
+    id: uuid.UUID
+    case_number: str
+    name: str
+    current_room: str
+    status: CaseStatus
+    restriction_groups: list[MenuConflictRestrictionGroupSummary] = Field(default_factory=list)
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class MenuConflictReason(BaseModel):
+    type: Literal["direct_dish", "ingredient"]
+    restriction_group: MenuConflictRestrictionGroupSummary
+    matched_target: MenuConflictTargetSummary
+
+
+class MenuConflictCaseDishResult(BaseModel):
+    case_id: uuid.UUID
+    menu_dish_id: uuid.UUID
+    outcome: ConflictOutcome
+    coverage: Literal["complete", "partial"]
+    reasons: list[MenuConflictReason] = Field(default_factory=list)
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class MenuConflictResponse(BaseModel):
+    target_date: date
+    postpartum_meal: Meal
+    evaluation_status: ConflictCoverage
+    evaluation_performed: bool
+    source_resolution: MenuConflictSourceResolution
+    mapping_resolution: MenuConflictMappingResolution
+    menu_day: MenuConflictDaySummary | None = None
+    menu_dishes: list[MenuConflictDishPublic] = Field(default_factory=list)
+    eligible_cases: list[MenuConflictCasePublic] = Field(default_factory=list)
+    case_dish_results: list[MenuConflictCaseDishResult] = Field(default_factory=list)
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class MenuConflictMealSummary(BaseModel):
+    target_date: date
+    postpartum_meal: Meal
+    status: Literal["conflict", "partial", "complete", "unmapped", "unavailable"]
+    evaluation_status: ConflictCoverage
+    evaluation_performed: bool
+    source_status: Literal["available", "not_configured", "ambiguous", "inactive"]
+    mapping_status: Literal["mapped", "not_mapped", "inactive", "inconsistent", "not_checked"]
+    menu_name: str | None = None
+    menu_meal_type_name: str | None = None
+    eligible_case_count: int
+    menu_dish_count: int
+    conflict_case_count: int
+    conflict_count: int
+    manual_review_case_count: int
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class MenuConflictDailyResponse(BaseModel):
+    target_date: date
+    meals: list[MenuConflictResponse]
+    summaries: list[MenuConflictMealSummary]
+    conflict_case_count: int
+    conflict_count: int
+    manual_review_case_count: int
+
+
+class MenuConflictWeeklyDay(BaseModel):
+    target_date: date
+    meals: list[MenuConflictMealSummary]
+
+
+class MenuConflictWeeklyResponse(BaseModel):
+    week_start: date
+    week_end: date
+    days: list[MenuConflictWeeklyDay]

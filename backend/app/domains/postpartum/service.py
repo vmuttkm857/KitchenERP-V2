@@ -1,8 +1,10 @@
 import uuid
+from datetime import timedelta
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.audit.service import AuditLogService, audit_snapshot
+from app.domains.postpartum.conflicts import evaluate_case_dish_conflicts
 from app.domains.postpartum.exceptions import (
     InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError,
     PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
@@ -20,7 +22,7 @@ from app.domains.postpartum.schemas import (
     RestrictionGroupCreate, RestrictionGroupUpdate, RoomChangeCreate,
     MenuSourceReplace,
 )
-from app.domains.postpartum.timeline import valid_interval
+from app.domains.postpartum.timeline import service_is_eligible_at, valid_interval
 
 
 class PostpartumService:
@@ -109,6 +111,271 @@ class PostpartumService:
             if source.id == source_id:
                 return self._menu_source_view(source, menu)
         raise PostpartumMenuSourceNotFoundError()
+
+    @staticmethod
+    def _conflict_source_summary(row):
+        return {
+            "source_id": row["source_id"], "menu_id": row["menu_id"],
+            "menu_name": row["menu_name"], "start_date": row["start_date"],
+            "end_date": row["end_date"], "is_active": row["menu_is_active"],
+        }
+
+    def _load_conflict_context(self, start_date, end_date):
+        source_rows = self.repository.conflict_sources_range(start_date, end_date)
+        sources = {}
+        for row in source_rows:
+            source = sources.setdefault(row["source_id"], {
+                **self._conflict_source_summary(row), "mappings": {},
+            })
+            if row["postpartum_meal"] is not None:
+                source["mappings"][row["postpartum_meal"]] = row
+
+        menu_rows = self.repository.conflict_menu_rows_range(
+            {item["menu_id"] for item in sources.values()}, start_date, end_date,
+        )
+        menu_rows_by_slot = {}
+        for row in menu_rows:
+            menu_rows_by_slot.setdefault((
+                row["menu_id"], row["menu_date"], row["menu_meal_type_id"],
+            ), []).append(row)
+
+        candidate_cases = self.repository.conflict_case_candidates_range(start_date, end_date)
+        candidate_ids = [item.id for item in candidate_cases]
+        pauses_by_case = {case_id: [] for case_id in candidate_ids}
+        for pause in self.repository.conflict_pauses(candidate_ids):
+            pauses_by_case[pause.case_id].append((
+                pause.start_date, pause.start_meal, pause.end_date, pause.end_meal,
+            ))
+
+        group_rows = self.repository.conflict_case_groups(candidate_ids)
+        groups_by_case = {case_id: [] for case_id in candidate_ids}
+        groups = {}
+        for row in group_rows:
+            group_id = row["restriction_group_id"]
+            groups_by_case[row["case_id"]].append(group_id)
+            groups[group_id] = {
+                "id": group_id, "name": row["name"], "color": row["color"],
+                "notes": row["notes"], "is_active": row["is_active"],
+            }
+        group_ids = set(groups)
+        dish_targets_by_group = {group_id: {} for group_id in group_ids}
+        for row in self.repository.conflict_group_dishes(group_ids):
+            dish_targets_by_group[row["restriction_group_id"]][row["id"]] = {
+                "id": row["id"], "code": row["code"], "name": row["name"],
+                "is_active": row["is_active"],
+            }
+        ingredient_targets_by_group = {group_id: {} for group_id in group_ids}
+        for row in self.repository.conflict_group_ingredients(group_ids):
+            ingredient_targets_by_group[row["restriction_group_id"]][row["id"]] = {
+                "id": row["id"], "code": row["code"], "name": row["name"],
+                "is_active": row["is_active"],
+            }
+        dish_ids = {row["dish_id"] for row in menu_rows if row["dish_id"] is not None}
+        recipe_ingredients_by_dish = {dish_id: {} for dish_id in dish_ids}
+        for row in self.repository.conflict_recipe_ingredients(dish_ids):
+            recipe_ingredients_by_dish[row["dish_id"]][row["id"]] = {
+                "id": row["id"], "code": row["code"], "name": row["name"],
+                "is_active": row["is_active"],
+            }
+        return {
+            "sources": list(sources.values()), "menu_rows_by_slot": menu_rows_by_slot,
+            "candidate_cases": candidate_cases, "pauses_by_case": pauses_by_case,
+            "groups_by_case": groups_by_case, "groups": groups,
+            "dish_targets_by_group": dish_targets_by_group,
+            "ingredient_targets_by_group": ingredient_targets_by_group,
+            "recipe_ingredients_by_dish": recipe_ingredients_by_dish,
+        }
+
+    def _menu_conflicts_from_context(self, target_date, postpartum_meal, context):
+        source_rows = [item for item in context["sources"] if (
+            item["start_date"] <= target_date <= item["end_date"]
+        )]
+        candidates = [{key: item[key] for key in (
+            "source_id", "menu_id", "menu_name", "start_date", "end_date", "is_active",
+        )} for item in source_rows]
+        base = {
+            "target_date": target_date,
+            "postpartum_meal": postpartum_meal,
+            "evaluation_status": "unavailable",
+            "evaluation_performed": False,
+            "source_resolution": {
+                "status": "not_configured", "source": None, "candidates": candidates,
+            },
+            "mapping_resolution": {"status": "not_checked", "menu_meal_type": None},
+            "menu_day": None,
+            "menu_dishes": [],
+            "eligible_cases": [],
+            "case_dish_results": [],
+            "warnings": [],
+        }
+        if not source_rows:
+            base["warnings"] = [{"code": "SOURCE_NOT_CONFIGURED", "message": "此日期沒有月子餐 ERP 菜單來源"}]
+            return base
+        if len(source_rows) > 1:
+            base["source_resolution"]["status"] = "ambiguous"
+            base["warnings"] = [{"code": "SOURCE_AMBIGUOUS", "message": "此日期有多份重疊的月子餐菜單來源，已停止檢查"}]
+            return base
+
+        source_record = source_rows[0]
+        source_summary = candidates[0]
+        base["source_resolution"].update({"status": "available", "source": source_summary})
+        if not source_record["is_active"]:
+            base["source_resolution"]["status"] = "inactive"
+            base["warnings"] = [{"code": "MENU_INACTIVE", "message": "此日期的月子餐菜單來源已停用"}]
+            return base
+        source = source_record["mappings"].get(postpartum_meal)
+        if source is None:
+            base["mapping_resolution"]["status"] = "not_mapped"
+            return base
+
+        meal_type = None
+        if source["menu_meal_type_id"] is not None:
+            meal_type = {
+                "id": source["menu_meal_type_id"], "name": source["menu_meal_type_name"],
+                "sort_order": source["menu_meal_type_sort_order"],
+                "is_active": source["menu_meal_type_is_active"],
+            }
+        base["mapping_resolution"] = {"status": "mapped", "menu_meal_type": meal_type}
+        if source["mapped_menu_meal_type_id"] is not None and meal_type is None:
+            base["mapping_resolution"]["status"] = "inconsistent"
+            base["warnings"] = [{"code": "MEAL_TYPE_MISSING", "message": "餐別 mapping 的 ERP 餐別不存在"}]
+            return base
+        if source["menu_meal_type_menu_id"] != source["menu_id"]:
+            base["mapping_resolution"]["status"] = "inconsistent"
+            base["warnings"] = [{"code": "MEAL_TYPE_MENU_MISMATCH", "message": "餐別 mapping 不屬於目前菜單來源"}]
+            return base
+        if not source["menu_meal_type_is_active"]:
+            base["mapping_resolution"]["status"] = "inactive"
+            base["warnings"] = [{"code": "MEAL_TYPE_INACTIVE", "message": "餐別 mapping 的 ERP 餐別已停用"}]
+            return base
+
+        menu_rows = context["menu_rows_by_slot"].get((
+            source["menu_id"], target_date, source["menu_meal_type_id"],
+        ), [])
+        if not menu_rows:
+            base["warnings"] = [{"code": "MENU_DAY_NOT_CONFIGURED", "message": "此日期與餐別尚未建立 ERP 菜單內容"}]
+            return base
+        base["menu_day"] = {"id": menu_rows[0]["menu_day_id"], "menu_date": menu_rows[0]["menu_date"]}
+        menu_dishes = [row for row in menu_rows if row["menu_dish_id"] is not None]
+
+        candidate_cases = context["candidate_cases"]
+        pauses_by_case = context["pauses_by_case"]
+        eligible_cases = [item for item in candidate_cases if service_is_eligible_at(
+            target_date, postpartum_meal,
+            item.service_start_date, item.service_start_meal,
+            item.service_end_date, item.service_end_meal,
+            pauses_by_case[item.id],
+        )]
+        eligible_ids = [item.id for item in eligible_cases]
+
+        groups_by_case = context["groups_by_case"]
+        groups = context["groups"]
+
+        dish_views, case_warnings, results = evaluate_case_dish_conflicts(
+            case_ids=eligible_ids, menu_dishes=menu_dishes,
+            groups_by_case=groups_by_case, groups=groups,
+            dish_targets_by_group=context["dish_targets_by_group"],
+            ingredient_targets_by_group=context["ingredient_targets_by_group"],
+            recipe_ingredients_by_dish=context["recipe_ingredients_by_dish"],
+        )
+        base["menu_dishes"] = dish_views
+        base["eligible_cases"] = [{
+            "id": item.id, "case_number": item.case_number, "name": item.name,
+            "current_room": item.current_room, "status": item.status,
+            "restriction_groups": [groups[group_id] for group_id in groups_by_case[item.id]],
+            "warnings": case_warnings[item.id],
+        } for item in eligible_cases]
+        base["case_dish_results"] = results
+        base["evaluation_performed"] = True
+        partial_group_codes = {"RESTRICTION_GROUP_NOTE_ONLY", "RESTRICTION_GROUP_NO_TARGETS"}
+        partial = not menu_dishes or any(
+            item["ingredient_coverage"] == "partial" for item in dish_views
+        ) or any(
+            warning["code"] in partial_group_codes
+            for warnings in case_warnings.values() for warning in warnings
+        )
+        base["evaluation_status"] = "partial" if partial else "complete"
+        if not menu_dishes:
+            base["warnings"] = [{"code": "MENU_DISHES_EMPTY", "message": "此日期與餐別沒有 ERP 菜色可供檢查"}]
+        return base
+
+    @staticmethod
+    def _conflict_summary(result):
+        conflicts = [item for item in result["case_dish_results"] if item["outcome"] == "conflict"]
+        manual_case_ids = {
+            item["case_id"] for item in result["case_dish_results"]
+            if item["outcome"] == "unknown" or item["coverage"] == "partial"
+        }
+        manual_case_ids.update(
+            item["id"] for item in result["eligible_cases"] if item["warnings"]
+        )
+        if not result["evaluation_performed"]:
+            status = "unmapped" if result["mapping_resolution"]["status"] == "not_mapped" else "unavailable"
+        elif conflicts:
+            status = "conflict"
+        elif result["evaluation_status"] == "partial":
+            status = "partial"
+        else:
+            status = "complete"
+        source = result["source_resolution"]["source"]
+        meal_type = result["mapping_resolution"]["menu_meal_type"]
+        return {
+            "target_date": result["target_date"], "postpartum_meal": result["postpartum_meal"],
+            "status": status, "evaluation_status": result["evaluation_status"],
+            "evaluation_performed": result["evaluation_performed"],
+            "source_status": result["source_resolution"]["status"],
+            "mapping_status": result["mapping_resolution"]["status"],
+            "menu_name": None if source is None else source["menu_name"],
+            "menu_meal_type_name": None if meal_type is None else meal_type["name"],
+            "eligible_case_count": len(result["eligible_cases"]),
+            "menu_dish_count": len(result["menu_dishes"]),
+            "conflict_case_count": len({item["case_id"] for item in conflicts}),
+            "conflict_count": len(conflicts),
+            "manual_review_case_count": len(manual_case_ids),
+            "warnings": result["warnings"],
+        }
+
+    def menu_conflicts(self, target_date, postpartum_meal):
+        context = self._load_conflict_context(target_date, target_date)
+        return self._menu_conflicts_from_context(target_date, postpartum_meal, context)
+
+    def menu_conflicts_daily(self, target_date):
+        context = self._load_conflict_context(target_date, target_date)
+        meals = [self._menu_conflicts_from_context(target_date, meal, context) for meal in MEAL_VALUES]
+        summaries = [self._conflict_summary(item) for item in meals]
+        conflict_results = [
+            result for meal in meals for result in meal["case_dish_results"]
+            if result["outcome"] == "conflict"
+        ]
+        manual_case_ids = {
+            result["case_id"] for meal in meals for result in meal["case_dish_results"]
+            if result["outcome"] == "unknown" or result["coverage"] == "partial"
+        }
+        manual_case_ids.update(
+            item["id"] for meal in meals for item in meal["eligible_cases"] if item["warnings"]
+        )
+        return {
+            "target_date": target_date, "meals": meals, "summaries": summaries,
+            "conflict_case_count": len({item["case_id"] for item in conflict_results}),
+            "conflict_count": len(conflict_results),
+            "manual_review_case_count": len(manual_case_ids),
+        }
+
+    def menu_conflicts_weekly(self, anchor_date):
+        week_start = anchor_date - timedelta(days=anchor_date.weekday())
+        week_end = week_start + timedelta(days=6)
+        context = self._load_conflict_context(week_start, week_end)
+        days = []
+        for offset in range(7):
+            target_date = week_start + timedelta(days=offset)
+            evaluations = [
+                self._menu_conflicts_from_context(target_date, meal, context) for meal in MEAL_VALUES
+            ]
+            days.append({
+                "target_date": target_date,
+                "meals": [self._conflict_summary(item) for item in evaluations],
+            })
+        return {"week_start": week_start, "week_end": week_end, "days": days}
 
     def _validate_menu_source(self, data, exclude_source_id=None):
         mapping_meals = [item.postpartum_meal for item in data.mappings]
