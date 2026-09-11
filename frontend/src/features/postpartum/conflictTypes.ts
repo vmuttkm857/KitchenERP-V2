@@ -99,6 +99,78 @@ export interface PostpartumConflictWeeklyResponse {
   days:{target_date:string;meals:ConflictMealSummary[]}[]
 }
 
+export type ConflictHandlingStatus='pending'|'replaced'|'manually_acknowledged'|'requires_reconfirmation'
+export type ReplacementCandidateStatus='no_known_conflict'|'conflict'|'insufficient_recipe_data'
+export function selectionMatchesMeal(items:ReadonlyArray<{meal:Meal}>,meal:Meal|null){
+  return items.length>0&&meal!==null&&items.every(item=>item.meal===meal)
+}
+export function candidateNeedsRecipeAcknowledgement(status:ReplacementCandidateStatus){
+  return status==='insufficient_recipe_data'
+}
+export interface ConflictItemInput {case_id:string;original_menu_dish_id:string;original_dish_id:string}
+export interface ConflictHandlingItem {
+  id:string;case_id:string;original_menu_dish_id:string;original_dish:ConflictTarget
+  status:ConflictHandlingStatus;note:string|null;warnings:ConflictWarning[]
+}
+export interface ReplacementGroup {
+  id:string;target_date:string;postpartum_meal:Meal;replacement_dish:ConflictTarget;note:string|null
+  status:ConflictHandlingStatus;candidate_status:ReplacementCandidateStatus;review_needed:boolean
+  warnings:ConflictWarning[];items:ConflictHandlingItem[]
+}
+export interface ConflictAcknowledgement extends ConflictHandlingItem {target_date:string;postpartum_meal:Meal}
+export interface ConflictItemStatus {
+  case_id:string;original_menu_dish_id:string;original_dish:ConflictTarget;status:ConflictHandlingStatus
+  handling_id:string|null;replacement_group_id:string|null
+}
+export interface ConflictHandlingResponse {
+  target_date:string;postpartum_meal:Meal;replacement_groups:ReplacementGroup[]
+  manual_acknowledgements:ConflictAcknowledgement[];conflict_items:ConflictItemStatus[]
+}
+export interface ConflictHandlingContext {
+  status:ConflictItemStatus|null
+  replacementGroup:ReplacementGroup|null
+  acknowledgement:ConflictAcknowledgement|null
+}
+export function findHandlingContext(response:ConflictHandlingResponse|undefined,caseId:string,menuDishId:string):ConflictHandlingContext{
+  if(!response)return {status:null,replacementGroup:null,acknowledgement:null}
+  return {
+    status:response.conflict_items.find(item=>item.case_id===caseId&&item.original_menu_dish_id===menuDishId)??null,
+    replacementGroup:response.replacement_groups.find(group=>group.items.some(item=>item.case_id===caseId&&item.original_menu_dish_id===menuDishId))??null,
+    acknowledgement:response.manual_acknowledgements.find(item=>item.case_id===caseId&&item.original_menu_dish_id===menuDishId)??null,
+  }
+}
+export interface ReplacementCandidate {
+  dish:ConflictTarget;status:ReplacementCandidateStatus;coverage:'complete'|'partial';review_needed:boolean
+  case_results:ConflictCaseDishResult[];warnings:ConflictWarning[]
+}
+export interface CandidateWarningPresentation {
+  count:number
+  caseGroups:{case_id:string;case_number:string;name:string;current_room:string;groups:string[]}[]
+  fallbackMessages:string[]
+}
+export function candidateWarningPresentation(candidate:ReplacementCandidate,cases:ConflictCase[]):CandidateWarningPresentation{
+  const caseById=new Map(cases.map(item=>[item.id,item]))
+  const groupOwner=new Map(cases.flatMap(caseItem=>caseItem.restriction_groups.map(group=>[group.id,{caseItem,group}] as const)))
+  const groupsByCase=new Map<string,Map<string,string>>(),fallbackMessages=new Set<string>(),seenWarnings=new Set<string>(),seenGroupNames=new Set<string>()
+  const addWarning=(warning:ConflictWarning,fallbackCaseId?:string)=>{
+    const key=`${warning.code}:${warning.case_id??fallbackCaseId??''}:${warning.restriction_group_id??''}:${warning.message}`
+    if(seenWarnings.has(key))return
+    seenWarnings.add(key)
+    const owner=warning.restriction_group_id?groupOwner.get(warning.restriction_group_id):undefined
+    const caseItem=caseById.get(warning.case_id??fallbackCaseId??'')??owner?.caseItem
+    const group=caseItem?.restriction_groups.find(item=>item.id===warning.restriction_group_id)??owner?.group
+    if(caseItem&&group&&!seenGroupNames.has(group.name)){seenGroupNames.add(group.name);const values=groupsByCase.get(caseItem.id)??new Map<string,string>();values.set(group.id,group.name);groupsByCase.set(caseItem.id,values)}
+    else fallbackMessages.add(warning.message)
+  }
+  candidate.case_results.forEach(result=>result.warnings.forEach(warning=>addWarning(warning,result.case_id)))
+  candidate.warnings.forEach(warning=>addWarning(warning))
+  const caseGroups=[...groupsByCase].map(([caseId,groups])=>{const item=caseById.get(caseId);return {case_id:caseId,case_number:item?.case_number??'',name:item?.name??'',current_room:item?.current_room??'',groups:[...groups.values()].sort((a,b)=>a.localeCompare(b,'zh-Hant'))}}).sort((a,b)=>a.current_room.localeCompare(b.current_room,'zh-Hant')||a.case_number.localeCompare(b.case_number,'zh-Hant'))
+  return {count:caseGroups.reduce((total,item)=>total+item.groups.length,0)+fallbackMessages.size,caseGroups,fallbackMessages:[...fallbackMessages]}
+}
+export interface ReplacementCandidateList {
+  items:ReplacementCandidate[];pagination:{page:number;page_size:number;total:number}
+}
+
 export function todayTaipeiYmd(now=new Date()){
   const parts=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now)
   const values=Object.fromEntries(parts.map(part=>[part.type,part.value]))
