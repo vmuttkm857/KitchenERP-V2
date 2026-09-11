@@ -533,3 +533,83 @@ class ConflictHandlingList(BaseModel):
     replacement_groups: list[ReplacementGroupPublic]
     manual_acknowledgements: list[ConflictAcknowledgementPublic]
     conflict_items: list[ConflictItemStatusPublic]
+
+
+class ChangeSheetSummary(BaseModel):
+    replacement_group_count: int
+    replacement_item_count: int
+    manual_acknowledgement_count: int
+    requires_reconfirmation_count: int
+
+
+class ChangeSheetCaseSummary(BaseModel):
+    case_id: uuid.UUID
+    case_number: str
+    name: str
+    current_room: str
+
+
+class ChangeSheetRestrictionGroup(BaseModel):
+    id: uuid.UUID
+    name: str
+    color: str
+
+
+class ChangeSheetReplacementItem(BaseModel):
+    handling_id: uuid.UUID
+    case_id: uuid.UUID
+    case_number: str
+    case_name: str
+    current_room: str
+    original_menu_dish_id: uuid.UUID
+    original_dish: MenuConflictTargetSummary
+    replacement_dish: MenuConflictTargetSummary
+    restriction_groups: list[ChangeSheetRestrictionGroup] = Field(default_factory=list)
+    status: ConflictHandlingStatus
+    review_needed: bool
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class ChangeSheetReplacementGroup(BaseModel):
+    group_id: uuid.UUID
+    replacement_dish: MenuConflictTargetSummary
+    quantity: int
+    case_rooms: list[str]
+    cases: list[ChangeSheetCaseSummary]
+    items: list[ChangeSheetReplacementItem]
+    note: str | None = None
+    status: ConflictHandlingStatus
+    review_needed: bool
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class ChangeSheetAcknowledgement(BaseModel):
+    handling_id: uuid.UUID
+    case_id: uuid.UUID
+    case_number: str
+    case_name: str
+    current_room: str
+    original_menu_dish_id: uuid.UUID
+    original_dish: MenuConflictTargetSummary
+    restriction_groups: list[ChangeSheetRestrictionGroup] = Field(default_factory=list)
+    note: str | None = None
+    status: ConflictHandlingStatus
+    review_needed: bool
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class ChangeSheetReconfirmationItem(ChangeSheetAcknowledgement):
+    handling_type: Literal["replacement", "manual_acknowledgement"]
+    group_id: uuid.UUID | None = None
+    replacement_dish: MenuConflictTargetSummary | None = None
+
+
+class ChangeSheetResponse(BaseModel):
+    target_date: date
+    postpartum_meal: Meal
+    meal_label: str
+    summary: ChangeSheetSummary
+    replacement_groups: list[ChangeSheetReplacementGroup]
+    manual_acknowledgements: list[ChangeSheetAcknowledgement]
+    requires_reconfirmation: list[ChangeSheetReconfirmationItem]
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)

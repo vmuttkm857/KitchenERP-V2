@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.domains.postpartum.conflicts import evaluate_case_dish_conflicts, evaluate_replacement_candidates
+from app.domains.postpartum.change_sheet import build_change_sheet
 from app.domains.postpartum.exceptions import (
     InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError,
     PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
@@ -679,7 +680,7 @@ class PostpartumService:
             "note": handling.note, "warnings": warnings,
         }
 
-    def conflict_handlings(self, target_date, postpartum_meal):
+    def _conflict_handlings_with_evaluation(self, target_date, postpartum_meal):
         groups = self.repository.replacement_groups(target_date, postpartum_meal)
         handlings = self.repository.conflict_handlings(target_date, postpartum_meal)
         identities = self.repository.menu_dish_identities({item.original_menu_dish_id for item in handlings})
@@ -755,7 +756,19 @@ class PostpartumService:
             "target_date": target_date, "postpartum_meal": postpartum_meal,
             "replacement_groups": group_views, "manual_acknowledgements": acknowledgements,
             "conflict_items": conflict_items,
-        }
+        }, evaluation
+
+    def conflict_handlings(self, target_date, postpartum_meal):
+        return self._conflict_handlings_with_evaluation(target_date, postpartum_meal)[0]
+
+    def change_sheet(self, target_date, postpartum_meal):
+        handling_view, evaluation = self._conflict_handlings_with_evaluation(target_date, postpartum_meal)
+        case_ids = {
+            item["case_id"]
+            for group in handling_view["replacement_groups"] for item in group["items"]
+        } | {item["case_id"] for item in handling_view["manual_acknowledgements"]}
+        cases = self.repository.case_models(case_ids)
+        return build_change_sheet(target_date, postpartum_meal, handling_view, cases, evaluation)
 
     def replacement_group(self, target_date, postpartum_meal, group_id):
         result = self.conflict_handlings(target_date, postpartum_meal)

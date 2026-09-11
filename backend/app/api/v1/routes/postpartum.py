@@ -24,6 +24,7 @@ from app.domains.postpartum.schemas import (
     ReplacementCandidateSearch, ReplacementCandidateList, ReplacementCandidatePublic,
     ReplacementGroupCreate, ReplacementGroupUpdate, ReplacementGroupPublic,
     ConflictAcknowledgementCreate, ConflictAcknowledgementPublic, ConflictHandlingList,
+    ChangeSheetResponse,
 )
 from app.domains.postpartum.meals import Meal
 from app.domains.postpartum.service import PostpartumService
@@ -91,6 +92,17 @@ def conflict_handlings(target_date: date, postpartum_meal: Meal,
     try:
         return ConflictHandlingList.model_validate(
             PostpartumService(session).conflict_handlings(target_date, postpartum_meal)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.get("/change-sheet", response_model=ChangeSheetResponse)
+def change_sheet(target_date: date, postpartum_meal: Meal,
+                 session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return ChangeSheetResponse.model_validate(
+            PostpartumService(session).change_sheet(target_date, postpartum_meal)
         )
     except Exception as exc:
         raise error(exc) from exc

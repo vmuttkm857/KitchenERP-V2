@@ -24,6 +24,10 @@ class PostpartumRepository:
     def add(self, value): self.session.add(value)
     def delete(self, value): self.session.delete(value)
     def case(self, case_id): return self.session.get(PostpartumCase, case_id)
+    def case_models(self, case_ids):
+        if not case_ids:
+            return []
+        return list(self.session.scalars(select(PostpartumCase).where(PostpartumCase.id.in_(case_ids))))
     def case_for_update(self, case_id):
         return self.session.scalar(select(PostpartumCase).where(PostpartumCase.id == case_id).with_for_update())
     def pause(self, pause_id): return self.session.get(PostpartumServicePause, pause_id)
