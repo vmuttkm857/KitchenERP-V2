@@ -11,6 +11,8 @@ from app.domains.postpartum.exceptions import (
     PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
     PostpartumRestrictionGroupNameExistsError, PostpartumRestrictionGroupNotFoundError,
     PostpartumMenuSourceNotFoundError,
+    PostpartumReplacementGroupNotFoundError, PostpartumConflictHandlingNotFoundError,
+    InvalidPostpartumReplacementError, PostpartumConflictAlreadyHandledError,
 )
 from app.domains.postpartum.schemas import (
     CaseCreate, CaseDetail, CaseList, CaseListItem, CasePublic, CaseRestrictionGroupsPublic,
@@ -19,6 +21,9 @@ from app.domains.postpartum.schemas import (
     RestrictionGroupList, RestrictionGroupPublic, RestrictionGroupUpdate, RoomChangeCreate, RoomHistoryPublic,
     MenuConflictDailyResponse, MenuConflictResponse, MenuConflictWeeklyResponse,
     MenuSourceList, MenuSourcePublic, MenuSourceReplace,
+    ReplacementCandidateSearch, ReplacementCandidateList, ReplacementCandidatePublic,
+    ReplacementGroupCreate, ReplacementGroupUpdate, ReplacementGroupPublic,
+    ConflictAcknowledgementCreate, ConflictAcknowledgementPublic, ConflictHandlingList,
 )
 from app.domains.postpartum.meals import Meal
 from app.domains.postpartum.service import PostpartumService
@@ -28,9 +33,9 @@ from app.shared.schemas import PaginationMeta
 router = APIRouter(prefix="/postpartum", tags=["postpartum"], dependencies=[Depends(get_current_user)])
 
 def error(exc):
-    if isinstance(exc, (PostpartumCaseNotFoundError, PostpartumPauseNotFoundError, PostpartumRestrictionGroupNotFoundError, PostpartumMenuSourceNotFoundError)): return HTTPException(404, "Postpartum resource not found")
-    if isinstance(exc, PostpartumRestrictionGroupNameExistsError): return HTTPException(409, "禁忌群組名稱已存在")
-    if isinstance(exc, (InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError)): return HTTPException(422, str(exc))
+    if isinstance(exc, (PostpartumCaseNotFoundError, PostpartumPauseNotFoundError, PostpartumRestrictionGroupNotFoundError, PostpartumMenuSourceNotFoundError, PostpartumReplacementGroupNotFoundError, PostpartumConflictHandlingNotFoundError)): return HTTPException(404, "Postpartum resource not found")
+    if isinstance(exc, (PostpartumRestrictionGroupNameExistsError, PostpartumConflictAlreadyHandledError)): return HTTPException(409, str(exc) or "Postpartum resource conflict")
+    if isinstance(exc, (InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError, InvalidPostpartumReplacementError)): return HTTPException(422, str(exc))
     return HTTPException(400, "Postpartum operation failed")
 
 
@@ -65,6 +70,99 @@ def menu_conflicts(target_date: date, postpartum_meal: Meal,
         )
     except Exception as exc:
         raise error(exc) from exc
+
+
+@router.post("/replacement-candidates/search", response_model=ReplacementCandidateList)
+def replacement_candidates(data: ReplacementCandidateSearch,
+                           session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        items, total = PostpartumService(session).replacement_candidates(data)
+        return ReplacementCandidateList(
+            items=[ReplacementCandidatePublic.model_validate(item) for item in items],
+            pagination=PaginationMeta(page=data.page, page_size=data.page_size, total=total),
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.get("/conflict-handlings", response_model=ConflictHandlingList)
+def conflict_handlings(target_date: date, postpartum_meal: Meal,
+                       session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return ConflictHandlingList.model_validate(
+            PostpartumService(session).conflict_handlings(target_date, postpartum_meal)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.post("/replacement-groups", response_model=ReplacementGroupPublic, status_code=201)
+def create_replacement_group(data: ReplacementGroupCreate,
+                             user: Annotated[User, Depends(get_current_user)],
+                             session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return ReplacementGroupPublic.model_validate(
+            PostpartumService(session).create_replacement_group(data, user.id)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.put("/replacement-groups/{group_id}", response_model=ReplacementGroupPublic)
+def update_replacement_group(group_id: uuid.UUID, data: ReplacementGroupUpdate,
+                             user: Annotated[User, Depends(get_current_user)],
+                             session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return ReplacementGroupPublic.model_validate(
+            PostpartumService(session).update_replacement_group(group_id, data, user.id)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.post("/replacement-groups/{group_id}/cancel", status_code=204)
+def cancel_replacement_group(group_id: uuid.UUID,
+                             user: Annotated[User, Depends(get_current_user)],
+                             session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        PostpartumService(session).cancel_replacement_group(group_id, user.id)
+    except Exception as exc:
+        raise error(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/replacement-groups/{group_id}/revalidate", response_model=ReplacementGroupPublic)
+def revalidate_replacement_group(group_id: uuid.UUID,
+                                 session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return ReplacementGroupPublic.model_validate(
+            PostpartumService(session).revalidate_replacement_group(group_id)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.post("/conflict-acknowledgements", response_model=ConflictAcknowledgementPublic, status_code=201)
+def acknowledge_conflict(data: ConflictAcknowledgementCreate,
+                         user: Annotated[User, Depends(get_current_user)],
+                         session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return ConflictAcknowledgementPublic.model_validate(
+            PostpartumService(session).acknowledge_conflict(data, user.id)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.post("/conflict-acknowledgements/{handling_id}/cancel", status_code=204)
+def cancel_acknowledgement(handling_id: uuid.UUID,
+                           user: Annotated[User, Depends(get_current_user)],
+                           session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        PostpartumService(session).cancel_acknowledgement(handling_id, user.id)
+    except Exception as exc:
+        raise error(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/menu-sources", response_model=MenuSourceList)

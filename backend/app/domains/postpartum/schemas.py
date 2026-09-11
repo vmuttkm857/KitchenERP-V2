@@ -432,3 +432,104 @@ class MenuConflictWeeklyResponse(BaseModel):
     week_start: date
     week_end: date
     days: list[MenuConflictWeeklyDay]
+
+
+ReplacementCandidateStatus = Literal["no_known_conflict", "conflict", "insufficient_recipe_data"]
+ConflictHandlingStatus = Literal["pending", "replaced", "manually_acknowledged", "requires_reconfirmation"]
+
+
+class ConflictItemInput(BaseModel):
+    case_id: uuid.UUID
+    original_menu_dish_id: uuid.UUID
+    original_dish_id: uuid.UUID
+
+
+class ReplacementGroupCreate(BaseModel):
+    target_date: date
+    postpartum_meal: Meal
+    replacement_dish_id: uuid.UUID
+    items: list[ConflictItemInput] = Field(min_length=1)
+    note: str | None = Field(default=None, max_length=5000)
+
+
+class ReplacementGroupUpdate(BaseModel):
+    replacement_dish_id: uuid.UUID
+    items: list[ConflictItemInput] = Field(min_length=1)
+    note: str | None = Field(default=None, max_length=5000)
+    reassign_items: bool = False
+
+
+class ConflictAcknowledgementCreate(BaseModel):
+    target_date: date
+    postpartum_meal: Meal
+    item: ConflictItemInput
+    note: str | None = Field(default=None, max_length=5000)
+
+
+class ReplacementCandidateSearch(BaseModel):
+    target_date: date
+    postpartum_meal: Meal
+    items: list[ConflictItemInput] = Field(min_length=1)
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=100)
+    search: str | None = None
+    category_id: uuid.UUID | None = None
+
+
+class ReplacementCandidatePublic(BaseModel):
+    dish: MenuConflictTargetSummary
+    status: ReplacementCandidateStatus
+    coverage: Literal["complete", "partial"]
+    review_needed: bool
+    case_results: list[MenuConflictCaseDishResult] = Field(default_factory=list)
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class ReplacementCandidateList(BaseModel):
+    items: list[ReplacementCandidatePublic]
+    pagination: PaginationMeta
+
+
+class ConflictHandlingItemPublic(BaseModel):
+    id: uuid.UUID
+    case_id: uuid.UUID
+    original_menu_dish_id: uuid.UUID
+    original_dish: MenuConflictTargetSummary
+    status: ConflictHandlingStatus
+    note: str | None = None
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class ReplacementGroupPublic(BaseModel):
+    id: uuid.UUID
+    target_date: date
+    postpartum_meal: Meal
+    replacement_dish: MenuConflictTargetSummary
+    note: str | None = None
+    status: ConflictHandlingStatus
+    candidate_status: ReplacementCandidateStatus
+    review_needed: bool
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)
+    items: list[ConflictHandlingItemPublic]
+
+
+class ConflictAcknowledgementPublic(ConflictHandlingItemPublic):
+    target_date: date
+    postpartum_meal: Meal
+
+
+class ConflictItemStatusPublic(BaseModel):
+    case_id: uuid.UUID
+    original_menu_dish_id: uuid.UUID
+    original_dish: MenuConflictTargetSummary
+    status: ConflictHandlingStatus
+    handling_id: uuid.UUID | None = None
+    replacement_group_id: uuid.UUID | None = None
+
+
+class ConflictHandlingList(BaseModel):
+    target_date: date
+    postpartum_meal: Meal
+    replacement_groups: list[ReplacementGroupPublic]
+    manual_acknowledgements: list[ConflictAcknowledgementPublic]
+    conflict_items: list[ConflictItemStatusPublic]

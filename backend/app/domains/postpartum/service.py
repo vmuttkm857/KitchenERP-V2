@@ -4,23 +4,26 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domains.audit.service import AuditLogService, audit_snapshot
-from app.domains.postpartum.conflicts import evaluate_case_dish_conflicts
+from app.domains.postpartum.conflicts import evaluate_case_dish_conflicts, evaluate_replacement_candidates
 from app.domains.postpartum.exceptions import (
     InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError,
     PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
     PostpartumRestrictionGroupNameExistsError, PostpartumRestrictionGroupNotFoundError,
-    PostpartumMenuSourceNotFoundError,
+    PostpartumMenuSourceNotFoundError, PostpartumReplacementGroupNotFoundError,
+    PostpartumConflictHandlingNotFoundError, InvalidPostpartumReplacementError,
+    PostpartumConflictAlreadyHandledError,
 )
 from app.domains.postpartum.meals import MEAL_ORDER, MEAL_VALUES
 from app.domains.postpartum.models import (
     PostpartumCase, PostpartumMenuSource, PostpartumRestrictionGroup, PostpartumRoomHistory,
-    PostpartumServicePause,
+    PostpartumServicePause, PostpartumReplacementGroup, PostpartumConflictHandling,
 )
 from app.domains.postpartum.repository import PostpartumRepository
 from app.domains.postpartum.schemas import (
     CaseCreate, CaseRestrictionGroupsReplace, CaseUpdate, PauseCreate, PauseUpdate, RestrictionAssociationsReplace,
     RestrictionGroupCreate, RestrictionGroupUpdate, RoomChangeCreate,
-    MenuSourceReplace,
+    MenuSourceReplace, ReplacementGroupCreate, ReplacementGroupUpdate,
+    ConflictAcknowledgementCreate, ReplacementCandidateSearch,
 )
 from app.domains.postpartum.timeline import service_is_eligible_at, valid_interval
 
@@ -376,6 +379,396 @@ class PostpartumService:
                 "meals": [self._conflict_summary(item) for item in evaluations],
             })
         return {"week_start": week_start, "week_end": week_end, "days": days}
+
+    @staticmethod
+    def _handling_key(item):
+        return item.case_id, item.original_menu_dish_id
+
+    def _validate_conflict_items(self, target_date, postpartum_meal, items, context=None):
+        if len({self._handling_key(item) for item in items}) != len(items):
+            raise InvalidPostpartumReplacementError("同一衝突項目不可重複")
+        context = context or self._load_conflict_context(target_date, target_date)
+        evaluation = self._menu_conflicts_from_context(target_date, postpartum_meal, context)
+        if not evaluation["evaluation_performed"]:
+            raise InvalidPostpartumReplacementError("目前日期與餐次無法執行禁忌檢查")
+        menu_dishes = {item["menu_dish_id"]: item for item in evaluation["menu_dishes"]}
+        eligible_cases = {item["id"] for item in evaluation["eligible_cases"]}
+        conflicts = {
+            (item["case_id"], item["menu_dish_id"]): item
+            for item in evaluation["case_dish_results"] if item["outcome"] == "conflict"
+        }
+        for item in items:
+            dish = menu_dishes.get(item.original_menu_dish_id)
+            if item.case_id not in eligible_cases or dish is None:
+                raise InvalidPostpartumReplacementError("衝突項目不屬於目前日期、餐次或供餐個案")
+            if dish["dish"]["id"] != item.original_dish_id:
+                raise InvalidPostpartumReplacementError("原菜色資料已變更，請重新確認")
+            if (item.case_id, item.original_menu_dish_id) not in conflicts:
+                raise InvalidPostpartumReplacementError("只能處理目前仍存在的已確認禁忌衝突")
+        return context, evaluation
+
+    def _candidate_assessment(self, dish, case_ids, context, recipe_map=None):
+        if recipe_map is None:
+            recipe_map = {dish["id"]: {}}
+            for row in self.repository.conflict_recipe_ingredients({dish["id"]}):
+                recipe_map[dish["id"]][row["id"]] = {
+                    "id": row["id"], "code": row["code"], "name": row["name"],
+                    "is_active": row["is_active"],
+                }
+        return evaluate_replacement_candidates(
+            candidate_dishes=[dish], case_ids=case_ids,
+            groups_by_case=context["groups_by_case"], groups=context["groups"],
+            dish_targets_by_group=context["dish_targets_by_group"],
+            ingredient_targets_by_group=context["ingredient_targets_by_group"],
+            recipe_ingredients_by_dish=recipe_map,
+        )[0]
+
+    def replacement_candidates(self, data: ReplacementCandidateSearch):
+        context, _ = self._validate_conflict_items(
+            data.target_date, data.postpartum_meal, data.items,
+        )
+        dishes, total = self.repository.replacement_candidate_dishes(
+            data.page, data.page_size, data.search, data.category_id,
+        )
+        recipe_map = {dish["id"]: {} for dish in dishes}
+        for row in self.repository.conflict_recipe_ingredients(set(recipe_map)):
+            recipe_map[row["dish_id"]][row["id"]] = {
+                "id": row["id"], "code": row["code"], "name": row["name"],
+                "is_active": row["is_active"],
+            }
+        results = evaluate_replacement_candidates(
+            candidate_dishes=dishes, case_ids=sorted({item.case_id for item in data.items}, key=str),
+            groups_by_case=context["groups_by_case"], groups=context["groups"],
+            dish_targets_by_group=context["dish_targets_by_group"],
+            ingredient_targets_by_group=context["ingredient_targets_by_group"],
+            recipe_ingredients_by_dish=recipe_map,
+        )
+        return results, total
+
+    @staticmethod
+    def _group_snapshot(group, handlings):
+        return {
+            "target_date": group.target_date, "postpartum_meal": group.postpartum_meal,
+            "replacement_dish_id": group.replacement_dish_id, "note": group.note,
+            "items": [{
+                "case_id": item.case_id, "original_menu_dish_id": item.original_menu_dish_id,
+                "original_dish_id": item.original_dish_id, "note": item.note,
+            } for item in sorted(handlings, key=lambda row: (str(row.case_id), str(row.original_menu_dish_id)))],
+        }
+
+    def _new_handling(self, target_date, postpartum_meal, item, actor_id, group_id=None, note=None):
+        return PostpartumConflictHandling(
+            id=uuid.uuid4(), target_date=target_date, postpartum_meal=postpartum_meal,
+            case_id=item.case_id, original_menu_dish_id=item.original_menu_dish_id,
+            original_dish_id=item.original_dish_id, replacement_group_id=group_id,
+            note=note, created_by=actor_id, updated_by=actor_id,
+        )
+
+    def create_replacement_group(self, data: ReplacementGroupCreate, actor_id):
+        try:
+            context, _ = self._validate_conflict_items(data.target_date, data.postpartum_meal, data.items)
+            dish_model = self.repository.dish_models({data.replacement_dish_id}).get(data.replacement_dish_id)
+            if dish_model is None or not dish_model.is_active:
+                raise InvalidPostpartumReplacementError("替代菜必須存在且啟用")
+            dish = {"id": dish_model.id, "code": dish_model.code, "name": dish_model.name, "is_active": dish_model.is_active}
+            assessment = self._candidate_assessment(dish, sorted({item.case_id for item in data.items}, key=str), context)
+            if assessment["status"] == "conflict":
+                raise InvalidPostpartumReplacementError("替代菜仍命中所選個案禁忌")
+            if self.repository.conflict_handlings_for_items(
+                [item.model_dump() for item in data.items], for_update=True,
+            ):
+                raise PostpartumConflictAlreadyHandledError("衝突項目已被處理")
+            group = PostpartumReplacementGroup(
+                id=uuid.uuid4(), target_date=data.target_date, postpartum_meal=data.postpartum_meal,
+                replacement_dish_id=data.replacement_dish_id, note=data.note,
+                created_by=actor_id, updated_by=actor_id,
+            )
+            self.repository.add(group)
+            # No ORM relationship is needed for these write-only aggregates, so
+            # flush the parent explicitly before inserting composite-FK items.
+            self.session.flush()
+            handlings = [self._new_handling(
+                data.target_date, data.postpartum_meal, item, actor_id, group.id,
+            ) for item in data.items]
+            for handling in handlings:
+                self.repository.add(handling)
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_replacement_group_create",
+                entity_type="postpartum_replacement_group", entity_id=group.id,
+                entity_label=dish_model.name, after_data=self._group_snapshot(group, handlings),
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return self.replacement_group(data.target_date, data.postpartum_meal, group.id)
+
+    def update_replacement_group(self, group_id, data: ReplacementGroupUpdate, actor_id):
+        try:
+            group = self.repository.replacement_group(group_id, for_update=True)
+            if group is None:
+                raise PostpartumReplacementGroupNotFoundError()
+            context, _ = self._validate_conflict_items(group.target_date, group.postpartum_meal, data.items)
+            dish_model = self.repository.dish_models({data.replacement_dish_id}).get(data.replacement_dish_id)
+            if dish_model is None or not dish_model.is_active:
+                raise InvalidPostpartumReplacementError("替代菜必須存在且啟用")
+            assessment = self._candidate_assessment(
+                {"id": dish_model.id, "code": dish_model.code, "name": dish_model.name, "is_active": True},
+                sorted({item.case_id for item in data.items}, key=str), context,
+            )
+            if assessment["status"] == "conflict":
+                raise InvalidPostpartumReplacementError("替代菜仍命中所選個案禁忌")
+            existing = self.repository.conflict_handlings(
+                group.target_date, group.postpartum_meal, for_update=True,
+            )
+            current = [item for item in existing if item.replacement_group_id == group.id]
+            before = self._group_snapshot(group, current)
+            requested_keys = {self._handling_key(item) for item in data.items}
+            blockers = [item for item in existing if (
+                (item.case_id, item.original_menu_dish_id) in requested_keys
+                and item.replacement_group_id != group.id
+            )]
+            if blockers and not data.reassign_items:
+                raise PostpartumConflictAlreadyHandledError("衝突項目已被其他處理占用")
+            source_group_ids = {
+                item.replacement_group_id for item in blockers if item.replacement_group_id is not None
+            }
+            source_before = {}
+            for source_group_id in source_group_ids:
+                source_group = self.repository.replacement_group(source_group_id, for_update=True)
+                source_members = [item for item in existing if item.replacement_group_id == source_group_id]
+                if source_group is not None:
+                    source_before[source_group_id] = (source_group, self._group_snapshot(source_group, source_members))
+            for item in current:
+                if (item.case_id, item.original_menu_dish_id) not in requested_keys:
+                    self.repository.delete(item)
+            if data.reassign_items:
+                for item in blockers:
+                    self.repository.delete(item)
+                self.session.flush()
+                remaining = self.repository.conflict_handlings(group.target_date, group.postpartum_meal)
+                for source_group_id, (source_group, before_source) in source_before.items():
+                    source_members = [item for item in remaining if item.replacement_group_id == source_group_id]
+                    if source_members:
+                        self.audit.record(
+                            actor_id=actor_id, action="postpartum_replacement_group_update",
+                            entity_type="postpartum_replacement_group", entity_id=source_group_id,
+                            before_data=before_source,
+                            after_data=self._group_snapshot(source_group, source_members),
+                        )
+                    else:
+                        self.repository.delete(source_group)
+                        self.audit.record(
+                            actor_id=actor_id, action="postpartum_replacement_group_cancel",
+                            entity_type="postpartum_replacement_group", entity_id=source_group_id,
+                            before_data=before_source,
+                        )
+            current_keys = {(item.case_id, item.original_menu_dish_id) for item in current}
+            requested_by_key = {self._handling_key(item): item for item in data.items}
+            for handling in current:
+                key = handling.case_id, handling.original_menu_dish_id
+                requested = requested_by_key.get(key)
+                if requested is not None:
+                    handling.original_dish_id = requested.original_dish_id
+                    handling.updated_by = actor_id
+            for item in data.items:
+                if self._handling_key(item) not in current_keys:
+                    self.repository.add(self._new_handling(
+                        group.target_date, group.postpartum_meal, item, actor_id, group.id,
+                    ))
+            group.replacement_dish_id = data.replacement_dish_id
+            group.note = data.note
+            group.updated_by = actor_id
+            self.session.flush()
+            final = [item for item in self.repository.conflict_handlings(
+                group.target_date, group.postpartum_meal,
+            ) if item.replacement_group_id == group.id]
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_replacement_group_update",
+                entity_type="postpartum_replacement_group", entity_id=group.id,
+                entity_label=dish_model.name, before_data=before,
+                after_data=self._group_snapshot(group, final),
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return self.replacement_group(group.target_date, group.postpartum_meal, group.id)
+
+    def cancel_replacement_group(self, group_id, actor_id):
+        try:
+            group = self.repository.replacement_group(group_id, for_update=True)
+            if group is None:
+                raise PostpartumReplacementGroupNotFoundError()
+            handlings = [item for item in self.repository.conflict_handlings(
+                group.target_date, group.postpartum_meal,
+            ) if item.replacement_group_id == group.id]
+            before = self._group_snapshot(group, handlings)
+            self.repository.delete(group)
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_replacement_group_cancel",
+                entity_type="postpartum_replacement_group", entity_id=group.id,
+                before_data=before,
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def acknowledge_conflict(self, data: ConflictAcknowledgementCreate, actor_id):
+        try:
+            self._validate_conflict_items(data.target_date, data.postpartum_meal, [data.item])
+            if self.repository.conflict_handlings_for_items([data.item.model_dump()], for_update=True):
+                raise PostpartumConflictAlreadyHandledError("衝突項目已被處理")
+            handling = self._new_handling(
+                data.target_date, data.postpartum_meal, data.item, actor_id, note=data.note,
+            )
+            self.repository.add(handling)
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_conflict_acknowledge",
+                entity_type="postpartum_conflict_handling", entity_id=handling.id,
+                after_data={
+                    "target_date": handling.target_date, "postpartum_meal": handling.postpartum_meal,
+                    "case_id": handling.case_id, "original_menu_dish_id": handling.original_menu_dish_id,
+                    "original_dish_id": handling.original_dish_id, "note": handling.note,
+                },
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        values = self.conflict_handlings(data.target_date, data.postpartum_meal)["manual_acknowledgements"]
+        return next(item for item in values if item["id"] == handling.id)
+
+    def cancel_acknowledgement(self, handling_id, actor_id):
+        try:
+            handling = self.repository.conflict_handling(handling_id, for_update=True)
+            if handling is None or handling.replacement_group_id is not None:
+                raise PostpartumConflictHandlingNotFoundError()
+            before = {
+                "target_date": handling.target_date, "postpartum_meal": handling.postpartum_meal,
+                "case_id": handling.case_id, "original_menu_dish_id": handling.original_menu_dish_id,
+                "original_dish_id": handling.original_dish_id, "note": handling.note,
+            }
+            self.repository.delete(handling)
+            self.audit.record(
+                actor_id=actor_id, action="postpartum_conflict_acknowledgement_cancel",
+                entity_type="postpartum_conflict_handling", entity_id=handling.id, before_data=before,
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def _handling_item_view(self, handling, identities, dishes, status, current_conflicts):
+        identity = identities.get(handling.original_menu_dish_id)
+        stale = identity is None or identity["dish_id"] != handling.original_dish_id or (
+            identity is not None and identity["menu_date"] != handling.target_date
+        ) or (handling.case_id, handling.original_menu_dish_id) not in current_conflicts
+        dish = dishes[handling.original_dish_id]
+        warnings = [] if not stale else [{
+            "code": "ORIGINAL_MENU_DISH_STALE",
+            "message": "原菜單菜色已刪除、變更或移至其他日期，請重新確認",
+            "case_id": handling.case_id, "menu_dish_id": handling.original_menu_dish_id,
+        }]
+        return {
+            "id": handling.id, "case_id": handling.case_id,
+            "original_menu_dish_id": handling.original_menu_dish_id,
+            "original_dish": {"id": dish.id, "code": dish.code, "name": dish.name, "is_active": dish.is_active},
+            "status": "requires_reconfirmation" if stale else status,
+            "note": handling.note, "warnings": warnings,
+        }
+
+    def conflict_handlings(self, target_date, postpartum_meal):
+        groups = self.repository.replacement_groups(target_date, postpartum_meal)
+        handlings = self.repository.conflict_handlings(target_date, postpartum_meal)
+        identities = self.repository.menu_dish_identities({item.original_menu_dish_id for item in handlings})
+        dish_ids = {item.original_dish_id for item in handlings} | {item.replacement_dish_id for item in groups}
+        dishes = self.repository.dish_models(dish_ids)
+        context = self._load_conflict_context(target_date, target_date)
+        evaluation = self._menu_conflicts_from_context(target_date, postpartum_meal, context)
+        current_conflicts = set() if not evaluation or not evaluation["evaluation_performed"] else {
+            (item["case_id"], item["menu_dish_id"])
+            for item in evaluation["case_dish_results"] if item["outcome"] == "conflict"
+        }
+        replacement_recipe_map = {item.replacement_dish_id: {} for item in groups}
+        for row in self.repository.conflict_recipe_ingredients(set(replacement_recipe_map)):
+            replacement_recipe_map[row["dish_id"]][row["id"]] = {
+                "id": row["id"], "code": row["code"], "name": row["name"],
+                "is_active": row["is_active"],
+            }
+        group_views = []
+        for group in groups:
+            members = [item for item in handlings if item.replacement_group_id == group.id]
+            item_views = [self._handling_item_view(
+                item, identities, dishes, "replaced", current_conflicts,
+            ) for item in members]
+            replacement = dishes[group.replacement_dish_id]
+            assessment = self._candidate_assessment(
+                {"id": replacement.id, "code": replacement.code, "name": replacement.name,
+                 "is_active": replacement.is_active},
+                sorted({item.case_id for item in members}, key=str), context,
+                replacement_recipe_map,
+            )
+            reconfirm = not replacement.is_active or assessment["status"] == "conflict" or any(
+                item["status"] == "requires_reconfirmation" for item in item_views
+            )
+            group_views.append({
+                "id": group.id, "target_date": group.target_date, "postpartum_meal": group.postpartum_meal,
+                "replacement_dish": assessment["dish"], "note": group.note,
+                "status": "requires_reconfirmation" if reconfirm else "replaced",
+                "candidate_status": assessment["status"], "review_needed": assessment["review_needed"],
+                "warnings": assessment["warnings"], "items": item_views,
+            })
+        acknowledgements = []
+        for item in handlings:
+            if item.replacement_group_id is None:
+                view = self._handling_item_view(
+                    item, identities, dishes, "manually_acknowledged", current_conflicts,
+                )
+                view.update({"target_date": item.target_date, "postpartum_meal": item.postpartum_meal})
+                acknowledgements.append(view)
+        group_statuses = {item["id"]: item["status"] for item in group_views}
+        handling_by_key = {
+            (item.case_id, item.original_menu_dish_id): item for item in handlings
+        }
+        current_dishes = {item["menu_dish_id"]: item["dish"] for item in evaluation["menu_dishes"]}
+        conflict_items = []
+        for result in evaluation["case_dish_results"]:
+            if result["outcome"] != "conflict":
+                continue
+            key = result["case_id"], result["menu_dish_id"]
+            handling = handling_by_key.get(key)
+            if handling is None:
+                item_status = "pending"
+            elif handling.replacement_group_id is None:
+                item_status = "manually_acknowledged"
+            else:
+                item_status = group_statuses.get(handling.replacement_group_id, "requires_reconfirmation")
+            conflict_items.append({
+                "case_id": result["case_id"], "original_menu_dish_id": result["menu_dish_id"],
+                "original_dish": current_dishes[result["menu_dish_id"]], "status": item_status,
+                "handling_id": None if handling is None else handling.id,
+                "replacement_group_id": None if handling is None else handling.replacement_group_id,
+            })
+        return {
+            "target_date": target_date, "postpartum_meal": postpartum_meal,
+            "replacement_groups": group_views, "manual_acknowledgements": acknowledgements,
+            "conflict_items": conflict_items,
+        }
+
+    def replacement_group(self, target_date, postpartum_meal, group_id):
+        result = self.conflict_handlings(target_date, postpartum_meal)
+        for group in result["replacement_groups"]:
+            if group["id"] == group_id:
+                return group
+        raise PostpartumReplacementGroupNotFoundError()
+
+    def revalidate_replacement_group(self, group_id):
+        group = self.repository.replacement_group(group_id)
+        if group is None:
+            raise PostpartumReplacementGroupNotFoundError()
+        return self.replacement_group(group.target_date, group.postpartum_meal, group.id)
 
     def _validate_menu_source(self, data, exclude_source_id=None):
         mapping_meals = [item.postpartum_meal for item in data.mappings]

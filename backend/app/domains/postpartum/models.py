@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -155,3 +155,55 @@ class PostpartumMenuMealMapping(Base):
     menu_meal_type_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("menu_meal_types.id", ondelete="RESTRICT"), nullable=False,
     )
+
+
+class PostpartumReplacementGroup(AuditColumns, Base):
+    __tablename__ = "postpartum_replacement_groups"
+    __table_args__ = (
+        CheckConstraint(meal_check("postpartum_meal"), name="ck_postpartum_replacement_groups_meal"),
+        UniqueConstraint("id", "target_date", "postpartum_meal", name="uq_postpartum_replacement_groups_identity_slot"),
+        Index("ix_postpartum_replacement_groups_target", "target_date", "postpartum_meal", "id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    postpartum_meal: Mapped[str] = mapped_column(String(30), nullable=False)
+    replacement_dish_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("dishes.id", ondelete="RESTRICT"), nullable=False, index=True,
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+class PostpartumConflictHandling(AuditColumns, Base):
+    __tablename__ = "postpartum_conflict_handlings"
+    __table_args__ = (
+        CheckConstraint(meal_check("postpartum_meal"), name="ck_postpartum_conflict_handlings_meal"),
+        ForeignKeyConstraint(
+            ["replacement_group_id", "target_date", "postpartum_meal"],
+            [
+                "postpartum_replacement_groups.id",
+                "postpartum_replacement_groups.target_date",
+                "postpartum_replacement_groups.postpartum_meal",
+            ],
+            ondelete="CASCADE",
+            name="fk_postpartum_conflict_handlings_group_slot",
+        ),
+        UniqueConstraint("case_id", "original_menu_dish_id", name="uq_postpartum_conflict_handlings_item"),
+        Index("ix_postpartum_conflict_handlings_target", "target_date", "postpartum_meal", "id"),
+        Index("ix_postpartum_conflict_handlings_group_id", "replacement_group_id"),
+        Index("ix_postpartum_conflict_handlings_original_menu_dish_id", "original_menu_dish_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    postpartum_meal: Mapped[str] = mapped_column(String(30), nullable=False)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("postpartum_cases.id", ondelete="RESTRICT"), nullable=False, index=True,
+    )
+    # Deliberately not an FK: deleting/changing the ERP MenuDish must leave an identity that can be marked stale.
+    original_menu_dish_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    original_dish_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("dishes.id", ondelete="RESTRICT"), nullable=False, index=True,
+    )
+    replacement_group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    note: Mapped[str | None] = mapped_column(Text)

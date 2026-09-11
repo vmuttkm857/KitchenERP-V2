@@ -131,3 +131,43 @@ def evaluate_case_dish_conflicts(
             })
 
     return dish_views, case_warnings, results
+
+
+def evaluate_replacement_candidates(
+    *, candidate_dishes: list[dict], case_ids: Iterable[uuid.UUID],
+    groups_by_case: dict[uuid.UUID, list[uuid.UUID]], groups: dict[uuid.UUID, dict],
+    dish_targets_by_group: dict[uuid.UUID, dict[uuid.UUID, dict]],
+    ingredient_targets_by_group: dict[uuid.UUID, dict[uuid.UUID, dict]],
+    recipe_ingredients_by_dish: dict[uuid.UUID, dict[uuid.UUID, dict]],
+) -> list[dict]:
+    """Evaluate replacement dishes with the exact Phase 3B UUID rules."""
+    results = []
+    for candidate in candidate_dishes:
+        menu_dish = {
+            "menu_dish_id": candidate["id"], "sort_order": 1,
+            "dish_id": candidate["id"], "dish_code": candidate["code"],
+            "dish_name": candidate["name"], "dish_is_active": candidate["is_active"],
+        }
+        dish_views, case_warnings, case_results = evaluate_case_dish_conflicts(
+            case_ids=case_ids, menu_dishes=[menu_dish], groups_by_case=groups_by_case,
+            groups=groups, dish_targets_by_group=dish_targets_by_group,
+            ingredient_targets_by_group=ingredient_targets_by_group,
+            recipe_ingredients_by_dish=recipe_ingredients_by_dish,
+        )
+        conflicts = [item for item in case_results if item["outcome"] == "conflict"]
+        recipe_empty = dish_views[0]["ingredient_coverage"] == "partial"
+        review_needed = recipe_empty or any(case_warnings.values())
+        status = "conflict" if conflicts else (
+            "insufficient_recipe_data" if recipe_empty else "no_known_conflict"
+        )
+        warnings = list(dish_views[0]["warnings"])
+        for case_id in case_ids:
+            warnings.extend(case_warnings.get(case_id, []))
+        results.append({
+            "dish": candidate, "status": status,
+            "coverage": "partial" if review_needed else "complete",
+            "review_needed": review_needed,
+            "case_results": case_results,
+            "warnings": warnings,
+        })
+    return results

@@ -7,3 +7,7 @@ class PostpartumRestrictionGroupNameExistsError(PostpartumError): pass
 class InvalidPostpartumRestrictionAssociationError(PostpartumError): pass
 class InvalidPostpartumMenuSourceError(PostpartumError): pass
 class PostpartumMenuSourceNotFoundError(PostpartumError): pass
+class PostpartumReplacementGroupNotFoundError(PostpartumError): pass
+class PostpartumConflictHandlingNotFoundError(PostpartumError): pass
+class InvalidPostpartumReplacementError(PostpartumError): pass
+class PostpartumConflictAlreadyHandledError(PostpartumError): pass

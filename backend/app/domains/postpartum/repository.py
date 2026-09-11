@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.domains.dishes.models import Dish
@@ -8,7 +8,8 @@ from app.domains.ingredients.models import Ingredient
 from app.domains.postpartum.models import (
     PostpartumCase, PostpartumCaseRestrictionGroup, PostpartumMenuMealMapping, PostpartumMenuSource,
     PostpartumRestrictionGroup, PostpartumRestrictionGroupDish, PostpartumRestrictionGroupIngredient,
-    PostpartumRoomHistory, PostpartumServicePause,
+    PostpartumRoomHistory, PostpartumServicePause, PostpartumReplacementGroup,
+    PostpartumConflictHandling,
 )
 from app.domains.postpartum.meals import MEAL_ORDER
 from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType
@@ -382,3 +383,69 @@ class PostpartumRepository:
             DishIngredient.dish_id, DishIngredient.sort_order, DishIngredient.id,
         )
         return [dict(row) for row in self.session.execute(statement).mappings()]
+
+    def replacement_group(self, group_id, for_update=False):
+        statement = select(PostpartumReplacementGroup).where(PostpartumReplacementGroup.id == group_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def replacement_groups(self, target_date, postpartum_meal):
+        return list(self.session.scalars(select(PostpartumReplacementGroup).where(
+            PostpartumReplacementGroup.target_date == target_date,
+            PostpartumReplacementGroup.postpartum_meal == postpartum_meal,
+        ).order_by(PostpartumReplacementGroup.id)))
+
+    def conflict_handling(self, handling_id, for_update=False):
+        statement = select(PostpartumConflictHandling).where(PostpartumConflictHandling.id == handling_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def conflict_handlings(self, target_date, postpartum_meal, for_update=False):
+        statement = select(PostpartumConflictHandling).where(
+            PostpartumConflictHandling.target_date == target_date,
+            PostpartumConflictHandling.postpartum_meal == postpartum_meal,
+        ).order_by(PostpartumConflictHandling.replacement_group_id, PostpartumConflictHandling.id)
+        if for_update:
+            statement = statement.with_for_update()
+        return list(self.session.scalars(statement))
+
+    def conflict_handlings_for_items(self, items, for_update=False):
+        if not items:
+            return []
+        keys = [(item["case_id"], item["original_menu_dish_id"]) for item in items]
+        statement = select(PostpartumConflictHandling).where(tuple_(
+            PostpartumConflictHandling.case_id, PostpartumConflictHandling.original_menu_dish_id,
+        ).in_(keys))
+        if for_update:
+            statement = statement.with_for_update()
+        return list(self.session.scalars(statement))
+
+    def replacement_candidate_dishes(self, page, page_size, search=None, category_id=None):
+        filters = [Dish.is_active.is_(True)]
+        if category_id is not None:
+            filters.append(Dish.category_id == category_id)
+        if search:
+            term = f"%{search.strip().lower()}%"
+            filters.append(or_(func.lower(Dish.code).like(term), func.lower(Dish.name).like(term)))
+        total = self.session.scalar(select(func.count()).select_from(Dish).where(*filters)) or 0
+        rows = self.session.execute(select(
+            Dish.id, Dish.code, Dish.name, Dish.is_active,
+        ).where(*filters).order_by(
+            *natural_code_order(Dish.code), Dish.id,
+        ).offset((page - 1) * page_size).limit(page_size)).mappings()
+        return [dict(row) for row in rows], total
+
+    def menu_dish_identities(self, menu_dish_ids):
+        if not menu_dish_ids:
+            return {}
+        rows = self.session.execute(select(
+            MenuDish.id.label("menu_dish_id"), MenuDish.dish_id,
+            MenuDay.menu_date, MenuDay.menu_meal_type_id,
+            Dish.code.label("dish_code"), Dish.name.label("dish_name"),
+            Dish.is_active.label("dish_is_active"),
+        ).join(MenuDay, MenuDay.id == MenuDish.menu_day_id).join(
+            Dish, Dish.id == MenuDish.dish_id,
+        ).where(MenuDish.id.in_(menu_dish_ids))).mappings()
+        return {row["menu_dish_id"]: dict(row) for row in rows}
