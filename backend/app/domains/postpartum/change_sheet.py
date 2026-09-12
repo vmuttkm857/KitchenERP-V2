@@ -126,3 +126,31 @@ def build_change_sheet(target_date, postpartum_meal, handling_view, case_models,
         "requires_reconfirmation": requires_reconfirmation,
         "warnings": [warnings[key] for key in sorted(warnings)],
     }
+
+
+def build_daily_change_sheet(target_date, meals):
+    summary_keys = (
+        "replacement_group_count", "replacement_item_count",
+        "manual_acknowledgement_count", "requires_reconfirmation_count",
+    )
+    summary = {key: sum(item["summary"][key] for item in meals) for key in summary_keys}
+    warnings = {}
+    values = []
+    for item in meals:
+        value = {
+            **item,
+            "has_changes": bool(
+                item["replacement_groups"]
+                or item["manual_acknowledgements"]
+                or item["requires_reconfirmation"]
+            ),
+        }
+        values.append(value)
+        for warning in item["warnings"]:
+            warnings[_warning_key(warning)] = warning
+    return {
+        "target_date": target_date,
+        "summary": summary,
+        "meals": values,
+        "warnings": [warnings[key] for key in sorted(warnings)],
+    }

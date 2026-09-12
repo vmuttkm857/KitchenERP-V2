@@ -1,7 +1,13 @@
+import uuid
+from datetime import date
+
 from sqlalchemy import delete, event, select
 
 from app.domains.menus.models import MenuDish
-from app.domains.postpartum.models import PostpartumRestrictionGroup
+from app.domains.postpartum.change_sheet import build_daily_change_sheet
+from app.domains.postpartum.models import (
+    PostpartumConflictHandling, PostpartumReplacementGroup, PostpartumRestrictionGroup,
+)
 from app.domains.postpartum.meals import MEAL_VALUES
 from tests.api.postpartum.test_menu_conflicts_api import (
     TARGET_DATE, auth, configure_conflict_scenario, create_case,
@@ -10,6 +16,10 @@ from tests.api.postpartum.test_menu_conflicts_api import (
 
 def _path(meal="lunch"):
     return f"/api/v1/postpartum/change-sheet?target_date={TARGET_DATE}&postpartum_meal={meal}"
+
+
+def _daily_path(target_date=TARGET_DATE):
+    return f"/api/v1/postpartum/change-sheet/daily?target_date={target_date}"
 
 
 def _items(evaluation, case_id):
@@ -182,4 +192,151 @@ def test_change_sheet_uses_fixed_read_queries_and_never_writes(client, db_sessio
     selects = [item for item in statements if item.lstrip().upper().startswith("SELECT")]
     writes = [item for item in statements if item.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))]
     assert len(selects) <= 15  # auth + fixed handling/conflict preload + one batch case lookup
+    assert writes == []
+
+
+def test_daily_change_sheet_always_returns_six_canonical_empty_meals(client, db_session):
+    headers = auth(client, db_session)
+    response = client.get(_daily_path(), headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["target_date"] == TARGET_DATE
+    assert [item["postpartum_meal"] for item in body["meals"]] == list(MEAL_VALUES)
+    assert [item["meal_label"] for item in body["meals"]] == [
+        "早餐", "早點", "午餐", "午點", "晚餐", "晚點",
+    ]
+    assert all(item["has_changes"] is False for item in body["meals"])
+    assert all(item["replacement_groups"] == [] for item in body["meals"])
+    assert body["summary"] == {
+        "replacement_group_count": 0, "replacement_item_count": 0,
+        "manual_acknowledgement_count": 0, "requires_reconfirmation_count": 0,
+    }
+    assert body["warnings"] == []
+    # A warning on its own is informational and must not turn an empty meal into a change.
+    meals = body["meals"]
+    meals[0]["warnings"] = [{"code": "INFO_ONLY", "message": "僅供說明"}]
+    warning_only = build_daily_change_sheet(TARGET_DATE, meals)
+    assert warning_only["meals"][0]["has_changes"] is False
+    assert warning_only["warnings"][0]["code"] == "INFO_ONLY"
+    assert client.get(_daily_path("not-a-date"), headers=headers).status_code == 422
+
+
+def test_daily_change_sheet_aggregates_lunch_without_recounting_quantity(client, db_session):
+    headers, _, _, _, _, group, acknowledgement = _configured_handlings(client, db_session)
+    response = client.get(_daily_path(), headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    meals = {item["postpartum_meal"]: item for item in body["meals"]}
+    assert meals["lunch"]["has_changes"] is True
+    assert all(meals[meal]["has_changes"] is False for meal in MEAL_VALUES if meal != "lunch")
+    assert meals["lunch"]["replacement_groups"][0]["group_id"] == group["id"]
+    assert meals["lunch"]["replacement_groups"][0]["quantity"] == 3
+    assert meals["lunch"]["summary"] == {
+        "replacement_group_count": 1, "replacement_item_count": 3,
+        "manual_acknowledgement_count": 1, "requires_reconfirmation_count": 0,
+    }
+    assert meals["lunch"]["manual_acknowledgements"][0]["handling_id"] == acknowledgement["id"]
+    assert body["summary"] == meals["lunch"]["summary"]
+    assert client.get(_daily_path(), headers=headers).json() == body
+
+
+def test_daily_change_sheet_counts_only_the_truly_stale_group_item(client, db_session):
+    headers, _, _, first_items, _, _, acknowledgement = _configured_handlings(client, db_session)
+    assert client.post(
+        f"/api/v1/postpartum/conflict-acknowledgements/{acknowledgement['id']}/cancel",
+        headers=headers,
+    ).status_code == 204
+    db_session.execute(delete(MenuDish).where(
+        MenuDish.id == first_items[0]["original_menu_dish_id"],
+    ))
+    db_session.commit()
+
+    body = client.get(_daily_path(), headers=headers).json()
+    lunch = next(item for item in body["meals"] if item["postpartum_meal"] == "lunch")
+    assert lunch["replacement_groups"][0]["quantity"] == 3
+    assert lunch["replacement_groups"][0]["status"] == "requires_reconfirmation"
+    assert [item["status"] for item in lunch["replacement_groups"][0]["items"]].count(
+        "requires_reconfirmation",
+    ) == 1
+    assert len(lunch["requires_reconfirmation"]) == 1
+    assert lunch["summary"]["requires_reconfirmation_count"] == 1
+    assert body["summary"]["requires_reconfirmation_count"] == 1
+
+
+def test_daily_change_sheet_stale_acknowledgement_stays_in_its_meal(client, db_session):
+    headers, _, _, _, second_items, group, acknowledgement = _configured_handlings(client, db_session)
+    assert client.post(
+        f"/api/v1/postpartum/replacement-groups/{group['id']}/cancel", headers=headers,
+    ).status_code == 204
+    db_session.execute(delete(MenuDish).where(
+        MenuDish.id == second_items[0]["original_menu_dish_id"],
+    ))
+    db_session.commit()
+
+    body = client.get(_daily_path(), headers=headers).json()
+    lunch = next(item for item in body["meals"] if item["postpartum_meal"] == "lunch")
+    assert lunch["manual_acknowledgements"][0]["handling_id"] == acknowledgement["id"]
+    assert lunch["manual_acknowledgements"][0]["status"] == "requires_reconfirmation"
+    assert lunch["requires_reconfirmation"][0]["handling_type"] == "manual_acknowledgement"
+    assert all(
+        item["requires_reconfirmation"] == []
+        for item in body["meals"] if item["postpartum_meal"] != "lunch"
+    )
+
+
+def test_daily_change_sheet_keeps_replacements_from_multiple_meals_separate(client, db_session):
+    headers, _, _, _, second_items, group, acknowledgement = _configured_handlings(client, db_session)
+    assert client.post(
+        f"/api/v1/postpartum/conflict-acknowledgements/{acknowledgement['id']}/cancel",
+        headers=headers,
+    ).status_code == 204
+    source_group = db_session.get(PostpartumReplacementGroup, uuid.UUID(group["id"]))
+    breakfast_group = PostpartumReplacementGroup(
+        id=uuid.uuid4(), target_date=date.fromisoformat(TARGET_DATE), postpartum_meal="breakfast",
+        replacement_dish_id=uuid.UUID(group["replacement_dish"]["id"]), note="早餐異動",
+        created_by=source_group.created_by, updated_by=source_group.updated_by,
+    )
+    db_session.add(breakfast_group)
+    db_session.flush()
+    db_session.add(PostpartumConflictHandling(
+        id=uuid.uuid4(), target_date=date.fromisoformat(TARGET_DATE), postpartum_meal="breakfast",
+        case_id=uuid.UUID(second_items[0]["case_id"]),
+        original_menu_dish_id=uuid.UUID(second_items[0]["original_menu_dish_id"]),
+        original_dish_id=uuid.UUID(second_items[0]["original_dish_id"]),
+        replacement_group_id=breakfast_group.id,
+        created_by=source_group.created_by, updated_by=source_group.updated_by,
+    ))
+    db_session.commit()
+
+    body = client.get(_daily_path(), headers=headers).json()
+    meals = {item["postpartum_meal"]: item for item in body["meals"]}
+    assert meals["breakfast"]["has_changes"] is True
+    assert meals["breakfast"]["replacement_groups"][0]["quantity"] == 1
+    assert meals["lunch"]["has_changes"] is True
+    assert meals["lunch"]["replacement_groups"][0]["quantity"] == 3
+    assert body["summary"]["replacement_group_count"] == 2
+    assert body["summary"]["replacement_item_count"] == 4
+
+
+def test_daily_change_sheet_uses_one_fixed_read_preload_and_never_writes(client, db_session, monkeypatch):
+    headers, *_ = _configured_handlings(client, db_session)
+    statements = []
+    engine = db_session.get_bind()
+
+    def record(_conn, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    def reject_commit():
+        raise AssertionError("daily read endpoint must not commit")
+
+    monkeypatch.setattr(db_session, "commit", reject_commit)
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        response = client.get(_daily_path(), headers=headers)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert response.status_code == 200, response.text
+    selects = [item for item in statements if item.lstrip().upper().startswith("SELECT")]
+    writes = [item for item in statements if item.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))]
+    assert len(selects) <= 15  # auth + one all-meal handling/conflict preload + one batch case lookup
     assert writes == []

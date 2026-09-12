@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.domains.postpartum.conflicts import evaluate_case_dish_conflicts, evaluate_replacement_candidates
-from app.domains.postpartum.change_sheet import build_change_sheet
+from app.domains.postpartum.change_sheet import build_change_sheet, build_daily_change_sheet
 from app.domains.postpartum.exceptions import (
     InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError,
     PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
@@ -680,24 +680,36 @@ class PostpartumService:
             "note": handling.note, "warnings": warnings,
         }
 
-    def _conflict_handlings_with_evaluation(self, target_date, postpartum_meal):
+    def _load_change_sheet_context(self, target_date, postpartum_meal=None):
         groups = self.repository.replacement_groups(target_date, postpartum_meal)
         handlings = self.repository.conflict_handlings(target_date, postpartum_meal)
         identities = self.repository.menu_dish_identities({item.original_menu_dish_id for item in handlings})
         dish_ids = {item.original_dish_id for item in handlings} | {item.replacement_dish_id for item in groups}
         dishes = self.repository.dish_models(dish_ids)
-        context = self._load_conflict_context(target_date, target_date)
-        evaluation = self._menu_conflicts_from_context(target_date, postpartum_meal, context)
-        current_conflicts = set() if not evaluation or not evaluation["evaluation_performed"] else {
-            (item["case_id"], item["menu_dish_id"])
-            for item in evaluation["case_dish_results"] if item["outcome"] == "conflict"
-        }
         replacement_recipe_map = {item.replacement_dish_id: {} for item in groups}
         for row in self.repository.conflict_recipe_ingredients(set(replacement_recipe_map)):
             replacement_recipe_map[row["dish_id"]][row["id"]] = {
                 "id": row["id"], "code": row["code"], "name": row["name"],
                 "is_active": row["is_active"],
             }
+        return {
+            "groups": groups, "handlings": handlings, "identities": identities,
+            "dishes": dishes, "conflict_context": self._load_conflict_context(target_date, target_date),
+            "replacement_recipe_map": replacement_recipe_map,
+        }
+
+    def _conflict_handlings_from_context(self, target_date, postpartum_meal, preload):
+        groups = [item for item in preload["groups"] if item.postpartum_meal == postpartum_meal]
+        handlings = [item for item in preload["handlings"] if item.postpartum_meal == postpartum_meal]
+        identities = preload["identities"]
+        dishes = preload["dishes"]
+        context = preload["conflict_context"]
+        evaluation = self._menu_conflicts_from_context(target_date, postpartum_meal, context)
+        current_conflicts = set() if not evaluation or not evaluation["evaluation_performed"] else {
+            (item["case_id"], item["menu_dish_id"])
+            for item in evaluation["case_dish_results"] if item["outcome"] == "conflict"
+        }
+        replacement_recipe_map = preload["replacement_recipe_map"]
         group_views = []
         for group in groups:
             members = [item for item in handlings if item.replacement_group_id == group.id]
@@ -758,6 +770,12 @@ class PostpartumService:
             "conflict_items": conflict_items,
         }, evaluation
 
+    def _conflict_handlings_with_evaluation(self, target_date, postpartum_meal):
+        return self._conflict_handlings_from_context(
+            target_date, postpartum_meal,
+            self._load_change_sheet_context(target_date, postpartum_meal),
+        )
+
     def conflict_handlings(self, target_date, postpartum_meal):
         return self._conflict_handlings_with_evaluation(target_date, postpartum_meal)[0]
 
@@ -769,6 +787,28 @@ class PostpartumService:
         } | {item["case_id"] for item in handling_view["manual_acknowledgements"]}
         cases = self.repository.case_models(case_ids)
         return build_change_sheet(target_date, postpartum_meal, handling_view, cases, evaluation)
+
+    def change_sheet_daily(self, target_date):
+        preload = self._load_change_sheet_context(target_date)
+        views = [
+            self._conflict_handlings_from_context(target_date, meal, preload)
+            for meal in MEAL_VALUES
+        ]
+        case_ids = {
+            item["case_id"]
+            for handling_view, _ in views
+            for group in handling_view["replacement_groups"] for item in group["items"]
+        } | {
+            item["case_id"]
+            for handling_view, _ in views
+            for item in handling_view["manual_acknowledgements"]
+        }
+        cases = self.repository.case_models(case_ids)
+        meals = [
+            build_change_sheet(target_date, meal, handling_view, cases, evaluation)
+            for meal, (handling_view, evaluation) in zip(MEAL_VALUES, views)
+        ]
+        return build_daily_change_sheet(target_date, meals)
 
     def replacement_group(self, target_date, postpartum_meal, group_id):
         result = self.conflict_handlings(target_date, postpartum_meal)

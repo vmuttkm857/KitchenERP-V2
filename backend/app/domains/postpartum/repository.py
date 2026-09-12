@@ -394,11 +394,15 @@ class PostpartumRepository:
             statement = statement.with_for_update()
         return self.session.scalar(statement)
 
-    def replacement_groups(self, target_date, postpartum_meal):
-        return list(self.session.scalars(select(PostpartumReplacementGroup).where(
+    def replacement_groups(self, target_date, postpartum_meal=None):
+        statement = select(PostpartumReplacementGroup).where(
             PostpartumReplacementGroup.target_date == target_date,
-            PostpartumReplacementGroup.postpartum_meal == postpartum_meal,
-        ).order_by(PostpartumReplacementGroup.id)))
+        )
+        if postpartum_meal is not None:
+            statement = statement.where(PostpartumReplacementGroup.postpartum_meal == postpartum_meal)
+        return list(self.session.scalars(statement.order_by(
+            PostpartumReplacementGroup.postpartum_meal, PostpartumReplacementGroup.id,
+        )))
 
     def conflict_handling(self, handling_id, for_update=False):
         statement = select(PostpartumConflictHandling).where(PostpartumConflictHandling.id == handling_id)
@@ -406,11 +410,17 @@ class PostpartumRepository:
             statement = statement.with_for_update()
         return self.session.scalar(statement)
 
-    def conflict_handlings(self, target_date, postpartum_meal, for_update=False):
+    def conflict_handlings(self, target_date, postpartum_meal=None, for_update=False):
         statement = select(PostpartumConflictHandling).where(
             PostpartumConflictHandling.target_date == target_date,
-            PostpartumConflictHandling.postpartum_meal == postpartum_meal,
-        ).order_by(PostpartumConflictHandling.replacement_group_id, PostpartumConflictHandling.id)
+        )
+        if postpartum_meal is not None:
+            statement = statement.where(PostpartumConflictHandling.postpartum_meal == postpartum_meal)
+        statement = statement.order_by(
+            PostpartumConflictHandling.postpartum_meal,
+            PostpartumConflictHandling.replacement_group_id,
+            PostpartumConflictHandling.id,
+        )
         if for_update:
             statement = statement.with_for_update()
         return list(self.session.scalars(statement))

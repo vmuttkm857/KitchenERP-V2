@@ -613,3 +613,14 @@ class ChangeSheetResponse(BaseModel):
     manual_acknowledgements: list[ChangeSheetAcknowledgement]
     requires_reconfirmation: list[ChangeSheetReconfirmationItem]
     warnings: list[MenuConflictWarning] = Field(default_factory=list)
+
+
+class ChangeSheetMealResponse(ChangeSheetResponse):
+    has_changes: bool
+
+
+class ChangeSheetDailyResponse(BaseModel):
+    target_date: date
+    summary: ChangeSheetSummary
+    meals: list[ChangeSheetMealResponse]
+    warnings: list[MenuConflictWarning] = Field(default_factory=list)

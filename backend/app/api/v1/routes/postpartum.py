@@ -24,7 +24,7 @@ from app.domains.postpartum.schemas import (
     ReplacementCandidateSearch, ReplacementCandidateList, ReplacementCandidatePublic,
     ReplacementGroupCreate, ReplacementGroupUpdate, ReplacementGroupPublic,
     ConflictAcknowledgementCreate, ConflictAcknowledgementPublic, ConflictHandlingList,
-    ChangeSheetResponse,
+    ChangeSheetDailyResponse, ChangeSheetResponse,
 )
 from app.domains.postpartum.meals import Meal
 from app.domains.postpartum.service import PostpartumService
@@ -103,6 +103,17 @@ def change_sheet(target_date: date, postpartum_meal: Meal,
     try:
         return ChangeSheetResponse.model_validate(
             PostpartumService(session).change_sheet(target_date, postpartum_meal)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.get("/change-sheet/daily", response_model=ChangeSheetDailyResponse)
+def change_sheet_daily(target_date: date,
+                       session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return ChangeSheetDailyResponse.model_validate(
+            PostpartumService(session).change_sheet_daily(target_date)
         )
     except Exception as exc:
         raise error(exc) from exc
