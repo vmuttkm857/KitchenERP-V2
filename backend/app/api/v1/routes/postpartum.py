@@ -25,9 +25,11 @@ from app.domains.postpartum.schemas import (
     ReplacementGroupCreate, ReplacementGroupUpdate, ReplacementGroupPublic,
     ConflictAcknowledgementCreate, ConflictAcknowledgementPublic, ConflictHandlingList,
     ChangeSheetDailyResponse, ChangeSheetResponse,
+    CateringOverviewResponse,
 )
 from app.domains.postpartum.meals import Meal
 from app.domains.postpartum.change_sheet_docx import render_daily_change_sheet_docx
+from app.domains.postpartum.catering_overview_docx import render_catering_overview_docx
 from app.domains.postpartum.service import PostpartumService
 from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta
@@ -129,6 +131,35 @@ def change_sheet_daily_docx(target_date: date,
         filename = f"postpartum-change-sheet-{target_date.isoformat()}.docx"
         return Response(
             content=document,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.get("/catering-overview", response_model=CateringOverviewResponse)
+def catering_overview(target_date: date,
+                      session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        return CateringOverviewResponse.model_validate(
+            PostpartumService(session).catering_overview(target_date)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.get("/catering-overview.docx")
+def catering_overview_docx(target_date: date,
+                           session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        payload = PostpartumService(session).catering_overview(target_date)
+        filename = f"postpartum-catering-overview-{target_date.isoformat()}.docx"
+        return Response(
+            content=render_catering_overview_docx(payload),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',

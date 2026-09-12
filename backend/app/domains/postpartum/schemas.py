@@ -98,6 +98,36 @@ class CaseList(BaseModel):
     pagination: PaginationMeta
 
 
+class CateringOverviewMeal(BaseModel):
+    meal: Meal
+    label: str
+
+
+class CateringOverviewItem(BaseModel):
+    case_id: uuid.UUID
+    case_number: str
+    name: str
+    current_room: str
+    preparation_mode: PreparationMode
+    preparation_mode_label: str
+    service_start_date: date
+    service_start_meal: Meal
+    service_start_meal_label: str
+    service_end_date: date | None
+    service_end_meal: Meal | None
+    service_end_meal_label: str | None
+    restriction_groups: list[CaseRestrictionGroupSummary] = Field(default_factory=list)
+    service_note: str | None = None
+    service_meals: list[CateringOverviewMeal] = Field(default_factory=list)
+
+
+class CateringOverviewResponse(BaseModel):
+    target_date: date
+    weekday_label: str
+    total: int
+    items: list[CateringOverviewItem]
+
+
 class RoomChangeCreate(BaseModel):
     room: str = Field(max_length=100)
     effective_date: date

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.domains.audit.service import AuditLogService, audit_snapshot
 from app.domains.postpartum.conflicts import evaluate_case_dish_conflicts, evaluate_replacement_candidates
 from app.domains.postpartum.change_sheet import build_change_sheet, build_daily_change_sheet
+from app.domains.postpartum.catering_overview import build_catering_overview
 from app.domains.postpartum.exceptions import (
     InvalidPostpartumDataError, InvalidPostpartumMenuSourceError, InvalidPostpartumRestrictionAssociationError,
     PostpartumCaseNotFoundError, PostpartumPauseNotFoundError,
@@ -809,6 +810,16 @@ class PostpartumService:
             for meal, (handling_view, evaluation) in zip(MEAL_VALUES, views)
         ]
         return build_daily_change_sheet(target_date, meals)
+
+    def catering_overview(self, target_date):
+        cases = self.repository.conflict_case_candidates_range(target_date, target_date)
+        case_ids = [case.id for case in cases]
+        return build_catering_overview(
+            target_date,
+            cases,
+            self.repository.conflict_pauses(case_ids),
+            self.repository.conflict_case_groups(case_ids),
+        )
 
     def replacement_group(self, target_date, postpartum_meal, group_id):
         result = self.conflict_handlings(target_date, postpartum_meal)

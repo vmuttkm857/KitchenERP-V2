@@ -18,6 +18,7 @@ import { RestrictionGroupsPage } from '../features/postpartum/RestrictionGroupsP
 import { PostpartumMenuSourcePage } from '../features/postpartum/PostpartumMenuSourcePage'
 import { PostpartumConflictPage } from '../features/postpartum/PostpartumConflictPage'
 import { PostpartumChangeSheetPage } from '../features/postpartum/PostpartumChangeSheetPage'
+import { PostpartumCateringOverviewPage } from '../features/postpartum/PostpartumCateringOverviewPage'
 import { RecipeEditor } from '../features/recipes/RecipeEditor'
 import { ProductionProfilePage } from '../features/production/ProductionProfilePage'
 import { RequirementsPage } from '../features/requirements/RequirementsPage'
@@ -26,11 +27,11 @@ import { SuppliersPage } from '../features/suppliers/SuppliersPage'
 import { ChangePasswordDialog, UsersPage } from '../features/users/UsersPage'
 import { NavigationBlockerProvider, useNavigationBlocker } from './NavigationBlocker'
 
-type Page='categories'|'suppliers'|'ingredients'|'nutrition'|'dishes'|'recipe'|'production-profile'|'menus'|'menu-editor'|'postpartum'|'postpartum-restrictions'|'postpartum-menu-source'|'postpartum-conflicts'|'postpartum-change-sheet'|'requirements'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
+type Page='categories'|'suppliers'|'ingredients'|'nutrition'|'dishes'|'recipe'|'production-profile'|'menus'|'menu-editor'|'postpartum'|'postpartum-restrictions'|'postpartum-menu-source'|'postpartum-conflicts'|'postpartum-change-sheet'|'postpartum-catering-overview'|'requirements'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
 const businessGroups=[
   {label:'主檔管理',items:[['categories','分類'],['suppliers','供應商'],['ingredients','食材'],['nutrition','營養資料'],['dishes','菜色／配方']]},
   {label:'菜單',items:[['menus','菜單管理'],['kitchen','廚房作業']]},
-  {label:'月子餐',items:[['postpartum','個案管理'],['postpartum-restrictions','禁忌群組管理'],['postpartum-menu-source','菜單來源／週期'],['postpartum-conflicts','禁忌總覽'],['postpartum-change-sheet','每日異動單']]},
+  {label:'月子餐',items:[['postpartum','個案管理'],['postpartum-restrictions','禁忌群組管理'],['postpartum-menu-source','菜單來源／週期'],['postpartum-conflicts','禁忌總覽'],['postpartum-change-sheet','每日異動單'],['postpartum-catering-overview','供餐總覽']]},
   {label:'需求／採購',items:[['requirements','食材需求'],['snapshots','固定需求快照'],['purchases','正式採購']]},
 ] as const
 const systemGroup={label:'系統管理',items:[['users','使用者管理'],['audit','操作紀錄']]} as const
@@ -54,6 +55,7 @@ function NavIcon({page}:{page:NavPage}){
     'postpartum-menu-source':'M5 3h14v18H5V3Zm3 4h8m-8 4h8m-8 4h5',
     'postpartum-conflicts':'M12 3 3 20h18L12 3Zm0 6v5m0 3h.01',
     'postpartum-change-sheet':'M5 3h14v18H5V3Zm3 5h8m-8 4h8m-8 4h5M3 7h4',
+    'postpartum-catering-overview':'M4 4h16v16H4V4Zm3 4h2m3 0h5M7 12h2m3 0h5M7 16h2m3 0h5',
     requirements:'M7 3h10v4H7V3ZM5 5H3v16h18V5h-2M7 11h10M7 15h7',
     snapshots:'M5 4h14v16H5V4Zm3-2h8v4H8V2Zm0 8h8m-8 4h8',
     purchases:'M3 5h2l2 10h10l3-7H6m3 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z',
@@ -99,6 +101,7 @@ function Application(){
       {page==='postpartum-menu-source'&&<PostpartumMenuSourcePage/>}
       {page==='postpartum-conflicts'&&<PostpartumConflictPage/>}
       {page==='postpartum-change-sheet'&&<PostpartumChangeSheetPage onOpenConflicts={()=>navigate('postpartum-conflicts')}/>}
+      {page==='postpartum-catering-overview'&&<PostpartumCateringOverviewPage/>}
       {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage/>}{page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
       {page==='users'&&user.role==='admin'&&<UsersPage/>}{page==='audit'&&user.role==='admin'&&<AuditLogsPage/>}
     </main>
