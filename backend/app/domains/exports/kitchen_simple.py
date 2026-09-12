@@ -4,12 +4,14 @@ from decimal import Decimal
 from io import BytesIO
 
 from openpyxl import Workbook
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.pagebreak import Break
 from PIL import Image, ImageDraw
 
 from app.domains.exports.menu_row_planner import plan_menu_dish_rows
-from app.domains.exports.raster_pdf import GREEN, INK, LINE, MUTED, PALE_GREEN, font, images_to_pdf, page_image, wrap_text
+from app.domains.exports.raster_pdf import GREEN, INK, LINE, MUTED, PALE_GREEN, font, images_to_pdf, page_image, text_width, wrap_text
 from app.domains.exports.safety import safe_cell_text
 from app.shared.domain.quantities import convert_quantity, normalize_unit
 
@@ -67,6 +69,25 @@ def _dish_lines(dish: dict) -> list[str]:
     return lines
 
 
+def _dish_rich_text(dish: dict) -> CellRichText:
+    heading = InlineFont(sz=13, b=True, color=INK.lstrip("#"))
+    servings = InlineFont(sz=10.5, b=False, color=INK.lstrip("#"))
+    detail = InlineFont(sz=9.5, b=False, color=INK.lstrip("#"))
+    value = CellRichText(
+        TextBlock(heading, str(dish["dish_name"])),
+        TextBlock(servings, f'　{dish["diner_count"]}人'),
+    )
+    for line in _dish_lines(dish)[1:]:
+        value.append(TextBlock(detail, f"\n{line}"))
+    return value
+
+
+def _excel_line_count(dish: dict) -> int:
+    heading = f'{dish["dish_name"]}　{dish["diner_count"]}人'
+    heading_lines = max(1, (len(heading) + 14) // 15)
+    return heading_lines + len(_dish_lines(dish)) - 1
+
+
 def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
     workbook = Workbook(); del workbook["Sheet"]
     plans=simple_page_plan(result)
@@ -91,12 +112,14 @@ def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
                 max_lines=1
                 for day_i in range(7):
                     dishes=plan["slots"].get((plan["dates"][day_i],meal["id"]),[]) if day_i<len(plan["dates"]) else []
-                    text="\n".join(_dish_lines(dishes[offset])) if offset<len(dishes) and dishes[offset] is not None else ""
-                    max_lines=max(max_lines,text.count("\n")+1 if text else 1);sheet.cell(row,day_i+3,safe_cell_text(text))
+                    dish=dishes[offset] if offset<len(dishes) else None
+                    if dish is not None:
+                        max_lines=max(max_lines,_excel_line_count(dish));sheet.cell(row,day_i+3).value=_dish_rich_text(dish)
+                    else:sheet.cell(row,day_i+3,"")
                 for col in range(1,10):
                     cell=sheet.cell(row,col);cell.font=Font(size=base_size+(2 if col==1 else 0),bold=col<=2,color="244B32" if col<=2 else INK.lstrip("#"))
                     cell.fill=PatternFill("solid",fgColor="F3F8F4" if col<=2 else "FFFFFF");cell.alignment=Alignment(horizontal="center" if col<=2 else "left",vertical="center" if col<=2 else "top",wrap_text=True);cell.border=Border(left=THIN,right=THIN,top=THIN,bottom=THIN)
-                sheet.row_dimensions[row].height=min(250,max(50,max_lines*(base_size+5)))*(1.25 if variant=="poster" else 1);row+=1
+                sheet.row_dimensions[row].height=min(250,max(50,max_lines*(base_size+5)+5))*(1.25 if variant=="poster" else 1);row+=1
             if meal["row_count"]>1:sheet.merge_cells(start_row=start_row,start_column=1,end_row=row-1,end_column=1)
             ends.append(row-1)
         last = max(2, row-1); sheet.print_area = f"A1:I{last}"
@@ -107,20 +130,34 @@ def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
     stream = BytesIO(); workbook.save(stream); return stream.getvalue()
 
 
+def _pdf_dish_layout(draw: ImageDraw.ImageDraw, dish: dict, width: float, scale: float = 1):
+    available=width-16;dish_font=font(13*scale);serving_font=font(10.5*scale);detail_font=font(9.5*scale);warning_font=font(6.5*scale)
+    lines=[[(value,dish_font,GREEN,True)] for value in wrap_text(draw,dish["dish_name"],dish_font,available)]
+    serving=f'  {dish["diner_count"]}人'
+    if text_width(draw,lines[-1][0][0],dish_font)+text_width(draw,serving,serving_font)<=available:
+        lines[-1].append((serving,serving_font,GREEN,False))
+    else:lines.append([(serving.strip(),serving_font,GREEN,False)])
+    for ingredient in dish["ingredients"]:
+        qty,unit=display_ingredient(ingredient);text=f'• {ingredient["ingredient_name"] or "食材資料缺失"} {qty} {unit}'
+        lines.extend([[(value,detail_font,INK,False)] for value in wrap_text(draw,text,detail_font,available)])
+    if _warning(dish):lines.extend([[(value,warning_font,"#8A5200",False)] for value in wrap_text(draw,WARNING_TEXT,warning_font,available)])
+    heights=[max(segment[1].getbbox("國Ag")[3]-segment[1].getbbox("國Ag")[1] for segment in line)+3 for line in lines]
+    return lines,heights
+
+
 def _draw_pdf_dish(draw: ImageDraw.ImageDraw, dish: dict, left: float, top: float, width: float, height: float) -> None:
     padding=8
-    for body_size in (7,6.5,6,5.5,5,4.5,4):
-        heading_font=font(body_size+1);body_font=font(body_size);warning_font=font(max(4,body_size-.5));lines=[]
-        lines.extend((value,heading_font,GREEN) for value in wrap_text(draw,f'{dish["dish_name"]}  {dish["diner_count"]}人',heading_font,width-padding*2))
-        for ingredient in dish["ingredients"]:
-            qty,unit=display_ingredient(ingredient);text=f'• {ingredient["ingredient_name"] or "食材資料缺失"} {qty} {unit}'
-            lines.extend((value,body_font,INK) for value in wrap_text(draw,text,body_font,width-padding*2))
-        if _warning(dish):lines.extend((value,warning_font,"#8A5200") for value in wrap_text(draw,WARNING_TEXT,warning_font,width-padding*2))
-        line_heights=[text_font.getbbox("國Ag")[3]-text_font.getbbox("國Ag")[1]+3 for _,text_font,_ in lines]
-        if sum(line_heights)<=height-padding*2 or body_size==4:break
+    for scale in (1,.92,.84,.76,.68,.6):
+        lines,line_heights=_pdf_dish_layout(draw,dish,width,scale)
+        if sum(line_heights)<=height-padding*2 or scale==.6:break
     cursor=top+padding
-    for (value,text_font,color),line_height in zip(lines,line_heights):
-        draw.text((left+padding,cursor),value,font=text_font,fill=color);cursor+=line_height
+    for line,line_height in zip(lines,line_heights):
+        x=left+padding
+        for value,text_font,color,bold in line:
+            kwargs={"font":text_font,"fill":color}
+            if bold:kwargs.update(stroke_width=1,stroke_fill=color)
+            draw.text((x,cursor),value,**kwargs);x+=text_width(draw,value,text_font)
+        cursor+=line_height
 
 
 def kitchen_simple_pdf(result: dict) -> bytes:

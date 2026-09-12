@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from copy import deepcopy
 
 import pytest
+from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl import load_workbook
 from PIL import ImageDraw
 from pypdf import PdfReader
@@ -170,6 +171,36 @@ def test_kitchen_week_keeps_hierarchy_safe_rows_and_human_warning():
     assert WARNING_TEXT in text and "ZERO_RECIPE_QUANTITY" not in text and "薑　不可計算 g" in text
 
 
+def test_kitchen_simple_excel_uses_rich_text_hierarchy_without_changing_content():
+    payload=kitchen_simple_workbook(kitchen_result())
+    plain=load_workbook(BytesIO(payload)).active["C3"].value
+    rich=load_workbook(BytesIO(payload),rich_text=True).active["C3"].value
+    assert plain=="香菇雞　100人\n　• 雞腿　12 kg\n　• 米酒　1.5 L\n　• 薑　不可計算 g\n"+WARNING_TEXT
+    assert isinstance(rich,CellRichText)
+    blocks=[value for value in rich if isinstance(value,TextBlock)]
+    assert blocks[0].text=="香菇雞" and blocks[0].font.sz==13 and blocks[0].font.b is True
+    assert blocks[1].text=="　100人" and blocks[1].font.sz==10.5 and blocks[1].font.b is False
+    ingredient=next(block for block in blocks if "雞腿" in block.text)
+    assert ingredient.font.sz==9.5 and ingredient.font.b is False
+
+
+def test_kitchen_simple_pdf_uses_dish_serving_and_ingredient_font_hierarchy(monkeypatch):
+    dish=kitchen_result()["days"][0]["meals"][0]["dishes"][0]
+    image=kitchen_simple_module.page_image("landscape");draw=ImageDraw.Draw(image);calls=[]
+    original=ImageDraw.ImageDraw.text
+    def capture(target,xy,value,*args,**kwargs):
+        calls.append((value,kwargs.get("font"),kwargs.get("stroke_width",0)));return original(target,xy,value,*args,**kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw,"text",capture)
+    kitchen_simple_module._draw_pdf_dish(draw,dish,0,0,360,500)
+    name=next(call for call in calls if call[0]=="香菇雞")
+    serving=next(call for call in calls if "100人" in call[0])
+    ingredient=next(call for call in calls if "雞腿" in call[0])
+    assert name[1].size==kitchen_simple_module.font(13).size
+    assert serving[1].size==kitchen_simple_module.font(10.5).size
+    assert ingredient[1].size==kitchen_simple_module.font(9.5).size
+    assert name[2]==1 and serving[2]==0 and ingredient[2]==0
+
+
 def test_kitchen_simple_columns_use_assignments_and_ignore_label_only_meals():
     result=kitchen_result(meal_count=1);meal_id=result["days"][0]["meals"][0]["meal_type_id"]
     result["meal_type_columns"]=[
@@ -217,7 +248,7 @@ def test_kitchen_simple_pdf_draws_menu_column_header(monkeypatch):
         drawn.append(value);return original(draw,xy,value,*args,**kwargs)
     monkeypatch.setattr(ImageDraw.ImageDraw,"text",capture)
     kitchen_simple_pdf(result)
-    assert "菜單欄位" in drawn and "主菜" in drawn and WARNING_TEXT in drawn
+    assert "菜單欄位" in drawn and "主菜" in drawn and WARNING_TEXT in "".join(drawn)
 
 
 def test_kitchen_poster_and_pdf_print_contracts():
