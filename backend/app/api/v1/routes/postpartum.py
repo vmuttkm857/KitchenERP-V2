@@ -27,6 +27,7 @@ from app.domains.postpartum.schemas import (
     ChangeSheetDailyResponse, ChangeSheetResponse,
 )
 from app.domains.postpartum.meals import Meal
+from app.domains.postpartum.change_sheet_docx import render_daily_change_sheet_docx
 from app.domains.postpartum.service import PostpartumService
 from app.domains.users.models import User
 from app.shared.schemas import PaginationMeta
@@ -114,6 +115,25 @@ def change_sheet_daily(target_date: date,
     try:
         return ChangeSheetDailyResponse.model_validate(
             PostpartumService(session).change_sheet_daily(target_date)
+        )
+    except Exception as exc:
+        raise error(exc) from exc
+
+
+@router.get("/change-sheet/daily.docx")
+def change_sheet_daily_docx(target_date: date,
+                            session: Annotated[Session, Depends(get_db_session)]):
+    try:
+        payload = PostpartumService(session).change_sheet_daily(target_date)
+        document = render_daily_change_sheet_docx(payload)
+        filename = f"postpartum-change-sheet-{target_date.isoformat()}.docx"
+        return Response(
+            content=document,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-Content-Type-Options": "nosniff",
+            },
         )
     except Exception as exc:
         raise error(exc) from exc

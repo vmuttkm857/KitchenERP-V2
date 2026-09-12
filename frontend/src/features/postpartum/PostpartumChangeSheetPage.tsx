@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, apiRequest } from '../../api/client'
+import { ApiError, apiDownload, apiRequest } from '../../api/client'
 import { addYmdDays, todayTaipeiYmd } from './conflictTypes'
 import type {
   ChangeSheetAcknowledgement, ChangeSheetDailyResponse, ChangeSheetMealResponse,
@@ -65,6 +65,7 @@ function MealSection({meal}:{meal:ChangeSheetMealResponse}){
 export function PostpartumChangeSheetPage({onOpenConflicts}:{onOpenConflicts?:()=>void}){
   const [targetDate,setTargetDate]=useState(todayTaipeiYmd)
   const [data,setData]=useState<ChangeSheetDailyResponse|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState('')
+  const [exportingWord,setExportingWord]=useState(false),[exportError,setExportError]=useState('')
   const requestSequence=useRef(0)
   const load=useCallback(async()=>{
     const request=++requestSequence.current;setLoading(true);setError('')
@@ -77,11 +78,18 @@ export function PostpartumChangeSheetPage({onOpenConflicts}:{onOpenConflicts?:()
     }finally{if(request===requestSequence.current)setLoading(false)}
   },[targetDate])
   useEffect(()=>{void load();return()=>{requestSequence.current+=1}},[load])
+  async function exportWord(){
+    setExportingWord(true);setExportError('')
+    try{await apiDownload(`/postpartum/change-sheet/daily.docx?${new URLSearchParams({target_date:targetDate})}`)}
+    catch{setExportError('Word 異動單匯出失敗，請稍後再試。')}
+    finally{setExportingWord(false)}
+  }
   const isEmpty=Boolean(data&&data.summary.replacement_item_count===0&&data.summary.manual_acknowledgement_count===0&&data.summary.requires_reconfirmation_count===0)
 
   return <section className="postpartum-change-sheet-page">
-    <div className="section-heading"><div><h2>月子餐每日異動單</h2><small>依日期查看當日六餐異動，供廚房製作與核對。</small></div>{onOpenConflicts&&<button type="button" className="secondary" onClick={onOpenConflicts}>前往禁忌總覽處理</button>}</div>
+    <div className="section-heading"><div><h2>月子餐每日異動單</h2><small>依日期查看當日六餐異動，供廚房製作與核對。</small></div><div className="actions"><button type="button" disabled={exportingWord} onClick={()=>void exportWord()}>{exportingWord?'匯出中…':'匯出 Word'}</button>{onOpenConflicts&&<button type="button" className="secondary" onClick={onOpenConflicts}>前往禁忌總覽處理</button>}</div></div>
     <div className="postpartum-change-controls"><div className="postpartum-change-date-nav"><button type="button" onClick={()=>setTargetDate(addYmdDays(targetDate,-1))}>前一天</button><button type="button" onClick={()=>setTargetDate(todayTaipeiYmd())}>今天</button><button type="button" onClick={()=>setTargetDate(addYmdDays(targetDate,1))}>下一天</button><label>日期<input type="date" required value={targetDate} onChange={event=>setTargetDate(event.target.value)}/></label></div></div>
+    {exportError&&<div className="feedback feedback-error"><p>{exportError}</p></div>}
     {error&&<div className="feedback feedback-error"><p>{error}</p><button type="button" onClick={()=>void load()}>重新載入</button></div>}
     {loading?<div className="state-panel"><span className="spinner"/>每日異動單載入中…</div>:data&&<>
       <div className="postpartum-change-context"><strong>{data.target_date}</strong><div><span>替代製作：{data.summary.replacement_item_count} 項</span><span>人工確認：{data.summary.manual_acknowledgement_count} 項</span><span>待重新確認：{data.summary.requires_reconfirmation_count} 項</span></div></div>

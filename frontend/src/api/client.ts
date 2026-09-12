@@ -95,8 +95,16 @@ export async function apiDownload(path: string, init?: RequestInit): Promise<voi
   const fallback = disposition.match(/filename="([^"]+)"/i)?.[1]
   const filename = encoded ? decodeURIComponent(encoded) : fallback ?? 'export'
   const url = URL.createObjectURL(await response.blob())
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click()
-  URL.revokeObjectURL(url)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  // Let the browser consume the object URL before releasing it. Immediate
+  // revocation can cancel the download or turn it into a page navigation.
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 export async function apiBlobUrl(path:string):Promise<string>{

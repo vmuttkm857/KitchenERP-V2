@@ -6,11 +6,37 @@ const app=readFileSync(new URL('../src/app/App.tsx',import.meta.url),'utf8')
 const page=readFileSync(new URL('../src/features/postpartum/PostpartumChangeSheetPage.tsx',import.meta.url),'utf8')
 const types=readFileSync(new URL('../src/features/postpartum/changeSheetTypes.ts',import.meta.url),'utf8')
 const css=readFileSync(new URL('../src/features/postpartum/PostpartumChangeSheetPage.css',import.meta.url),'utf8')
+const client=readFileSync(new URL('../src/api/client.ts',import.meta.url),'utf8')
 
 test('daily change sheet navigation remains read-only',()=>{
   assert.match(app,/PostpartumChangeSheetPage/);assert.match(app,/postpartum-change-sheet/);assert.match(app,/每日異動單/)
   assert.match(page,/月子餐每日異動單/);assert.match(page,/前往禁忌總覽處理/)
   assert.doesNotMatch(page,/method:'(?:POST|PUT|PATCH|DELETE)'/)
+})
+
+test('Word export uses the authenticated download helper for the selected date',()=>{
+  assert.match(page,/apiDownload/)
+  assert.match(page,/\/postpartum\/change-sheet\/daily\.docx\?\$\{new URLSearchParams\(\{target_date:targetDate\}\)\}/)
+  assert.doesNotMatch(page,/daily\.docx[^`]*postpartum_meal/)
+  assert.match(page,/exportingWord\?'匯出中…':'匯出 Word'/)
+  assert.match(page,/disabled=\{exportingWord\}/)
+  assert.match(page,/Word 異動單匯出失敗/)
+  assert.match(client,/if \(!response\.ok\) throw new Error\(`Download failed with status/)
+  assert.match(client,/Content-Disposition/)
+  assert.match(client,/response\.blob\(\)/)
+  assert.match(client,/anchor\.download = filename/)
+  assert.match(client,/document\.body\.appendChild\(anchor\)/)
+  assert.match(client,/anchor\.remove\(\)/)
+  assert.match(client,/window\.setTimeout\(\(\) => URL\.revokeObjectURL\(url\), 0\)/)
+})
+
+test('Word export state cannot replace or reload the daily preview',()=>{
+  const handler=page.match(/async function exportWord\(\)\{([\s\S]*?)\n  \}/)?.[1]??''
+  assert.match(handler,/setExportingWord\(true\)/)
+  assert.match(handler,/finally\{setExportingWord\(false\)\}/)
+  for(const forbidden of ['setLoading(', 'setData(', 'setTargetDate(', 'requestSequence'])assert.doesNotMatch(handler,new RegExp(forbidden.replace('(','\\(')))
+  assert.match(page,/loading\?<div className="state-panel"/)
+  assert.match(page,/data&&<>/)
 })
 
 test('one date request loads the authoritative daily endpoint with stale protection',()=>{
