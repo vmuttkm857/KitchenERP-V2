@@ -13,11 +13,12 @@ from app.domains.menus.exceptions import (
     MealTypeNameExistsError, MealTypeNotFoundError, MenuInUseError, MenuNotFoundError,
 )
 from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType, MenuMealTypeColumn
+from app.domains.menus.placement import menu_dish_visual_rows
 from app.domains.menus.repository import MenuRepository
 from app.domains.menus.schemas import (
     CopyDayCommand, CopyWeekCommand, MealTypeColumnCreate, MealTypeColumnReorder,
     MealTypeColumnUpdate, MealTypeCreate, MealTypeReorder, MealTypeUpdate, MenuCreate,
-    MenuEditorSave, MenuUpdate,
+    MenuDishMove, MenuEditorSave, MenuUpdate,
 )
 
 
@@ -286,6 +287,96 @@ class MenuService:
             self.session.commit()
         except Exception:
             self.session.rollback(); raise
+        return self.aggregate(menu_id)
+
+    def move_menu_dish(self,menu_id,data:MenuDishMove,actor_id):
+        menu=self.repository.menu_model(menu_id,for_update=True)
+        if menu is None:raise MenuNotFoundError()
+        before=self.aggregate(menu_id)
+        try:
+            source_row=self.repository.menu_dish_position(data.source_menu_dish_id,for_update=True)
+            if source_row is None or source_row[1].menu_id!=menu_id:
+                raise InvalidMenuStructureError("Source menu dish does not belong to this menu")
+            source,source_day=source_row
+            if not (menu.start_date<=data.target_date<=menu.end_date):
+                raise InvalidMenuStructureError("Target date is outside menu range")
+            target_meal=self._meal(menu_id,data.target_meal_type_id)
+            if not target_meal.is_active:
+                raise InvalidMenuStructureError("Inactive meal type cannot receive a moved dish")
+            target_day=self.repository.day_for_slot(menu_id,data.target_date,target_meal.id,for_update=True)
+            day_ids={source_day.id}
+            if target_day is not None:day_ids.add(target_day.id)
+            locked_dishes=self.repository.details(day_ids,for_update=True)
+            source_dishes=[dish for dish in locked_dishes if dish.menu_day_id==source_day.id]
+            target_dishes=source_dishes if target_day is not None and target_day.id==source_day.id else [
+                dish for dish in locked_dishes if target_day is not None and dish.menu_day_id==target_day.id]
+            source_columns=self.repository.meal_type_columns(source_day.menu_meal_type_id)
+            target_columns=self.repository.meal_type_columns(target_meal.id)
+            source_rows=menu_dish_visual_rows(source_columns,source_dishes)
+            target_rows=source_rows if target_dishes is source_dishes else menu_dish_visual_rows(target_columns,target_dishes)
+            if data.insert_index>len(target_rows):
+                raise InvalidMenuStructureError("Target menu row changed; reload and try again")
+            before_id=target_rows[data.insert_index-1].dish.id if data.insert_index and target_rows[data.insert_index-1].dish else None
+            after_id=target_rows[data.insert_index].dish.id if data.insert_index<len(target_rows) and target_rows[data.insert_index].dish else None
+            if before_id!=data.before_menu_dish_id or after_id!=data.after_menu_dish_id:
+                raise InvalidMenuStructureError("Target insertion position changed; reload and try again")
+            same_day=target_day is not None and target_day.id==source_day.id
+            if not same_day and any(dish.dish_id==source.dish_id for dish in target_dishes):
+                raise DuplicateMenuDishError()
+            source_index=next((index for index,row in enumerate(source_rows) if row.dish and row.dish.id==source.id),None)
+            if source_index is None:raise InvalidMenuStructureError("Source menu dish position is unavailable")
+            target_values=[row.dish for row in target_rows]
+            insert_index=data.insert_index
+            if same_day:
+                if insert_index in (source_index,source_index+1):return self.aggregate(menu_id)
+                target_values.pop(source_index)
+                if source_index<insert_index:insert_index-=1
+                while len(target_values)<max(len(target_columns),1):target_values.append(None)
+            else:
+                source_values=[row.dish for row in source_rows]
+                source_values.pop(source_index)
+                while len(source_values)<max(len(source_columns),1):source_values.append(None)
+            if insert_index<len(target_values) and target_values[insert_index] is None:
+                target_values[insert_index]=source
+            elif insert_index>0 and target_values[insert_index-1] is None:
+                target_values[insert_index-1]=source
+            else:
+                target_values.insert(insert_index,source)
+            required=max(len(target_columns),sum(item is not None for item in target_values),1)
+            while len(target_values)>required and target_values[-1] is None:target_values.pop()
+            while len(target_values)<required:target_values.append(None)
+            if target_day is None:
+                target_day=MenuDay(menu_id=menu_id,menu_date=data.target_date,
+                    menu_meal_type_id=target_meal.id,created_by=actor_id,updated_by=actor_id)
+                self.repository.add(target_day);self.session.flush()
+            placements={}
+            order=0
+            for index,dish in enumerate(target_values):
+                if dish is None:continue
+                order+=1
+                column_id=target_columns[index].id if index<len(target_columns) else None
+                placements[dish.id]=(target_day.id,column_id,order)
+            if not same_day:
+                order=0
+                for dish in source_values:
+                    if dish is None:continue
+                    order+=1
+                    placements[dish.id]=(source_day.id,dish.menu_meal_type_column_id,order)
+            changed=list({dish.id:dish for dish in (*source_dishes,*target_dishes)}.values())
+            self.repository.replace_menu_dish_positions(changed,placements,actor_id)
+            after=self.aggregate(menu_id)
+            self.audit.record(actor_id=actor_id,action="menu_dish_move",entity_type="menu",
+                entity_id=menu.id,entity_label=menu.name,before_data=before,after_data=after,
+                metadata={"operation":"insert","source_menu_dish_id":data.source_menu_dish_id,
+                    "target_date":data.target_date,
+                    "target_meal_type_id":data.target_meal_type_id,
+                    "insert_index":data.insert_index,"before_menu_dish_id":data.before_menu_dish_id,
+                    "after_menu_dish_id":data.after_menu_dish_id})
+            self.session.commit()
+        except IntegrityError as exc:
+            self.session.rollback();raise InvalidMenuStructureError("Menu dish move conflicts with the current menu state") from exc
+        except Exception:
+            self.session.rollback();raise
         return self.aggregate(menu_id)
 
     def copy_day(self, destination_menu_id, command: CopyDayCommand, actor_id):

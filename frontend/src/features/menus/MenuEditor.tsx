@@ -4,6 +4,8 @@ import { Feedback, LoadingState } from '../../components/ui/Page'
 import { MenuEditorPanel } from './MenuEditorPanel'
 import { MenuColumnDialog } from './MenuColumnDialog'
 import { MenuWeekGrid } from './MenuWeekGrid'
+import { menuDishMovePayload, menuSlotsVisuallyEquivalent, mergeAuthoritativeSlotMetadata, optimisticallyInsertMenuDish } from './menuDrag'
+import type { MenuDishInsertTarget } from './menuDrag'
 import { DishCategoryOption, DishOption, List, MealType, Menu, MenuAggregate, MenuDish, MenuSlot } from './types'
 import { useEditorDirty } from '../../app/NavigationBlocker'
 import { PaginationControls } from '../../components/ui/PaginationControls'
@@ -33,6 +35,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const [mealDrafts, setMealDrafts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [movingDish,setMovingDish]=useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [dialog, setDialog] = useState<'meal' | 'copy' | 'export' | 'production' | null>(null)
@@ -179,6 +182,23 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
     }
     finally { setSaving(false) }
   }
+  async function moveMenuDish(sourceMenuDishId:string,target:MenuDishInsertTarget){
+    if(movingDish)return
+    const optimistic=optimisticallyInsertMenuDish(slots,data?.meal_type_columns??[],sourceMenuDishId,target)
+    if(!optimistic){setError('此位置無法安全移動菜色，請重新載入後再試。');return}
+    setSlots(optimistic)
+    setMovingDish(true);setError('');setMessage('')
+    try{
+      const aggregate=await apiRequest<MenuAggregate>(`/menus/${menu.id}/dish-move`,{method:'POST',body:JSON.stringify(menuDishMovePayload(sourceMenuDishId,target))})
+      if(menuSlotsVisuallyEquivalent(optimistic,aggregate.slots)){
+        setSlots(current=>mergeAuthoritativeSlotMetadata(current,aggregate.slots))
+      }else applyAggregate(aggregate)
+      setMessage('菜色已移動')
+    }catch{
+      setError('菜色移動失敗，已重新載入目前菜單。')
+      try{applyAggregate(await apiRequest<MenuAggregate>(`/menus/${menu.id}/editor`))}catch{setError('菜色移動失敗，且重新載入菜單失敗；請重新開啟菜單。')}
+    }finally{setMovingDish(false)}
+  }
   async function addMeal(event: FormEvent) { event.preventDefault(); try { await apiRequest(`/menus/${menu.id}/meal-types`, { method: 'POST', body: JSON.stringify({ name: mealName, sort_order: (data?.meal_types.length ?? 0) + 1 }) }); setMealName(''); await load() } catch { setError('餐別新增失敗，名稱不可重複') } }
   async function saveMeal(meal: MealType) { try { await apiRequest(`/menus/${menu.id}/meal-types/${meal.id}`, { method: 'PATCH', body: JSON.stringify({ name: mealDrafts[meal.id] }) }); await load() } catch { setError('餐別修改失敗') } }
   async function toggleMeal(meal: MealType) { try { await apiRequest(`/menus/${menu.id}/meal-types/${meal.id}/${meal.is_active ? 'deactivate' : 'reactivate'}`, { method: 'POST' }); await load() } catch { setError('餐別狀態更新失敗') } }
@@ -215,7 +235,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   return <section className="menu-editor-page">
     <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={() => openDialog('export')}>匯出</button><button onClick={() => openDialog('production')}>標準食譜卡／廚房製作單</button><button className="secondary" onClick={onClose}>返回</button></div></header>
     {error && <Feedback type="error">{error}</Feedback>}{message && <Feedback type="success">{message}</Feedback>}
-    {!meals.length ? <div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div> : <div className="menu-editor-workspace"><MenuWeekGrid dates={data.dates} meals={meals} columns={data.meal_type_columns} selectedKey={editingKey} slotFor={slotFor} onSelect={selectCell} onEditColumns={meal=>setColumnMealId(meal.id)}/></div>}
+    {!meals.length ? <div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div> : <div className="menu-editor-workspace"><MenuWeekGrid dates={data.dates} meals={meals} columns={data.meal_type_columns} selectedKey={editingKey} slotFor={slotFor} onSelect={selectCell} onEditColumns={meal=>setColumnMealId(meal.id)} onMoveDish={moveMenuDish} movingDish={movingDish}/></div>}
     {columnMealId&&<MenuColumnDialog menuId={menu.id} meal={data.meal_types.find(meal=>meal.id===columnMealId)!} columns={data.meal_type_columns.filter(column=>column.menu_meal_type_id===columnMealId)} onChanged={load} onClose={()=>setColumnMealId(null)}/>}
     {editing && <MenuEditorPanel date={editing.date} meal={editing.meal} columns={data.meal_type_columns} slot={editing.slot} search={dishSearch} categoryId={dishCategoryId} categories={dishCategories} results={dishResults} searchTotal={dishTotal} searchPage={dishPage} searchLoading={dishLoading} searchInputRef={searchInputRef} onClose={requestCloseMeal} onSave={saveMealDraft} saving={saving} saveError={mealSaveError} onSlotNotes={notes => setMealDraftSlot({ ...editing.slot, notes })} onDishChange={(index, changes) => updateDish(editing.slot, index, changes)} onMove={(index, direction) => moveDish(editing.slot, index, direction)} onRemove={index => setConfirmation({ kind: 'remove-dish', index })} onSearch={value => { setDishSearch(value); setDishPage(1) }} onCategory={value => { setDishCategoryId(value); setDishPage(1) }} onSearchPage={setDishPage} onAdd={dish => addDish(editing.slot, dish)}/>}
     {dialog === 'meal' && <div className="modal-backdrop" onMouseDown={() => setDialog(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="meal-title" onMouseDown={event => event.stopPropagation()}><header><h2 id="meal-title">餐別設定</h2><button className="secondary" onClick={() => setDialog(null)}>關閉</button></header><form className="inline-form" onSubmit={addMeal}><label>新餐別名稱<input autoFocus value={mealName} onChange={event => setMealName(event.target.value)} required/></label><button>新增餐別</button></form><div className="meal-list">{data.meal_types.map(meal => <div key={meal.id} className={!meal.is_active ? 'inactive' : ''}><label>名稱<input value={mealDrafts[meal.id] ?? meal.name} onChange={event => setMealDrafts({ ...mealDrafts, [meal.id]: event.target.value })}/></label><button className="secondary" aria-label={`${meal.name} 上移`} onClick={() => void moveMeal(meal, -1)}>上移</button><button className="secondary" aria-label={`${meal.name} 下移`} onClick={() => void moveMeal(meal, 1)}>下移</button><button onClick={() => void saveMeal(meal)}>儲存</button><button className="secondary" onClick={() => void toggleMeal(meal)}>{meal.is_active ? '停用' : '恢復'}</button></div>)}</div></section></div>}

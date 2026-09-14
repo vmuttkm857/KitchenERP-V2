@@ -180,6 +180,15 @@ button.secondary-danger { color:#8f2424; background:#fff; border:1px solid #d8aa
 .meal-cell-button:focus-visible { position:relative; z-index:2; outline:3px solid #2f6f43; outline-offset:-3px; }
 .cell-dishes { display:grid; gap:.35rem; }
 .cell-dish { display:flex; align-items:flex-start; justify-content:space-between; gap:.45rem; padding:.32rem .42rem; background:#edf4ef; border-radius:.35rem; }
+.cell-dish[draggable="true"] { cursor:grab; }
+.cell-dish[draggable="true"]:active { cursor:grabbing; }
+.menu-editor-workspace .meal-cell.is-drag-source { opacity:.5; }
+.menu-editor-workspace .meal-cell.is-insert-before,
+.menu-editor-workspace .meal-cell.is-insert-after { position:relative; background:#f2f8f3; }
+.menu-editor-workspace .meal-cell.is-insert-before::before,
+.menu-editor-workspace .meal-cell.is-insert-after::after { content:""; position:absolute; z-index:4; left:.2rem; right:.2rem; height:4px; border-radius:2px; background:#2f7d45; pointer-events:none; }
+.menu-editor-workspace .meal-cell.is-insert-before::before { top:-2px; }
+.menu-editor-workspace .meal-cell.is-insert-after::after { bottom:-2px; }
 .cell-dish strong { display:-webkit-box; min-width:0; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; line-height:1.25; }
 .cell-dish span { flex:0 0 auto; color:#536259; font-size:.76rem; }
 .cell-empty { display:flex; min-height:6rem; align-items:center; justify-content:center; color:#39724a; font-weight:750; }

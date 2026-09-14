@@ -18,7 +18,7 @@ from app.domains.menus.exceptions import (
 from app.domains.menus.schemas import (
     CopyDayCommand, CopyWeekCommand, MealTypeColumnCreate, MealTypeColumnPublic,
     MealTypeColumnReorder, MealTypeColumnUpdate, MealTypeCreate, MealTypePublic, MealTypeReorder, MealTypeUpdate,
-    MenuCreate, MenuEditorAggregate, MenuEditorSave, MenuList, MenuPublic, MenuUpdate,
+    MenuCreate, MenuDishMove, MenuEditorAggregate, MenuEditorSave, MenuList, MenuPublic, MenuUpdate,
 )
 from app.domains.menus.service import MenuService
 from app.domains.users.models import User
@@ -172,6 +172,12 @@ def editor(menu_id:uuid.UUID,session:Annotated[Session,Depends(get_db_session)])
 @router.put("/{menu_id}/editor",response_model=MenuEditorAggregate)
 def save_editor(menu_id:uuid.UUID,data:MenuEditorSave,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
     try:return MenuEditorAggregate.model_validate(MenuService(session).save_editor(menu_id,data,user.id))
+    except Exception as exc:raise error(exc) from exc
+
+
+@router.post("/{menu_id}/dish-move",response_model=MenuEditorAggregate)
+def move_menu_dish(menu_id:uuid.UUID,data:MenuDishMove,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return MenuEditorAggregate.model_validate(MenuService(session).move_menu_dish(menu_id,data,user.id))
     except Exception as exc:raise error(exc) from exc
 
 

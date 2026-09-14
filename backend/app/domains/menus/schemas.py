@@ -121,6 +121,15 @@ class MenuEditorSave(BaseModel):
     slots: list[MenuSlotInput] = Field(max_length=5000)
 
 
+class MenuDishMove(BaseModel):
+    source_menu_dish_id: uuid.UUID
+    target_date: date
+    target_meal_type_id: uuid.UUID
+    insert_index: int = Field(ge=0)
+    before_menu_dish_id: uuid.UUID | None = None
+    after_menu_dish_id: uuid.UUID | None = None
+
+
 class MenuDishPublic(BaseModel):
     id: uuid.UUID
     dish_id: uuid.UUID

@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete as sa_delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.domains.categories.models import DishCategory, MenuCategory
@@ -13,7 +13,9 @@ class MenuRepository:
     def __init__(self, session: Session): self.session = session
     def add(self, value): self.session.add(value)
     def delete(self, value): self.session.delete(value)
-    def menu_model(self, menu_id): return self.session.get(Menu, menu_id)
+    def menu_model(self, menu_id, for_update=False):
+        if not for_update: return self.session.get(Menu, menu_id)
+        return self.session.scalar(select(Menu).where(Menu.id==menu_id).with_for_update())
     def category(self, category_id): return self.session.get(MenuCategory, category_id)
     def meal_type(self, meal_type_id): return self.session.get(MenuMealType, meal_type_id)
     def meal_type_column(self, column_id): return self.session.get(MenuMealTypeColumn, column_id)
@@ -60,9 +62,35 @@ class MenuRepository:
         return self.session.scalar(stmt.limit(1)) is not None
     def days(self, menu_id):
         return list(self.session.scalars(select(MenuDay).where(MenuDay.menu_id==menu_id)))
-    def details(self, day_ids: set[uuid.UUID]):
+    def details(self, day_ids: set[uuid.UUID], for_update=False):
         if not day_ids: return []
-        return list(self.session.scalars(select(MenuDish).where(MenuDish.menu_day_id.in_(day_ids)).order_by(MenuDish.sort_order, MenuDish.id)))
+        statement=select(MenuDish).where(MenuDish.menu_day_id.in_(day_ids)).order_by(MenuDish.sort_order, MenuDish.id)
+        if for_update:statement=statement.with_for_update()
+        return list(self.session.scalars(statement))
+    def menu_dish_position(self, menu_dish_id, for_update=False):
+        statement=select(MenuDish,MenuDay).join(MenuDay,MenuDay.id==MenuDish.menu_day_id).where(MenuDish.id==menu_dish_id)
+        if for_update: statement=statement.with_for_update()
+        return self.session.execute(statement).first()
+    def day_for_slot(self,menu_id,menu_date,meal_type_id,for_update=False):
+        statement=select(MenuDay).where(MenuDay.menu_id==menu_id,MenuDay.menu_date==menu_date,
+            MenuDay.menu_meal_type_id==meal_type_id)
+        if for_update:statement=statement.with_for_update()
+        return self.session.scalar(statement)
+    def replace_menu_dish_positions(self,dishes,placements,actor_id):
+        values=[]
+        for dish in dishes:
+            row={column.name:getattr(dish,column.name) for column in MenuDish.__table__.columns}
+            day_id,column_id,sort_order=placements[dish.id]
+            row.update(menu_day_id=day_id,menu_meal_type_column_id=column_id,
+                sort_order=sort_order,updated_by=actor_id)
+            row.pop("updated_at",None)
+            values.append(row);self.session.expunge(dish)
+        self.session.execute(sa_delete(MenuDish).where(MenuDish.id.in_([row["id"] for row in values])))
+        self.session.flush()
+        replacements=tuple(MenuDish(**row) for row in values)
+        for replacement in replacements:self.session.add(replacement)
+        self.session.flush()
+        return replacements
     def aggregate_rows(self, menu_id):
         return list(self.session.execute(select(
             MenuDay.id.label("menu_day_id"), MenuDay.menu_date, MenuDay.menu_meal_type_id, MenuDay.notes.label("slot_notes"),
