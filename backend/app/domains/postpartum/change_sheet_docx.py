@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from io import BytesIO
 
 from docx import Document
@@ -15,6 +16,7 @@ FONT_NAME = "Microsoft JhengHei"
 HEADER_FILL = "D9EAD3"
 WARNING_FILL = "FFF2CC"
 BORDER_COLOR = "D9D9D9"
+WEEKDAY_LABELS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
 
 def _set_run_font(run, size=10, bold=False, color=None):
@@ -44,17 +46,27 @@ def _shade_cell(cell, fill):
     shading = properties.find(qn("w:shd"))
     if shading is None:
         shading = OxmlElement("w:shd")
-        properties.append(shading)
+        properties.insert_element_before(
+            shading, "w:noWrap", "w:tcMar", "w:textDirection", "w:tcFitText",
+            "w:vAlign", "w:hideMark", "w:headers", "w:cellIns", "w:cellDel",
+            "w:cellMerge", "w:tcPrChange",
+        )
     shading.set(qn("w:fill"), fill)
 
 
-def _set_cell_margins(cell, top=80, start=90, bottom=80, end=90):
+def _set_cell_margins(cell, top=80, left=90, bottom=80, right=90):
     properties = cell._tc.get_or_add_tcPr()
     margins = properties.first_child_found_in("w:tcMar")
     if margins is None:
         margins = OxmlElement("w:tcMar")
-        properties.append(margins)
-    for edge, value in (("top", top), ("start", start), ("bottom", bottom), ("end", end)):
+        properties.insert_element_before(
+            margins, "w:textDirection", "w:tcFitText", "w:vAlign", "w:hideMark",
+            "w:headers", "w:cellIns", "w:cellDel", "w:cellMerge", "w:tcPrChange",
+        )
+    # Word 2007 expects the ECMA-376 transitional left/right margin names.
+    # The newer direction-aware start/end elements make Word 2007 reject
+    # document.xml even though current Word versions tolerate them.
+    for edge, value in (("top", top), ("left", left), ("bottom", bottom), ("right", right)):
         element = margins.find(qn(f"w:{edge}"))
         if element is None:
             element = OxmlElement(f"w:{edge}")
@@ -74,6 +86,70 @@ def _repeat_header(row):
     header = OxmlElement("w:tblHeader")
     header.set(qn("w:val"), "true")
     properties.append(header)
+
+
+def _set_no_wrap(cell):
+    properties = cell._tc.get_or_add_tcPr()
+    if properties.find(qn("w:noWrap")) is None:
+        no_wrap = OxmlElement("w:noWrap")
+        properties.insert_element_before(
+            no_wrap, "w:tcMar", "w:textDirection", "w:tcFitText", "w:vAlign",
+            "w:hideMark", "w:headers", "w:cellIns", "w:cellDel", "w:cellMerge",
+            "w:tcPrChange",
+        )
+
+
+def _set_header_table_borders(table):
+    properties = table._tbl.tblPr
+    borders = properties.find(qn("w:tblBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        properties.insert_element_before(
+            borders, "w:shd", "w:tblLayout", "w:tblCellMar", "w:tblLook",
+            "w:tblPrChange",
+        )
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        element = borders.find(qn(f"w:{edge}"))
+        if element is None:
+            element = OxmlElement(f"w:{edge}")
+            borders.append(element)
+        element.set(qn("w:val"), "single" if edge == "bottom" else "nil")
+        if edge == "bottom":
+            element.set(qn("w:sz"), "4")
+            element.set(qn("w:space"), "0")
+            element.set(qn("w:color"), BORDER_COLOR)
+
+
+def _add_title_row(document, target_date):
+    parsed_date = target_date if isinstance(target_date, date) else date.fromisoformat(str(target_date))
+    date_label = parsed_date.strftime("%Y/%m/%d")
+    weekday_label = WEEKDAY_LABELS[parsed_date.weekday()]
+    table = document.add_table(rows=1, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = False
+    widths = (7.2, 10.4)
+    for column, width in zip(table.columns, widths):
+        column.width = Cm(width)
+    for cell, width in zip(table.rows[0].cells, widths):
+        cell.width = Cm(width)
+        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+        _set_cell_margins(cell, top=25, left=20, bottom=80, right=20)
+        _set_no_wrap(cell)
+    left, right = table.rows[0].cells
+    left.text = ""
+    left_paragraph = left.paragraphs[0]
+    left_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    left_paragraph.paragraph_format.space_after = Pt(0)
+    _set_run_font(left_paragraph.add_run("月子餐每日異動單"), size=20, bold=True)
+    right.text = ""
+    right_paragraph = right.paragraphs[0]
+    right_paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    right_paragraph.paragraph_format.space_after = Pt(0)
+    _set_run_font(
+        right_paragraph.add_run(f"日期：{date_label}（{weekday_label}）"), size=20, bold=True,
+    )
+    _set_header_table_borders(table)
+    return table
 
 
 def _style_table(table, widths, *, warning_rows=()):
@@ -106,15 +182,13 @@ def _add_heading(document, text, level=1):
 def _dish_text(dish):
     if not dish:
         return "—"
-    code = str(dish.get("code") or "").strip()
     name = str(dish.get("name") or "").strip()
-    return " ".join(part for part in (code, name) if part) or "—"
+    return name or "—"
 
 
 def _case_text(item):
     name = str(item.get("case_name") or "").strip()
-    number = str(item.get("case_number") or "").strip()
-    return f"{name}\n{number}" if number else name or "—"
+    return name or "—"
 
 
 def _restriction_text(item):
@@ -131,29 +205,6 @@ def _add_warning_paragraph(document, text):
     paragraph.paragraph_format.space_after = Pt(3)
     paragraph.paragraph_format.keep_together = True
     _set_run_font(paragraph.add_run(f"⚠ {text}"), size=10, bold=True, color="9C6500")
-
-
-def _add_kitchen_table(document, groups):
-    if not groups:
-        return
-    _add_heading(document, "廚房製作", 2)
-    table = document.add_table(rows=1, cols=4)
-    for cell, value in zip(table.rows[0].cells, ("替代菜", "份數", "床號", "備註")):
-        _set_cell_text(cell, value, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
-    warning_rows = []
-    for group in groups:
-        stale = group.get("status") == "requires_reconfirmation"
-        row = table.add_row()
-        prefix = "⚠ 待重新確認\n" if stale else ""
-        _set_cell_text(row.cells[0], prefix + _dish_text(group.get("replacement_dish")))
-        _set_cell_text(row.cells[1], group.get("quantity", 0), align=WD_ALIGN_PARAGRAPH.CENTER)
-        _set_cell_text(row.cells[2], "、".join(group.get("case_rooms") or []) or "—")
-        note = str(group.get("note") or "").strip()
-        if stale:
-            note = "此替代內容尚需營養師重新確認" + (f"\n{note}" if note else "")
-            warning_rows.append(len(table.rows) - 1)
-        _set_cell_text(row.cells[3], note or "—")
-    _style_table(table, (5.8, 1.4, 3.1, 6.1), warning_rows=warning_rows)
 
 
 def _add_replacement_details(document, groups):
@@ -206,6 +257,7 @@ def _add_reconfirmation(document, items):
     if not items:
         return
     _add_heading(document, "⚠ 待重新確認", 2)
+    _add_warning_paragraph(document, "此替代內容尚需營養師重新確認")
     for item in items:
         treatment = "人工確認不需替代"
         if item.get("handling_type") == "replacement":
@@ -242,29 +294,8 @@ def render_daily_change_sheet_docx(data: dict) -> bytes:
         style.font.color.rgb = RGBColor(0, 0, 0)
         style._element.rPr.rFonts.set(qn("w:eastAsia"), FONT_NAME)
 
-    title = document.add_paragraph(style="Title")
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title.paragraph_format.space_after = Pt(5)
-    _set_run_font(title.add_run("月子餐每日異動單"), size=18, bold=True)
     target_date = data["target_date"]
-    if hasattr(target_date, "strftime"):
-        target_label = target_date.strftime("%Y/%m/%d")
-    else:
-        target_label = str(target_date).replace("-", "/")
-    date_paragraph = document.add_paragraph()
-    date_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    date_paragraph.paragraph_format.space_after = Pt(5)
-    _set_run_font(date_paragraph.add_run(f"日期：{target_label}"), size=11, bold=True)
-
-    summary = data["summary"]
-    summary_paragraph = document.add_paragraph()
-    summary_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    summary_paragraph.paragraph_format.space_after = Pt(7)
-    _set_run_font(summary_paragraph.add_run(
-        f"替代製作：{summary['replacement_item_count']} 項｜人工確認：{summary['manual_acknowledgement_count']} 項｜待重新確認：{summary['requires_reconfirmation_count']} 項"
-    ), size=9.5)
-    if summary["requires_reconfirmation_count"]:
-        _add_warning_paragraph(document, f"今日共有 {summary['requires_reconfirmation_count']} 項異動需要重新確認")
+    _add_title_row(document, target_date)
 
     for meal in data["meals"]:
         if not meal.get("has_changes"):
@@ -275,7 +306,6 @@ def render_daily_change_sheet_docx(data: dict) -> bytes:
             _set_run_font(paragraph.add_run("無異動"), size=10, color="666666")
             continue
         _add_heading(document, meal["meal_label"], 1)
-        _add_kitchen_table(document, meal.get("replacement_groups", []))
         _add_replacement_details(document, meal.get("replacement_groups", []))
         _add_acknowledgements(document, meal.get("manual_acknowledgements", []))
         stale_items = meal.get("requires_reconfirmation", [])
