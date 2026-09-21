@@ -2,6 +2,7 @@ import { DragEvent, useEffect, useRef, useState } from 'react'
 import { MealType, MealTypeColumn, MenuSlot } from './types'
 import { mealGridRows } from './menuGridRows'
 import { canInsertMenuDish, MenuDishInsertTarget } from './menuDrag'
+import { mealSectionTone } from './mealSectionTone'
 
 interface Props {
   dates: string[]
@@ -40,10 +41,11 @@ export function MenuWeekGrid({ dates, meals, columns, selectedKey, slotFor, onSe
   return <div className="menu-matrix" aria-label="一週菜單表格">
     <table>
       <thead><tr><th className="sticky-col">餐別</th><th className="menu-column-heading">菜單欄位</th>{dates.map(date => <th key={date}><span>{dateLabel(date)}</span><small>{date}</small></th>)}</tr></thead>
-      <tbody>{meals.flatMap(meal => {
+      <tbody>{meals.flatMap((meal,mealIndex) => {
         const rows=mealGridRows(dates,meal,columns,slotFor)
-        return rows.map((row,rowIndex)=><tr key={`${meal.id}:${rowIndex}`}>
-        {rowIndex===0&&<th className="sticky-col" rowSpan={rows.length}>{meal.name}{!meal.is_active && <small>已停用（歷史）</small>}</th>}
+        const tone=mealSectionTone(mealIndex)
+        return rows.map((row,rowIndex)=><tr className={`menu-meal-row ${tone}${rowIndex===0?' menu-meal-row-start':''}${rowIndex===rows.length-1?' menu-meal-row-end':''}`} data-meal-id={meal.id} data-meal-index={mealIndex} key={`${meal.id}:${rowIndex}`}>
+        {rowIndex===0&&<th className="sticky-col meal-name-cell" rowSpan={rows.length}>{meal.name}{!meal.is_active && <small>已停用（歷史）</small>}</th>}
         <th className="menu-column-cell"><button onClick={()=>onEditColumns(meal)} aria-label={`編輯 ${meal.name} 菜單欄位`}>{row.label}</button></th>
         {dates.map((date,dateIndex) => {
           const slot = slotFor(date,meal)
