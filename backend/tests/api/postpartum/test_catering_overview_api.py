@@ -2,6 +2,7 @@ from zipfile import ZipFile
 from io import BytesIO
 
 from sqlalchemy import event
+from openpyxl import load_workbook
 
 from app.domains.users.schemas import CreateUserCommand
 from app.domains.users.service import UserService
@@ -69,6 +70,15 @@ def test_catering_overview_api_eligibility_groups_and_docx(client, db_session):
     for text in ("2026 年 09 月 12 日", "星期六", "供餐總床數：2 床", "不牛", "個案002", "少鹽"):
         assert text in xml
 
+    spreadsheet = client.get("/api/v1/postpartum/catering-overview.xlsx?target_date=2026-09-12", headers=headers)
+    assert spreadsheet.status_code == 200
+    assert spreadsheet.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    assert spreadsheet.headers["content-disposition"] == 'attachment; filename="postpartum-catering-overview-2026-09-12.xlsx"'
+    sheet = load_workbook(BytesIO(spreadsheet.content)).active
+    assert sheet.title == "1150912"
+    assert [sheet[cell].value for cell in ("A2", "D2")] == ["2", "10"]
+    assert sheet["A1"].value == "製表日期115/9/12"
+
 
 def test_catering_overview_requires_auth_and_has_empty_state(client, db_session):
     assert client.get("/api/v1/postpartum/catering-overview?target_date=2026-09-12").status_code == 401
@@ -79,6 +89,8 @@ def test_catering_overview_requires_auth_and_has_empty_state(client, db_session)
     document = client.get("/api/v1/postpartum/catering-overview.docx?target_date=2026-09-12", headers=headers)
     assert document.status_code == 200 and len(document.content) > 1000
     assert "本日沒有符合供餐條件的月子餐個案" in ZipFile(BytesIO(document.content)).read("word/document.xml").decode("utf-8")
+    spreadsheet = client.get("/api/v1/postpartum/catering-overview.xlsx?target_date=2026-09-12", headers=headers)
+    assert spreadsheet.status_code == 200 and load_workbook(BytesIO(spreadsheet.content)).active.title == "1150912"
 
 
 def test_catering_overview_has_fixed_read_only_query_budget(client, db_session):

@@ -55,6 +55,14 @@ test('TSV has headers, separate quantity and unit cells, and numeric quantity ha
   assert.deepEqual(tsv.split('\n')[1].split('\t'),['2026-10-05','菜單甲','供應商甲','I1','高麗菜','22654','KG'])
 })
 
+test('daily and supplier TSV use the selected presentation mode only',()=>{
+  const rows=[row({quantity:'42000.000000',unit:'g'}),row({ingredient_id:'ingredient-2',quantity:'8.4',unit:'kg'})]
+  const converted=dailyRowsTsv(rows,'daily','kg').split('\n').slice(1).map(line=>line.split('\t').slice(-2))
+  assert.deepEqual(converted,[['42','kg'],['8.4','kg']])
+  assert.deepEqual(supplierRowsTsv(rows,'supplier-1','kg').split('\n').slice(1).map(line=>line.split('\t').slice(-2)),[['42','kg'],['8.4','kg']])
+  assert.deepEqual(dailyRowsTsv(rows,'daily').split('\n')[1].split('\t').slice(-2),['42000','g'])
+})
+
 test('snapshot and purchase number formatting is display-only and decimal addition is exact',()=>{
   assert.equal(formatQuantity('178493.720000'),'178,493.72')
   assert.equal(formatQuantity('0.000000'),'0')

@@ -29,14 +29,14 @@ export function sortDailyRows(rows:DailyRequirementRow[],mode:'daily'|'supplier'
     return mode==='daily'?date||menu||supplier||ingredient:supplier||date||menu||ingredient
   })
 }
-export function dailyRowsTsv(rows:DailyRequirementRow[],mode:'daily'|'supplier'){
+export function dailyRowsTsv(rows:DailyRequirementRow[],mode:'daily'|'supplier',weightUnitMode:WeightUnitMode='original'){
   const headers=mode==='daily'?['使用日期','菜單','供應商','食材編號','食材','需求量','單位']:['供應商','使用日期','菜單','食材編號','食材','需求量','單位']
-  const values=sortDailyRows(rows,mode).map(row=>mode==='daily'?[row.requirement_date,row.menu_name,row.supplier_name??'未指定供應商',row.ingredient_code,row.ingredient_name,plainClipboardDecimal(row.quantity),row.unit]:[row.supplier_name??'未指定供應商',row.requirement_date,row.menu_name,row.ingredient_code,row.ingredient_name,plainClipboardDecimal(row.quantity),row.unit])
+  const values=sortDailyRows(rows,mode).map(row=>{const display=requirementQuantityPresentation(row.quantity,row.unit,weightUnitMode);return mode==='daily'?[row.requirement_date,row.menu_name,row.supplier_name??'未指定供應商',row.ingredient_code,row.ingredient_name,plainClipboardDecimal(display.quantity),display.unit]:[row.supplier_name??'未指定供應商',row.requirement_date,row.menu_name,row.ingredient_code,row.ingredient_name,plainClipboardDecimal(display.quantity),display.unit]})
   return buildTsv(headers,values)
 }
 export function supplierOptions(rows:DailyRequirementRow[]):SupplierOption[]{const options=new Map<string,string>();for(const row of rows)options.set(supplierKey(row),supplierLabel(row));return [...options.entries()].map(([key,label])=>({key,label})).sort((a,b)=>a.label.localeCompare(b.label,'zh-TW')||a.key.localeCompare(b.key))}
 export function filterSupplierRows(rows:DailyRequirementRow[],key:string){return sortDailyRows(rows.filter(row=>supplierKey(row)===key),'daily')}
-export function supplierRowsTsv(rows:DailyRequirementRow[],key:string){return buildTsv(['使用日期','菜單','食材編號','食材','需求量','單位'],filterSupplierRows(rows,key).map(row=>[row.requirement_date,row.menu_name,row.ingredient_code,row.ingredient_name,plainClipboardDecimal(row.quantity),row.unit]))}
+export function supplierRowsTsv(rows:DailyRequirementRow[],key:string,weightUnitMode:WeightUnitMode='original'){return buildTsv(['使用日期','菜單','食材編號','食材','需求量','單位'],filterSupplierRows(rows,key).map(row=>{const display=requirementQuantityPresentation(row.quantity,row.unit,weightUnitMode);return [row.requirement_date,row.menu_name,row.ingredient_code,row.ingredient_name,plainClipboardDecimal(display.quantity),display.unit]}))}
 
 function supplierKey(row:DailyRequirementRow){return row.supplier_id??'unassigned'}
 function supplierLabel(row:DailyRequirementRow){return row.supplier_name??'未指定供應商'}
@@ -64,4 +64,23 @@ export function groupDailyBySupplier(rows:DailyRequirementRow[]):PrimaryDailyGro
     for(const row of supplierRows)dates.set(row.requirement_date,[...(dates.get(row.requirement_date)??[]),row])
     return {key,label:supplierLabel(supplierRows[0]),groups:[...dates.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([date,dateRows])=>({key:date,label:date,menus:rowsByMenu(dateRows)}))}
   }).sort((a,b)=>a.label.localeCompare(b.label,'zh-TW')||a.key.localeCompare(b.key))
+}
+export type WeightUnitMode='original'|'kg'
+
+function divideDecimalByThousand(value:string){
+  const normalized=value.trim()
+  const match=/^([+-]?)(\d+)(?:\.(\d+))?$/.exec(normalized)
+  if(!match)return normalized
+  const [,sign,whole,fraction='']=match
+  const coefficient=BigInt(`${sign}${whole}${fraction}`)
+  const scale=fraction.length+3
+  const negative=coefficient<0n
+  const digits=(negative?-coefficient:coefficient).toString().padStart(scale+1,'0')
+  const result=`${digits.slice(0,-scale)}.${digits.slice(-scale)}`
+  return plainClipboardDecimal(`${negative?'-':''}${result}`)
+}
+
+export function requirementQuantityPresentation(quantity:string,unit:string|null|undefined,mode:WeightUnitMode){
+  if(mode==='kg'&&unit==='g')return {quantity:divideDecimalByThousand(quantity),unit:'kg'}
+  return {quantity,unit:unit??''}
 }

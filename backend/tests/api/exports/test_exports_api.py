@@ -5,7 +5,19 @@ from sqlalchemy import event
 from app.db.session import engine as process_engine
 from tests.api.kitchen_operations.test_kitchen_operations_api import kitchen_fixture
 from tests.api.menus.test_menus_api import foundations,full_structure,meals,menu
-from tests.api.requirements.test_requirements_api import auth
+from tests.api.requirements.test_requirements_api import auth,fixture as requirements_fixture
+
+def test_requirement_excel_weight_mode_is_validated_and_backward_compatible(client,db_session):
+    headers=auth(client,db_session);menu,*_=requirements_fixture(client,headers);body={"menu_ids":[menu["id"]]}
+    original=client.post("/api/v1/exports/requirements/xlsx",headers=headers,json=body)
+    converted=client.post("/api/v1/exports/requirements/xlsx?weight_unit_mode=kg",headers=headers,json=body)
+    invalid=client.post("/api/v1/exports/requirements/xlsx?weight_unit_mode=lb",headers=headers,json=body)
+    assert original.status_code==200 and converted.status_code==200
+    assert invalid.status_code==422
+    original_sheet=load_workbook(BytesIO(original.content))["需求彙總"]
+    converted_sheet=load_workbook(BytesIO(converted.content))["需求彙總"]
+    assert original_sheet["D2"].value==converted_sheet["D2"].value
+    assert original_sheet["E2"].value==converted_sheet["E2"].value=="kg"
 
 def test_exports_require_auth(client):
     response=client.post("/api/v1/exports/kitchen-operations/xlsx",json={"menu_id":"00000000-0000-0000-0000-000000000001"})

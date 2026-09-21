@@ -12,7 +12,7 @@ from docx.shared import Cm, Pt, RGBColor
 from app.domains.postpartum.catering_overview import paginate_catering_items
 
 
-FONT_NAME = "Microsoft JhengHei"
+FONT_NAME = "標楷體"
 
 
 def _font(run, size=12, bold=False, color=None):
@@ -26,14 +26,15 @@ def _font(run, size=12, bold=False, color=None):
         fonts.set(qn(f"w:{key}"), FONT_NAME)
 
 
-def _cell(cell, text, *, size=11, bold=False, color=None, align=None):
+def _cell(cell, text, *, size=11, bold=False, color=None, align=None, fallback="—"):
     cell.text = ""
     paragraph = cell.paragraphs[0]
     paragraph.paragraph_format.space_after = Pt(0)
     paragraph.paragraph_format.line_spacing = 1.05
     if align is not None:
         paragraph.alignment = align
-    _font(paragraph.add_run(str(text or "—")), size=size, bold=bold, color=color)
+    display = str(text) if text not in (None, "") else fallback
+    _font(paragraph.add_run(display), size=size, bold=bold, color=color)
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
 
@@ -108,14 +109,14 @@ def _page_heading(document, data, page_number, page_count):
         year, month, day = str(value).split("-")
         date_text = f"{year} 年 {month} 月 {day} 日"
     values = (
-        (f"{date_text}（{data['weekday_label']}）", 15, True),
-        (f"供餐總床數：{data['total']} 床", 13, True),
-        (f"第 {page_number} 頁 / 共 {page_count} 頁", 11, False),
+        (f"{date_text}（{data['weekday_label']}）", 16, True, WD_ALIGN_PARAGRAPH.LEFT),
+        (f"供餐總床數：{data['total']} 床", 16, True, WD_ALIGN_PARAGRAPH.CENTER),
+        (f"第 {page_number} 頁 / 共 {page_count} 頁", 12, False, WD_ALIGN_PARAGRAPH.RIGHT),
     )
     for cell, width, content in zip(table.rows[0].cells, widths, values):
         _set_width(cell, width)
         _no_wrap(cell)
-        _cell(cell, content[0], size=content[1], bold=content[2], align=WD_ALIGN_PARAGRAPH.CENTER)
+        _cell(cell, content[0], size=content[1], bold=content[2], align=content[3])
     _remove_table_borders(table)
     _row_no_split(table.rows[0])
     spacer = document.add_paragraph()
@@ -137,8 +138,8 @@ def _service_moment(date_value, meal_label):
 def _person_cell(cell, item):
     cell.text = ""
     values = (
-        (item["name"] or "—", 15, True),
-        (f"起伙：{_service_moment(item['service_start_date'], item['service_start_meal_label'])}", 9.5, False),
+        (item["name"] or "—", 19, True),
+        (f"起伙：{_service_moment(item['service_start_date'], item['service_start_meal_label'])}", 10, False),
     )
     for index, (text, size, bold) in enumerate(values):
         paragraph = cell.paragraphs[0] if index == 0 else cell.add_paragraph()
@@ -160,9 +161,9 @@ def _restriction_note_cell(cell, item):
     note = str(item.get("service_note") or "").strip()
     parts = []
     if restrictions:
-        parts.append((restrictions, "A61B1B", True))
+        parts.append((restrictions, "A61B1B", False))
     if note:
-        parts.append((note, "1F4E79", True))
+        parts.append((note, "1F4E79", False))
     if not parts:
         parts.append(("—", None, False))
     for index, (text, color, bold) in enumerate(parts):
@@ -170,8 +171,20 @@ def _restriction_note_cell(cell, item):
         paragraph.paragraph_format.space_before = Pt(0)
         paragraph.paragraph_format.space_after = Pt(0)
         paragraph.paragraph_format.line_spacing = 1.05
-        _font(paragraph.add_run(text), size=12, bold=bold, color=color)
+        _font(paragraph.add_run(text), size=16, bold=bold, color=color)
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def _preparation_mode_presentation(value):
+    """Map only the explicitly approved DOCX display labels; never mutate source data."""
+    label = str(value or "").strip()
+    if label == "要中藥":
+        return "", None
+    if label in {"米酒水＋麻油", "米酒水+麻油", "米酒水"}:
+        return "米酒水", "FF0000"
+    if label == "不中藥":
+        return label, "00B0F0"
+    return label, None
 
 
 def _table(document, items):
@@ -183,15 +196,16 @@ def _table(document, items):
     headers = ("床號", "姓名", "調理方式", "飲食禁忌／備註")
     for cell, label, width in zip(table.rows[0].cells, headers, widths):
         _set_width(cell, width)
-        _cell(cell, label, size=13, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _cell(cell, label, size=16, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
         _shade(cell, "D9EAD3")
     _row_no_split(table.rows[0], repeat=True)
     for item in items:
         row = table.add_row()
+        preparation_text, preparation_color = _preparation_mode_presentation(item["preparation_mode_label"])
         values = (
-            (item["current_room"], 15, True, None),
+            (item["current_room"], 30, True, "7030A0"),
             (None, 12, True, None),
-            (item["preparation_mode_label"], 12, False, None),
+            (preparation_text, 16, True, preparation_color),
             (None, 12, False, None),
         )
         for index, (cell, width, value) in enumerate(zip(row.cells, widths, values)):
@@ -201,7 +215,8 @@ def _table(document, items):
             elif index == 3:
                 _restriction_note_cell(cell, item)
             else:
-                _cell(cell, value[0], size=value[1], bold=value[2], color=value[3])
+                _cell(cell, value[0], size=value[1], bold=value[2], color=value[3],
+                    align=WD_ALIGN_PARAGRAPH.CENTER, fallback="" if index == 2 else "—")
         _row_no_split(row)
     return table
 
@@ -218,7 +233,8 @@ def render_catering_overview_docx(data: dict) -> bytes:
     normal = document.styles["Normal"]
     normal.font.name = FONT_NAME
     normal.font.size = Pt(11)
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), FONT_NAME)
+    for key in ("ascii", "hAnsi", "eastAsia"):
+        normal._element.rPr.rFonts.set(qn(f"w:{key}"), FONT_NAME)
 
     pages = paginate_catering_items(data["items"])
     for index, items in enumerate(pages, start=1):

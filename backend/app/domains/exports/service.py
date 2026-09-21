@@ -41,10 +41,10 @@ class ExportService:
         builders={("merged","xlsx"):menu_full_workbook,("merged","pdf"):menu_full_pdf,("grid","xlsx"):menu_grid_workbook,("grid","pdf"):menu_grid_pdf,("pretty","xlsx"):menu_pretty_workbook,("pretty","pdf"):menu_pretty_pdf}
         builder=builders[(normalized,format)]
         return (builder(result,variant) if format=="xlsx" and normalized!="pretty" else builder(result)),result["menu"]["name"]
-    def requirements(self,criteria):
+    def requirements(self,criteria,weight_unit_mode="original"):
         result=RequirementService(self.session).calculate(criteria)
         if not result["rows"]:raise EmptyExportError("No requirement rows matched the criteria")
-        return requirements_workbook(result),"需求量報表"
+        return requirements_workbook(result,weight_unit_mode=weight_unit_mode),"需求量報表"
     def snapshot(self,snapshot_id):
         result=SnapshotService(self.session).detail(snapshot_id)
         if not result["items"]:raise EmptyExportError("Snapshot has no items")

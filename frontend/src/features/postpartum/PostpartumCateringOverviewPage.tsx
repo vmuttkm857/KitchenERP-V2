@@ -13,7 +13,7 @@ export function PostpartumCateringOverviewPage(){
   const [targetDate,setTargetDate]=useState(todayTaipeiYmd)
   const [data,setData]=useState<CateringOverviewResponse|null>(null)
   const [loading,setLoading]=useState(true),[error,setError]=useState('')
-  const [exporting,setExporting]=useState(false),[exportError,setExportError]=useState('')
+  const [exporting,setExporting]=useState<'word'|'excel'|null>(null),[exportError,setExportError]=useState('')
   const requestSequence=useRef(0)
   const load=useCallback(async()=>{
     const request=++requestSequence.current;setLoading(true);setError('')
@@ -26,13 +26,19 @@ export function PostpartumCateringOverviewPage(){
   },[targetDate])
   useEffect(()=>{void load();return()=>{requestSequence.current+=1}},[load])
   async function exportWord(){
-    setExporting(true);setExportError('')
+    setExporting('word');setExportError('')
     try{await apiDownload(`/postpartum/catering-overview.docx?${new URLSearchParams({target_date:targetDate})}`)}
     catch{setExportError('Word 供餐清單匯出失敗，請稍後再試。')}
-    finally{setExporting(false)}
+    finally{setExporting(null)}
+  }
+  async function exportExcel(){
+    setExporting('excel');setExportError('')
+    try{await apiDownload(`/postpartum/catering-overview.xlsx?${new URLSearchParams({target_date:targetDate})}`)}
+    catch{setExportError('Excel 供餐清單匯出失敗，請稍後再試。')}
+    finally{setExporting(null)}
   }
   return <section className="postpartum-catering-page">
-    <div className="section-heading"><div><h2>月子餐個案供餐總覽</h2><small>依日期核對當日需供餐個案、禁忌與備註。</small></div><button type="button" disabled={exporting||loading} onClick={()=>void exportWord()}>{exporting?'匯出中…':'匯出 Word'}</button></div>
+    <div className="section-heading"><div><h2>月子餐個案供餐總覽</h2><small>依日期核對當日需供餐個案、禁忌與備註。</small></div><div className="actions"><button type="button" disabled={exporting!==null||loading} onClick={()=>void exportExcel()}>{exporting==='excel'?'匯出中…':'匯出 Excel'}</button><button type="button" disabled={exporting!==null||loading} onClick={()=>void exportWord()}>{exporting==='word'?'匯出中…':'匯出 Word'}</button></div></div>
     <div className="postpartum-catering-toolbar"><button type="button" className="secondary" onClick={()=>setTargetDate(value=>addYmdDays(value,-1))}>前一天</button><button type="button" className="secondary" onClick={()=>setTargetDate(todayTaipeiYmd())}>今天</button><button type="button" className="secondary" onClick={()=>setTargetDate(value=>addYmdDays(value,1))}>下一天</button><label>供餐日期<input type="date" value={targetDate} onChange={event=>setTargetDate(event.target.value)}/></label></div>
     {error&&<p className="error">{error}</p>}{exportError&&<p className="error">{exportError}</p>}
     {loading?<p>供餐總覽載入中…</p>:data&&<>

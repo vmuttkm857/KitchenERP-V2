@@ -36,8 +36,17 @@ test('preview and Word export keep independent loading states',()=>{
   assert.match(page,/\[loading,setLoading\]/)
   assert.match(page,/\[exporting,setExporting\]/)
   assert.match(page,/apiDownload\(`\/postpartum\/catering-overview\.docx/)
-  assert.match(page,/finally\{setExporting\(false\)\}/)
+  assert.match(page,/finally\{setExporting\(null\)\}/)
   assert.doesNotMatch(page,/function exportWord\(\)[\s\S]{0,250}setLoading/)
+})
+
+test('Excel export is available beside Word and uses the selected date',()=>{
+  assert.match(page,/apiDownload\(`\/postpartum\/catering-overview\.xlsx/)
+  assert.match(page,/target_date:targetDate/)
+  assert.match(page,/匯出 Excel/)
+  assert.match(page,/匯出 Word/)
+  assert.match(page,/exporting==='excel'/)
+  assert.match(page,/Excel 供餐清單匯出失敗/)
 })
 
 test('stale daily responses cannot replace a newer date',()=>{

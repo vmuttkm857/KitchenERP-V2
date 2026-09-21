@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import date,datetime
 from decimal import Decimal
 from io import BytesIO
@@ -7,6 +8,7 @@ from app.domains.exports.excel import kitchen_workbook,requirements_workbook
 from app.domains.exports.excel import purchase_workbook,snapshot_workbook
 from app.domains.exports.pdf import kitchen_pdf,paginate_blocks,purchase_pdf
 from app.domains.exports.safety import content_disposition,safe_cell_text,safe_filename
+from app.domains.exports.requirement_quantity import requirement_quantity_presentation
 
 def requirement_result(name="繁體食材"):
     row={"row_key":"1","ingredient_code":"I01","ingredient_name":name,"supplier_name":"台灣供應商","requirement_quantity":Decimal("0.12345678"),"requirement_unit":"kg","suggested_purchase_quantity":Decimal("0.2"),"suggested_purchase_unit":"kg","current_price":Decimal("12.34"),"estimated_cost":Decimal("2.468"),"needs_review":False}
@@ -35,6 +37,27 @@ def test_daily_requirement_excel_preserves_supplier_and_menu_attribution():
     ws=load_workbook(BytesIO(requirements_workbook(result)))["每日採購需求"]
     values=[tuple(cell.value for cell in row) for row in ws.iter_rows(min_row=2)]
     assert (datetime(2026,10,5),"同日另一菜單","另一供應商","I02","青江菜",3,"kg") in values
+
+def test_requirement_quantity_presentation_and_excel_kg_mode_are_decimal_safe_and_pure():
+    for value,expected in (("1","0.001"),("10","0.01"),("100","0.1"),("1000","1"),("1050","1.05"),("2100","2.1"),("12345","12.345"),("12500","12.5"),("17500","17.5"),("42000","42")):
+        assert requirement_quantity_presentation(Decimal(value),"g","kg")==(Decimal(expected),"kg")
+    assert requirement_quantity_presentation(Decimal("8.4"),"kg","kg")== (Decimal("8.4"),"kg")
+    assert requirement_quantity_presentation(Decimal("300"),"片","kg")== (Decimal("300"),"片")
+
+    result=requirement_result();result["rows"][0].update(requirement_quantity=Decimal("42000"),requirement_unit="g",suggested_purchase_quantity=Decimal("17500"),suggested_purchase_unit="g")
+    result["daily_rows"]=[
+        {**result["daily_rows"][0],"quantity":Decimal("12345"),"unit":"g"},
+        {**result["daily_rows"][1],"quantity":Decimal("8.4"),"unit":"kg"},
+    ]
+    original=deepcopy(result)
+    workbook=load_workbook(BytesIO(requirements_workbook(result,weight_unit_mode="kg")))
+    assert [workbook["需求彙總"][cell].value for cell in ("D2","E2","F2","G2")]==[42,"kg",17.5,"kg"]
+    assert [[workbook["每日採購需求"].cell(row,column).value for column in (6,7)] for row in (2,3)]==[[8.4,"kg"],[12.345,"kg"]]
+    assert [workbook["供應商分組"][cell].value for cell in ("D2","E2")]==[17.5,"kg"]
+    assert result==original
+
+    default_workbook=load_workbook(BytesIO(requirements_workbook(result)))
+    assert [default_workbook["需求彙總"][cell].value for cell in ("D2","E2")]==[42000,"g"]
 def test_kitchen_excel_has_all_sections():
     wb=load_workbook(BytesIO(kitchen_workbook(kitchen_result())))
     assert wb.sheetnames==["備料明細","食材彙總","異常"];assert wb["備料明細"]["D2"].value=="燉菜"

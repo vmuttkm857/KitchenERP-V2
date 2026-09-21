@@ -53,8 +53,8 @@ def export_menu(menu_id:uuid.UUID,layout:Literal["full","merged","grid","pretty"
         return binary(payload,f"{name}_{label}{suffix}",format)
     except Exception as exc:raise mapped(exc) from exc
 @router.post("/requirements/xlsx")
-def export_requirements(criteria:RequirementCriteria,session:Annotated[Session,Depends(get_db_session)]):
-    try:payload,name=ExportService(session).requirements(criteria);return binary(payload,name,"xlsx")
+def export_requirements(criteria:RequirementCriteria,session:Annotated[Session,Depends(get_db_session)],weight_unit_mode:Literal["original","kg"]="original"):
+    try:payload,name=ExportService(session).requirements(criteria,weight_unit_mode);return binary(payload,name,"xlsx")
     except Exception as exc:raise mapped(exc) from exc
 @router.get("/requirement-snapshots/{snapshot_id}/xlsx")
 def export_snapshot(snapshot_id:uuid.UUID,session:Annotated[Session,Depends(get_db_session)]):
