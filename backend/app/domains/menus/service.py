@@ -231,6 +231,9 @@ class MenuService:
         all_column_ids={detail.menu_meal_type_column_id for slot in data.slots for detail in slot.dishes if detail.menu_meal_type_column_id is not None}
         dishes=self.repository.dish_models(all_dish_ids)
         columns=self.repository.meal_type_column_models(all_column_ids)
+        columns_by_meal={}
+        for column in self.repository.menu_columns(menu_id):
+            columns_by_meal.setdefault(column.menu_meal_type_id,[]).append(column)
         if len(dishes) != len(all_dish_ids): raise InvalidMenuStructureError("Dish not found")
         if len(columns) != len(all_column_ids): raise InvalidMenuStructureError("Menu column not found")
         try:
@@ -254,7 +257,7 @@ class MenuService:
                         raise InvalidMenuStructureError("Menu day identity mismatch")
                     retained_days.add(day.id)
                 day.notes=slot.notes; day.updated_by=actor_id
-                seen_dishes=set();seen_columns=set()
+                seen_dishes=set();seen_columns=set();slot_details=[]
                 for order,payload in enumerate(sorted(slot.dishes,key=lambda value:value.sort_order),1):
                     if payload.dish_id in seen_dishes: raise DuplicateMenuDishError()
                     seen_dishes.add(payload.dish_id); dish=dishes[payload.dish_id]
@@ -276,6 +279,10 @@ class MenuService:
                     detail.menu_meal_type_column_id=payload.menu_meal_type_column_id
                     detail.diner_count=payload.diner_count; detail.notes=payload.notes
                     detail.sort_order=order; detail.updated_by=actor_id
+                    slot_details.append(detail)
+                visual_rows=menu_dish_visual_rows(columns_by_meal.get(meal.id,[]),slot_details)
+                for order,row in enumerate((row for row in visual_rows if row.dish is not None),1):
+                    row.dish.sort_order=order
             submitted_existing_day_ids={slot.menu_day_id for slot in data.slots if slot.menu_day_id}
             for detail_id,detail in existing_details.items():
                 if detail_id not in retained_details: self.repository.delete(detail)

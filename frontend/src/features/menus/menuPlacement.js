@@ -17,3 +17,12 @@ export function arrangeMenuDishes(dishes,labels){
   }
   return arranged
 }
+
+export function reorderMenuDishesByColumns(dishes,columns,mealTypeId){
+  const labels=[...columns]
+    .filter(column=>column.menu_meal_type_id===mealTypeId)
+    .sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id))
+  return arrangeMenuDishes(dishes,labels)
+    .filter(dish=>dish!==null)
+    .map((dish,index)=>({...dish,sort_order:index+1}))
+}

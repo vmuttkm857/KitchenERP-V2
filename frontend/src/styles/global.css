@@ -51,6 +51,7 @@ select { padding: .8rem; border: 1px solid #b9c9ba; border-radius: .55rem; font:
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: .7rem; text-align: left; border-bottom: 1px solid #e4e9e3; vertical-align: top; }
 .actions { flex-wrap: wrap; }
+.pagination-controls{display:flex;align-items:center;gap:.55rem 1rem;flex-wrap:wrap;margin-top:1rem}.pagination-summary{color:#526158}.pagination-page-size{display:flex;grid-template-columns:auto auto;align-items:center;gap:.4rem}.pagination-page-size select{padding:.5rem}.pagination-pages{display:flex;align-items:center;gap:.3rem;flex-wrap:wrap}.pagination-pages button{min-width:2.4rem;padding:.5rem .65rem}.pagination-page{color:#2f6840;background:#edf4ef;border:1px solid #cbd9ce}.pagination-page.is-active{color:#fff;background:#2f6840;border-color:#2f6840;box-shadow:0 0 0 2px rgb(47 104 64 / 16%)}.pagination-ellipsis{min-width:1.5rem;text-align:center}.pagination-jump{display:flex;align-items:center;gap:.35rem}.pagination-jump label{display:flex;grid-template-columns:auto 4.5rem;align-items:center;gap:.35rem}.pagination-jump input{min-width:0;padding:.5rem .55rem}.pagination-jump button{padding:.5rem .7rem}.pagination-jump .error{flex-basis:100%}
 .actions button { padding: .45rem .65rem; font-size: .9rem; }
 button.danger { background: #9f3030; }
 button.secondary { background: #65746a; }
@@ -108,6 +109,7 @@ small { display: block; color: #607065; }
 .snapshot-history-header h3,.snapshot-history-header p { margin:.2rem 0; }
 .requirements-table { overflow:auto; margin-bottom:1.5rem; }
 .requirements-table table { min-width:70rem; }
+.requirements-table tbody tr.requirement-menu-tone-0{background:#eef7f0}.requirements-table tbody tr.requirement-menu-tone-1{background:#eef5fb}.requirements-table tbody tr.requirement-menu-tone-2{background:#fff9e8}.requirements-table tbody tr.requirement-menu-tone-3{background:#f7f0fa}.requirements-table tbody tr.requirement-menu-tone-4{background:#fff2e9}.requirements-table tbody tr.requirement-menu-tone-5{background:#eaf8f7}.requirements-table tbody tr.requirement-menu-group-start>td{border-top:3px solid #9caf9f}.requirements-table tbody tr[class*="requirement-menu-tone-"]:hover{filter:brightness(.985)}
 @media (max-width:900px) { .requirements-form { grid-template-columns:1fr; } }
 @media (max-width:900px) { .calculation-workflow,.date-range-fields { grid-template-columns:1fr; } }
 .snapshot-action { display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin:1rem 0; padding:1rem; background:#eef4ed; border-radius:.7rem; }

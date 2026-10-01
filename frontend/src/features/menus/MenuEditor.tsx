@@ -11,6 +11,7 @@ import { useEditorDirty } from '../../app/NavigationBlocker'
 import { PaginationControls } from '../../components/ui/PaginationControls'
 import { useMenuCandidates } from './useMenuCandidates'
 import { MenuProductionDialog } from '../production/MenuProductionDialog'
+import { reorderMenuDishesByColumns } from './menuPlacement.js'
 
 const slotKey = (date: string, mealId: string) => `${date}:${mealId}`
 const displayDate = (value: string) => value.replaceAll('-', '/')
@@ -130,7 +131,13 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   }, [sourceMenus])
   function slotFor(date: string, meal: MealType): MenuSlot { return slots[slotKey(date, meal.id)] ?? { menu_date: date, menu_meal_type_id: meal.id, notes: null, dishes: [] } }
   function setMealDraftSlot(slot: MenuSlot) { setMealDraft(slot); setMessage('') }
-  function updateDish(slot: MenuSlot, index: number, changes: Partial<MenuDish>) { setMealDraftSlot({ ...slot, dishes: slot.dishes.map((dish, dishIndex) => dishIndex === index ? { ...dish, ...changes } : dish) }) }
+  function updateDish(slot: MenuSlot, index: number, changes: Partial<MenuDish>) {
+    const changed=slot.dishes.map((dish,dishIndex)=>dishIndex===index?{...dish,...changes}:dish)
+    const dishes=Object.prototype.hasOwnProperty.call(changes,'menu_meal_type_column_id')
+      ? reorderMenuDishesByColumns(changed,data?.meal_type_columns??[],slot.menu_meal_type_id)
+      : changed
+    setMealDraftSlot({...slot,dishes})
+  }
   function moveDish(slot: MenuSlot, index: number, direction: -1 | 1) {
     const target = index + direction
     if (target < 0 || target >= slot.dishes.length) return

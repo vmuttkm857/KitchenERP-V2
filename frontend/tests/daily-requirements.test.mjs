@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
+import {readFileSync} from 'node:fs'
 import test from 'node:test'
 
-import { dailyRowsTsv,filterSupplierRows,groupDailyByDate,groupDailyBySupplier,sortDailyRows,supplierOptions,supplierRowsTsv } from '../src/features/requirements/dailyRequirements.ts'
+import { dailyRowsTsv,filterSupplierRows,groupDailyByDate,groupDailyBySupplier,requirementMenuToneCount,requirementMenuToneMap,sortDailyRows,startsRequirementMenuGroup,supplierOptions,supplierRowsTsv } from '../src/features/requirements/dailyRequirements.ts'
 import { addDecimals,formatMoney,formatQuantity,plainDecimal } from '../src/utils/numbers.ts'
 import { snapshotDailyRows,snapshotPurchaseAction } from '../src/features/snapshots/snapshotRequirements.ts'
 
 const row=(changes={})=>({requirement_date:'2026-10-05',menu_id:'menu-1',menu_name:'菜單甲',supplier_id:'supplier-1',supplier_code:'S1',supplier_name:'供應商甲',ingredient_id:'ingredient-1',ingredient_code:'I1',ingredient_name:'高麗菜',quantity:'30.000000',unit:'kg',...changes})
+const requirementsPage=readFileSync(new URL('../src/features/requirements/RequirementsPage.tsx',import.meta.url),'utf8')
+const globalCss=readFileSync(new URL('../src/styles/global.css',import.meta.url),'utf8')
 
 test('date view keeps same-day menus separate',()=>{
   const groups=groupDailyByDate([row(),row({menu_id:'menu-2',menu_name:'菜單乙'})])
@@ -32,6 +35,32 @@ test('flat daily and supplier ordering preserve same-name menu ids',()=>{
 test('daily ordering finishes every Menu A supplier before Menu B',()=>{
   const rows=[row({menu_id:'menu-b',menu_name:'Menu B',supplier_id:'supplier-1'}),row({menu_id:'menu-a',menu_name:'Menu A',supplier_id:'supplier-2'}),row({menu_id:'menu-a',menu_name:'Menu A',supplier_id:'supplier-1'}),row({requirement_date:'2026-10-04',menu_id:'menu-b',menu_name:'Menu B'})]
   assert.deepEqual(sortDailyRows(rows,'daily').map(item=>`${item.requirement_date}:${item.menu_id}:${item.supplier_id}`),['2026-10-04:menu-b:supplier-1','2026-10-05:menu-a:supplier-1','2026-10-05:menu-a:supplier-2','2026-10-05:menu-b:supplier-1'])
+})
+
+test('menu tones use menu id only and group boundaries use date plus menu id',()=>{
+  const rows=[row({menu_id:'menu-b',menu_name:'任意名稱'}),row({menu_id:'menu-a',menu_name:'相同或不同都不影響'}),row({menu_id:'menu-b',menu_name:'已改名',requirement_date:'2026-10-06'})]
+  const tones=requirementMenuToneMap(rows)
+  assert.equal(tones.get('menu-b'),tones.get('menu-b'))
+  assert.notEqual(tones.get('menu-a'),tones.get('menu-b'))
+  assert.equal(startsRequirementMenuGroup(rows[0]),true)
+  assert.equal(startsRequirementMenuGroup(rows[0],row({menu_id:'menu-b',menu_name:'另一名稱'})),false)
+  assert.equal(startsRequirementMenuGroup(rows[1],rows[0]),true)
+  assert.equal(startsRequirementMenuGroup(rows[2],rows[0]),true)
+})
+
+test('menu tone palette cycles deterministically',()=>{
+  const rows=Array.from({length:requirementMenuToneCount+2},(_,index)=>row({menu_id:`menu-${String(index).padStart(2,'0')}`}))
+  const tones=requirementMenuToneMap(rows)
+  assert.equal(tones.get('menu-00'),0)
+  assert.equal(tones.get(`menu-${String(requirementMenuToneCount).padStart(2,'0')}`),0)
+})
+
+test('daily and supplier detail tables use menu tones while aggregate totals remain uncolored',()=>{
+  assert.match(requirementsPage,/DailyRequirementTable rows=\{sortDailyRows\(result\.daily_rows,'daily'\)\} toneRows=\{result\.daily_rows\}/)
+  assert.match(requirementsPage,/DailyRequirementTable rows=\{filterSupplierRows\(result\.daily_rows,supplierKey\)\} toneRows=\{result\.daily_rows\}/)
+  assert.doesNotMatch(requirementsPage,/function RequirementTable[^]*requirement-menu-tone-/)
+  for(let index=0;index<requirementMenuToneCount;index++)assert.match(globalCss,new RegExp(`requirement-menu-tone-${index}`))
+  assert.match(globalCss,/requirement-menu-group-start/)
 })
 
 test('supplier options are unique, include missing supplier, and filtering is exact',()=>{

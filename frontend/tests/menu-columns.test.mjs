@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import test from 'node:test'
 import {mealGridRows} from '../src/features/menus/menuGridRows.ts'
+import {reorderMenuDishesByColumns} from '../src/features/menus/menuPlacement.js'
 
 const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
 const grid=read('../src/features/menus/MenuWeekGrid.tsx')
@@ -72,7 +73,7 @@ test('editor payload preserves column id and new dishes default to null',()=>{
   assert.match(editor,/menu_meal_type_column_id:\s*null/)
   assert.match(editor,/\{ id, dish_id, menu_meal_type_column_id, diner_count, notes, sort_order \}/)
   assert.match(editor,/\{ id, dish_id, menu_meal_type_column_id, diner_count, notes, sort_order \}/)
-  assert.match(editor,/dishIndex === index \? \{ \.\.\.dish, \.\.\.changes \} : dish/)
+  assert.match(editor,/dishIndex===index\?\{\.\.\.dish,\.\.\.changes\}:dish/)
   assert.match(editor,/\{ \.\.\.dish, sort_order: order \+ 1 \}/)
 })
 
@@ -84,6 +85,19 @@ test('selector uses only current meal columns and prevents duplicate selection',
   assert.match(panel,/disabled=\{usedColumnIds\.has\(column\.id\)&&dish\.menu_meal_type_column_id!==column\.id\}/)
   assert.match(editor,/columns=\{data\.meal_type_columns\}/)
   assert.ok(otherMeal.id)
+})
+
+test('changing a column reorders immediately by custom column sort order and preserves fallback semantics',()=>{
+  const custom=[
+    {id:'late',menu_meal_type_id:meal.id,name:'完全自訂乙',sort_order:20},
+    {id:'early',menu_meal_type_id:meal.id,name:'完全自訂甲',sort_order:5},
+  ]
+  const values=[dish('後欄菜',1,'late'),dish('未指定菜',2),dish('前欄菜',3,'early')]
+  const ordered=reorderMenuDishesByColumns(values,custom,meal.id)
+  assert.deepEqual(ordered.map(item=>item.dish_name),['前欄菜','後欄菜','未指定菜'])
+  assert.deepEqual(ordered.map(item=>item.sort_order),[1,2,3])
+  assert.equal(ordered[2].menu_meal_type_column_id,null)
+  assert.match(editor,/reorderMenuDishesByColumns\(changed,data\?\.meal_type_columns\?\?\[\],slot\.menu_meal_type_id\)/)
 })
 
 test('existing meal editor and column management flows remain available',()=>{

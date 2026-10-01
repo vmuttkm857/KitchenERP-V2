@@ -113,6 +113,29 @@ def test_menu_dish_column_assignment_validation_null_compatibility_and_delete_se
     assert all(dish["menu_meal_type_column_id"] is None for dish in after["slots"][0]["dishes"])
 
 
+def test_editor_save_normalizes_dishes_by_custom_column_order_and_keeps_fallback(client,db_session):
+    headers,_=auth(client,db_session);category,dishes=foundations(client,headers)
+    value=menu(client,headers,category["id"]);breakfast=meals(client,headers,value["id"],("早餐",))[0]
+    def create_column(name,order):
+        response=client.post(f"/api/v1/menus/{value['id']}/meal-types/{breakfast['id']}/columns",headers=headers,json={"name":name,"sort_order":order})
+        assert response.status_code==201,response.text
+        return response.json()
+    later=create_column("完全自訂乙",20)
+    earlier=create_column("完全自訂甲",5)
+    payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":breakfast["id"],"dishes":[
+        {"dish_id":dishes[0]["id"],"menu_meal_type_column_id":later["id"],"diner_count":30,"notes":"後欄","sort_order":1},
+        {"dish_id":dishes[1]["id"],"menu_meal_type_column_id":None,"diner_count":40,"notes":"未指定","sort_order":2},
+        {"dish_id":dishes[2]["id"],"menu_meal_type_column_id":earlier["id"],"diner_count":50,"notes":"前欄","sort_order":3},
+    ]}]}
+    response=client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload)
+    assert response.status_code==200,response.text
+    saved=response.json()["slots"][0]["dishes"]
+    assert [item["dish_id"] for item in saved]==[dishes[2]["id"],dishes[0]["id"],dishes[1]["id"]]
+    assert [item["sort_order"] for item in saved]==[1,2,3]
+    assert [item["diner_count"] for item in saved]==[50,30,40]
+    assert [item["notes"] for item in saved]==["前欄","後欄","未指定"]
+
+
 def test_copy_day_preserves_same_menu_column_and_maps_cross_menu_by_exact_name(client,db_session):
     headers,_=auth(client,db_session);category,dishes=foundations(client,headers)
     source=menu(client,headers,category["id"],"欄位來源");source_meal=meals(client,headers,source["id"],("早餐",))[0]

@@ -16,6 +16,16 @@ export interface MenuDailyGroup {menu_id:string;menu_name:string;rows:DailyRequi
 export interface SecondaryDailyGroup {key:string;label:string;menus:MenuDailyGroup[]}
 export interface PrimaryDailyGroup {key:string;label:string;groups:SecondaryDailyGroup[]}
 export interface SupplierOption {key:string;label:string}
+export const requirementMenuToneCount=6
+
+export function requirementMenuToneMap(rows:DailyRequirementRow[]){
+  const ids=[...new Set(rows.map(row=>row.menu_id))].sort()
+  return new Map(ids.map((id,index)=>[id,index%requirementMenuToneCount]))
+}
+
+export function startsRequirementMenuGroup(row:DailyRequirementRow,previous?:DailyRequirementRow){
+  return previous===undefined||row.requirement_date!==previous.requirement_date||row.menu_id!==previous.menu_id
+}
 
 function safeCell(value:string){return value.replace(/[\t\r\n]+/g,' ')}
 function plainClipboardDecimal(value:string){const normalized=value.trim();if(!/^-?\d+(\.\d+)?$/.test(normalized))return normalized;const result=normalized.includes('.')?normalized.replace(/0+$/,'').replace(/\.$/,''):normalized;return result==='-0'?'0':result}
