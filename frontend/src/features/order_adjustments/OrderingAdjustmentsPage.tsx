@@ -1,11 +1,13 @@
 import { FormEvent,useCallback,useEffect,useRef,useState } from 'react'
 import { ApiError } from '../../api/client'
+import { useEditorDirty } from '../../app/NavigationBlocker'
 import { EmptyState,Feedback,LoadingState,PageHeader,TableFrame } from '../../components/ui/Page'
 import { PaginationControls } from '../../components/ui/PaginationControls'
 import { dateRangeError,preserveSelected,RequestSequence } from '../../utils/listQuery'
 import type { Menu } from '../menus/types'
 import { useMenuCandidates } from '../menus/useMenuCandidates'
-import { createOrderingAdjustment,getOrderingAdjustment,listOrderingAdjustments } from './api'
+import { createOrderingAdjustment,getOrderingAdjustment,listOrderingAdjustments,updateOrderingAdjustmentLines } from './api'
+import { buildAdjustmentUpdates,decimalStringsEqual,dirtyAdjustmentLineIds,initialAdjustmentValues,validateAdjustmentQuantity } from './editor'
 import type { ExistingAdjustmentDetail,OrderingAdjustmentDetail,OrderingAdjustmentStatus,OrderingAdjustmentSummary } from './types'
 import { adjustmentDateRange,adjustmentStatusLabels,formatAdjustmentQuantity,groupAdjustmentLines,staleReasonLabel } from './view'
 
@@ -34,7 +36,7 @@ export function OrderingAdjustmentsPage(){
   async function open(sheetId:string){setDetailLoading(true);setError('');try{setDetail(await getOrderingAdjustment(sheetId))}catch(cause){setError(cause instanceof ApiError&&cause.status===404?'找不到這張叫貨調整單。':'叫貨調整單內容載入失敗。')}finally{setDetailLoading(false)}}
   function back(){setDetail(null);void load()}
   if(detailLoading)return <section><LoadingState label="叫貨調整單載入中…"/></section>
-  if(detail)return <OrderingAdjustmentDetailView detail={detail} onBack={back}/>
+  if(detail)return <OrderingAdjustmentDetailView detail={detail} onDetailChange={setDetail} onBack={back}/>
   return <section className="ordering-adjustments-page">
     <PageHeader title="叫貨調整" description="依菜單與日期建立調整草稿，保留每道菜、每項食材的系統計算量。" actions={<button onClick={()=>setCreateOpen(true)}>＋ 建立叫貨調整單</button>}/>
     <div className="toolbar ordering-adjustment-filters"><label>狀態<select value={status} onChange={event=>{setStatus(event.target.value as OrderingAdjustmentStatus|'');setPage(1)}}><option value="">全部</option><option value="draft">草稿</option><option value="confirmed">已確認</option><option value="cancelled">已取消</option></select></label><label>開始日期<input type="date" value={startDate} onChange={event=>{setStartDate(event.target.value);setPage(1)}}/></label><label>結束日期<input type="date" value={endDate} onChange={event=>{setEndDate(event.target.value);setPage(1)}}/></label></div>
@@ -70,16 +72,60 @@ function CreateAdjustmentDialog({onClose,onCreated,onOpenExisting}:{onClose:()=>
   </form></section></div>
 }
 
-function OrderingAdjustmentDetailView({detail,onBack}:{detail:OrderingAdjustmentDetail;onBack:()=>void}){
-  const groups=groupAdjustmentLines(detail.lines);const readOnly=detail.status!=='draft'||detail.stale
+type AdjustmentConfirmation='back'|'reload'|null
+type SaveBlock='conflict'|'stale'|null
+
+function AdjustmentConfirmDialog({kind,onCancel,onConfirm}:{kind:Exclude<AdjustmentConfirmation,null>;onCancel:()=>void;onConfirm:()=>void}){
+  const reload=kind==='reload'
+  return <div className="modal-backdrop"><section className="modal-panel danger-dialog" role="alertdialog" aria-modal="true"><header><div><h2>{reload?'重新載入最新資料？':'離開叫貨調整單？'}</h2><p>{reload?'重新載入會捨棄尚未儲存的修改，確定要繼續嗎？':'尚有未儲存的叫貨量修改，確定要離開嗎？'}</p></div></header><footer><button autoFocus className="secondary" onClick={onCancel}>留在此頁</button><button className="secondary-danger" onClick={onConfirm}>{reload?'捨棄修改並重新載入':'放棄修改並離開'}</button></footer></section></div>
+}
+
+function OrderingAdjustmentDetailView({detail,onDetailChange,onBack}:{detail:OrderingAdjustmentDetail;onDetailChange:(value:OrderingAdjustmentDetail)=>void;onBack:()=>void}){
+  const [values,setValues]=useState<Record<string,string>>(()=>initialAdjustmentValues(detail.lines))
+  const [saving,setSaving]=useState(false),[reloading,setReloading]=useState(false),[message,setMessage]=useState(''),[saveError,setSaveError]=useState('')
+  const [saveBlock,setSaveBlock]=useState<SaveBlock>(null),[confirmation,setConfirmation]=useState<AdjustmentConfirmation>(null)
+  const groups=groupAdjustmentLines(detail.lines);const readOnly=detail.status!=='draft'||detail.stale,saveLocked=saveBlock!==null
+  const dirtyIds=dirtyAdjustmentLineIds(detail.lines,values),dirtySet=new Set(dirtyIds)
+  const validationErrors=Object.fromEntries(detail.lines.map(line=>[line.id,validateAdjustmentQuantity(values[line.id]??'')]))
+  const hasInvalid=dirtyIds.some(id=>Boolean(validationErrors[id]))
+  const clearEditorDirty=useEditorDirty(dirtyIds.length>0)
   const staleReasons=[...new Set([...detail.warnings.map(warning=>warning.code),...detail.lines.flatMap(line=>line.stale_reasons)].map(staleReasonLabel))]
+  useEffect(()=>{setValues(initialAdjustmentValues(detail.lines));setSaveBlock(null)},[detail])
+  function change(lineId:string,value:string){setValues(current=>({...current,[lineId]:value}));setMessage('');setSaveError('')}
+  async function save(){
+    if(readOnly||saveLocked||saving||!dirtyIds.length||hasInvalid)return
+    setSaving(true);setMessage('');setSaveError('')
+    try{const updated=await updateOrderingAdjustmentLines(detail.id,{lock_version:detail.lock_version,lines:buildAdjustmentUpdates(detail.lines,values)});clearEditorDirty();onDetailChange(updated);setMessage('草稿已儲存')}
+    catch(cause){
+      const code=apiErrorCode(cause)
+      if(code==='LOCK_VERSION_CONFLICT'){setSaveBlock('conflict');setSaveError('這張叫貨調整單已在其他地方被修改，請重新載入最新資料。')}
+      else if(code==='ADJUSTMENT_STALE'){setSaveBlock('stale');setSaveError('來源資料已變更，無法繼續儲存。請重新載入最新資料。')}
+      else setSaveError('儲存失敗，修改尚未遺失，請稍後再試。')
+    }finally{setSaving(false)}
+  }
+  async function reload(){setReloading(true);setMessage('');setSaveError('');try{const updated=await getOrderingAdjustment(detail.id);clearEditorDirty();onDetailChange(updated)}catch{setSaveError('重新載入失敗，尚未儲存的修改仍保留在畫面上。')}finally{setReloading(false)}}
+  function requestReload(){if(dirtyIds.length)setConfirmation('reload');else void reload()}
+  function requestBack(){if(dirtyIds.length)setConfirmation('back');else onBack()}
   return <section className={`ordering-adjustment-detail is-${detail.status}${detail.stale?' is-stale':''}`}>
-    <PageHeader title="叫貨調整單" description="依原週配料表順序查看每道菜的食材系統量。" actions={<button className="secondary" onClick={onBack}>← 返回叫貨調整單</button>}/>
+    <PageHeader title="叫貨調整單" description="依原週配料表順序，逐道菜調整每項食材的實際叫貨量。" actions={<button className="secondary" onClick={requestBack}>← 返回叫貨調整單</button>}/>
     <div className="ordering-adjustment-header"><div><small>狀態</small><AdjustmentStatus status={detail.status}/></div><div><small>Revision</small><strong>{detail.revision}</strong></div><div><small>日期範圍</small><strong>{adjustmentDateRange(detail.criteria,detail)}</strong></div><div><small>菜單</small><strong>{detail.source_menus.map(menu=>menu.menu_name).join('、')}</strong></div><div><small>建立時間</small><strong>{new Date(detail.created_at).toLocaleString('zh-TW')}</strong></div><div><small>最後更新</small><strong>{new Date(detail.updated_at).toLocaleString('zh-TW')}</strong></div></div>
     {detail.stale&&<Feedback type="error"><strong>來源資料已變更，此調整單需要重新建立。</strong>{staleReasons.length>0&&<ul>{staleReasons.map(reason=><li key={reason}>{reason}</li>)}</ul>}</Feedback>}
-    {!detail.stale&&readOnly&&<Feedback type="info">此調整單為{adjustmentStatusLabels[detail.status]}狀態，目前僅供查看。</Feedback>}
-    {!groups.length?<EmptyState title="這張調整單沒有食材明細"/>:<div className="ordering-adjustment-hierarchy">{groups.map(menu=><section className="ordering-adjustment-menu" key={menu.id}><h2>{menu.name}</h2>{menu.dates.map(day=><section className="ordering-adjustment-day" key={day.date}><h3>{formatDate(day.date)}</h3>{day.meals.map(meal=><section className="ordering-adjustment-meal" key={meal.id}><h4>{meal.name}</h4>{meal.dishes.map(dish=><article className="ordering-adjustment-dish" key={dish.id}><header><strong>{dish.name}</strong><span>{dish.dinerCount} 人</span></header><table><thead><tr><th>食材</th><th>系統量</th></tr></thead><tbody>{dish.lines.map(line=><tr key={line.id}><td>{line.ingredient_code_snapshot}　{line.ingredient_name_snapshot}</td><td><strong>{formatAdjustmentQuantity(line.system_quantity)}</strong> {line.system_unit}</td></tr>)}</tbody></table></article>)}</section>)}</section>)}</section>)}</div>}
+    {saveError&&<Feedback type="error">{saveError}{saveBlock&&<button type="button" className="secondary ordering-reload-action" disabled={reloading} onClick={requestReload}>{reloading?'重新載入中…':'重新載入'}</button>}</Feedback>}
+    {message&&<Feedback type="success">{message}</Feedback>}
+    {!detail.stale&&detail.status!=='draft'&&<Feedback type="info">此調整單為{adjustmentStatusLabels[detail.status]}狀態，目前僅供查看。</Feedback>}
+    {!groups.length?<EmptyState title="這張調整單沒有食材明細"/>:<div className="ordering-adjustment-hierarchy">{groups.map(menu=><section className="ordering-adjustment-menu" key={menu.id}><h2>{menu.name}</h2>{menu.dates.map(day=><section className="ordering-adjustment-day" key={day.date}><h3>{formatDate(day.date)}</h3>{day.meals.map(meal=><section className="ordering-adjustment-meal" key={meal.id}><h4>{meal.name}</h4>{meal.dishes.map(dish=><article className="ordering-adjustment-dish" key={dish.id}><header><strong>{dish.name}</strong><span>{dish.dinerCount} 人</span></header><table><thead><tr><th>食材</th><th>系統量</th><th>實際叫貨量</th><th>狀態</th></tr></thead><tbody>{dish.lines.map(line=>{
+      const persistedAdjusted=line.adjusted_quantity!==null&&!decimalStringsEqual(line.adjusted_quantity,line.system_quantity),dirty=dirtySet.has(line.id),error=dirty?validationErrors[line.id]:null
+      return <tr key={line.id} className={dirty?'is-dirty':undefined}><td>{line.ingredient_code_snapshot}　{line.ingredient_name_snapshot}</td><td><strong>{formatAdjustmentQuantity(line.system_quantity)}</strong> {line.system_unit}</td><td>{readOnly?<strong>{formatAdjustmentQuantity(line.effective_quantity)} {line.system_unit}</strong>:<div className="ordering-adjustment-quantity"><label><input type="text" inputMode="decimal" aria-label={`${dish.name} - ${line.ingredient_name_snapshot} 實際叫貨量`} disabled={saving||saveLocked} value={values[line.id]??''} onChange={event=>change(line.id,event.target.value)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault()}}/></label><span>{line.system_unit}</span>{error&&<small className="error">{error}</small>}</div>}</td><td><div className="ordering-adjustment-line-state">{persistedAdjusted&&<small className="persisted">人工調整</small>}{dirty&&<small className="dirty">已修改</small>}{!readOnly&&<button type="button" className="text-button" disabled={saving||saveLocked||decimalStringsEqual(values[line.id]??'',line.system_quantity)} onClick={()=>change(line.id,line.system_quantity)}>恢復系統量</button>}</div></td></tr>
+    })}</tbody></table></article>)}</section>)}</section>)}</section>)}</div>}
+    {!readOnly&&<div className="ordering-adjustment-savebar"><strong>{dirtyIds.length?`尚有 ${dirtyIds.length} 筆修改未儲存`:'目前沒有未儲存的修改'}</strong><button disabled={saving||saveLocked||!dirtyIds.length||hasInvalid} onClick={()=>void save()}>{saving?'儲存中…':'儲存草稿'}</button></div>}
+    {confirmation&&<AdjustmentConfirmDialog kind={confirmation} onCancel={()=>setConfirmation(null)} onConfirm={()=>{const action=confirmation;setConfirmation(null);if(action==='back'){clearEditorDirty();onBack()}else void reload()}}/>}
   </section>
+}
+
+function apiErrorCode(error:unknown){
+  if(!(error instanceof ApiError)||!error.detail||typeof error.detail!=='object')return null
+  const code=(error.detail as {code?:unknown}).code
+  return typeof code==='string'?code:null
 }
 
 function formatDate(value:string){const date=new Date(`${value}T00:00:00+08:00`);const weekday=['日','一','二','三','四','五','六'][date.getDay()];return `${value.slice(5).replace('-','/')}（${weekday}）`}

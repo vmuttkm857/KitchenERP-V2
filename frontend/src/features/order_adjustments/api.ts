@@ -1,5 +1,5 @@
 import { apiRequest } from '../../api/client'
-import type { OrderingAdjustmentCreateRequest,OrderingAdjustmentDetail,OrderingAdjustmentList,OrderingAdjustmentStatus } from './types'
+import type { OrderingAdjustmentBatchUpdate,OrderingAdjustmentCreateRequest,OrderingAdjustmentDetail,OrderingAdjustmentList,OrderingAdjustmentStatus } from './types'
 
 export interface OrderingAdjustmentListParams {page:number;pageSize:number;status?:OrderingAdjustmentStatus;startDate?:string;endDate?:string;menuId?:string}
 
@@ -18,4 +18,8 @@ export function createOrderingAdjustment(payload:OrderingAdjustmentCreateRequest
 
 export function getOrderingAdjustment(sheetId:string){
   return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}`)
+}
+
+export function updateOrderingAdjustmentLines(sheetId:string,payload:OrderingAdjustmentBatchUpdate){
+  return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/lines`,{method:'PATCH',body:JSON.stringify(payload)})
 }

@@ -84,4 +84,6 @@ export interface OrderingAdjustmentDetail extends Omit<OrderingAdjustmentSummary
 
 export interface OrderingAdjustmentList {items:OrderingAdjustmentSummary[];pagination:PaginationMeta}
 export interface OrderingAdjustmentCreateRequest {criteria:OrderingAdjustmentCriteria;notes?:string|null}
+export interface OrderingAdjustmentLineUpdate {id:string;adjusted_quantity:string|null}
+export interface OrderingAdjustmentBatchUpdate {lock_version:number;lines:OrderingAdjustmentLineUpdate[]}
 export interface ExistingAdjustmentDetail {code:'ADJUSTMENT_DRAFT_EXISTS'|'ADJUSTMENT_ALREADY_CONFIRMED';existing_sheet_id:string}
