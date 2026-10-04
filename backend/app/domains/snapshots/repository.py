@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import func,select
+from sqlalchemy import and_,func,or_,select
 from sqlalchemy.orm import Session
 from app.domains.snapshots.models import RequirementSnapshot,RequirementSnapshotItem
 from app.domains.order_adjustments.models import OrderingAdjustmentSheet
@@ -33,7 +33,14 @@ class SnapshotRepository:
         items=list(self.session.scalars(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id).order_by(RequirementSnapshotItem.supplier_name_snapshot,RequirementSnapshotItem.ingredient_code_snapshot)))
         return header,items
     def list(self,page,page_size,created_by=None,start_at=None,end_before=None):
-        where=[]
+        confirmed_adjustment=select(OrderingAdjustmentSheet.id).where(
+            OrderingAdjustmentSheet.baseline_snapshot_id==RequirementSnapshot.id,
+            OrderingAdjustmentSheet.status=="confirmed",
+        ).exists()
+        where=[or_(
+            RequirementSnapshot.snapshot_kind=="standard",
+            and_(RequirementSnapshot.snapshot_kind=="ordering_adjustment",confirmed_adjustment),
+        )]
         if created_by:where.append(RequirementSnapshot.created_by==created_by)
         if start_at:where.append(RequirementSnapshot.created_at>=start_at)
         if end_before:where.append(RequirementSnapshot.created_at<end_before)

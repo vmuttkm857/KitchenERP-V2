@@ -1,6 +1,6 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -118,6 +118,47 @@ def test_adjustment_owned_snapshot_cannot_bypass_draft_or_purchase_guard(client,
     assert confirmed.status_code==200,confirmed.text
     purchase=client.post("/api/v1/purchases",headers=headers,json={"snapshot_id":created["baseline_snapshot_id"]})
     assert purchase.status_code==201,purchase.text
+
+
+def test_snapshot_list_only_exposes_standard_and_confirmed_adjustment_snapshots(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers)
+    standard=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}})
+    assert standard.status_code==201,standard.text
+
+    confirmed=create_sheet(client,headers,menu);assert confirmed.status_code==201,confirmed.text
+    confirmed_body=confirmed.json()
+    response=client.post(f"/api/v1/order-adjustments/{confirmed_body['id']}/confirm",headers=headers,json={"lock_version":1})
+    assert response.status_code==200,response.text
+
+    menu_dish=db_session.scalar(select(MenuDish));menu_dish.diner_count+=1;db_session.commit()
+    cancelled=create_sheet(client,headers,menu);assert cancelled.status_code==201,cancelled.text
+    cancelled_body=cancelled.json()
+    response=client.post(f"/api/v1/order-adjustments/{cancelled_body['id']}/cancel",headers=headers,json={"lock_version":1})
+    assert response.status_code==200,response.text
+
+    menu_dish=db_session.get(MenuDish,menu_dish.id);menu_dish.diner_count+=1;db_session.commit()
+    stale_draft=create_sheet(client,headers,menu);assert stale_draft.status_code==201,stale_draft.text
+    stale_draft_body=stale_draft.json()
+    menu_dish=db_session.get(MenuDish,menu_dish.id);menu_dish.diner_count+=1;db_session.commit()
+    detail=client.get(f"/api/v1/order-adjustments/{stale_draft_body['id']}",headers=headers)
+    assert detail.status_code==200 and detail.json()["status"]=="draft" and detail.json()["stale"] is True
+
+    visible_date=datetime(2026,9,1,4,0,tzinfo=UTC)
+    snapshot_ids=[standard.json()["id"],confirmed_body["baseline_snapshot_id"],cancelled_body["baseline_snapshot_id"],stale_draft_body["baseline_snapshot_id"]]
+    for snapshot_id in snapshot_ids:db_session.get(RequirementSnapshot,snapshot_id).created_at=visible_date
+    db_session.commit()
+
+    first=client.get("/api/v1/requirement-snapshots?page=1&page_size=1&start_date=2026-09-01&end_date=2026-09-01",headers=headers)
+    second=client.get("/api/v1/requirement-snapshots?page=2&page_size=1&start_date=2026-09-01&end_date=2026-09-01",headers=headers)
+    third=client.get("/api/v1/requirement-snapshots?page=3&page_size=1&start_date=2026-09-01&end_date=2026-09-01",headers=headers)
+    assert first.status_code==200 and second.status_code==200 and third.status_code==200
+    assert first.json()["pagination"]["total"]==2
+    assert second.json()["pagination"]["total"]==2
+    assert third.json()["pagination"]["total"]==2 and third.json()["items"]==[]
+    visible={first.json()["items"][0]["id"],second.json()["items"][0]["id"]}
+    assert visible=={standard.json()["id"],confirmed_body["baseline_snapshot_id"]}
+    assert cancelled_body["baseline_snapshot_id"] not in visible
+    assert stale_draft_body["baseline_snapshot_id"] not in visible
 
 
 def test_recipe_source_replacement_and_new_line_are_stale_even_when_totals_can_match(client,db_session):
