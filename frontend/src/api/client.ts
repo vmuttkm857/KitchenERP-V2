@@ -53,14 +53,16 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   }
 
   if (!response.ok) {
-    let detail = '系統暫時無法完成要求，請稍後再試。'
+    let message = '系統暫時無法完成要求，請稍後再試。'
+    let detail: unknown = null
     try {
-      const payload = await response.json() as { detail?: string }
-      if (typeof payload.detail === 'string' && response.status < 500) detail = payload.detail
+      const payload = await response.json() as { detail?: unknown }
+      detail = payload.detail ?? null
+      if (typeof detail === 'string' && response.status < 500) message = detail
     } catch {
       // Never expose reverse-proxy HTML or a server traceback to the UI.
     }
-    throw new ApiError(response.status, detail)
+    throw new ApiError(response.status, message, detail)
   }
 
   if (response.status === 204) return undefined as T
@@ -68,7 +70,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly detail: unknown = null) {
     super(message)
     this.name = 'ApiError'
   }

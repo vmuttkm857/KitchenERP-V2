@@ -12,6 +12,7 @@ import { MenuEditor } from '../features/menus/MenuEditor'
 import { MenusPage } from '../features/menus/MenusPage'
 import { Menu } from '../features/menus/types'
 import { NutritionPage } from '../features/nutrition/NutritionPage'
+import { OrderingAdjustmentsPage } from '../features/order_adjustments/OrderingAdjustmentsPage'
 import { PurchasesPage } from '../features/purchases/PurchasesPage'
 import { PostpartumCasesPage } from '../features/postpartum/PostpartumCasesPage'
 import { RestrictionGroupsPage } from '../features/postpartum/RestrictionGroupsPage'
@@ -27,12 +28,12 @@ import { SuppliersPage } from '../features/suppliers/SuppliersPage'
 import { ChangePasswordDialog, UsersPage } from '../features/users/UsersPage'
 import { NavigationBlockerProvider, useNavigationBlocker } from './NavigationBlocker'
 
-type Page='categories'|'suppliers'|'ingredients'|'nutrition'|'dishes'|'recipe'|'production-profile'|'menus'|'menu-editor'|'postpartum'|'postpartum-restrictions'|'postpartum-menu-source'|'postpartum-conflicts'|'postpartum-change-sheet'|'postpartum-catering-overview'|'requirements'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
+type Page='categories'|'suppliers'|'ingredients'|'nutrition'|'dishes'|'recipe'|'production-profile'|'menus'|'menu-editor'|'postpartum'|'postpartum-restrictions'|'postpartum-menu-source'|'postpartum-conflicts'|'postpartum-change-sheet'|'postpartum-catering-overview'|'requirements'|'order-adjustments'|'snapshots'|'purchases'|'kitchen'|'users'|'audit'
 const businessGroups=[
   {label:'主檔管理',items:[['categories','分類'],['suppliers','供應商'],['ingredients','食材'],['nutrition','營養資料'],['dishes','菜色／配方']]},
   {label:'菜單',items:[['menus','菜單管理'],['kitchen','廚房作業']]},
   {label:'月子餐',items:[['postpartum','個案管理'],['postpartum-restrictions','禁忌群組管理'],['postpartum-menu-source','菜單來源／週期'],['postpartum-conflicts','禁忌總覽'],['postpartum-change-sheet','每日異動單'],['postpartum-catering-overview','供餐總覽']]},
-  {label:'需求／採購',items:[['requirements','食材需求'],['snapshots','固定需求快照'],['purchases','正式採購']]},
+  {label:'需求／採購',items:[['requirements','食材需求'],['order-adjustments','叫貨調整'],['snapshots','固定需求快照'],['purchases','正式採購']]},
 ] as const
 const systemGroup={label:'系統管理',items:[['users','使用者管理'],['audit','操作紀錄']]} as const
 
@@ -57,6 +58,7 @@ function NavIcon({page}:{page:NavPage}){
     'postpartum-change-sheet':'M5 3h14v18H5V3Zm3 5h8m-8 4h8m-8 4h5M3 7h4',
     'postpartum-catering-overview':'M4 4h16v16H4V4Zm3 4h2m3 0h5M7 12h2m3 0h5M7 16h2m3 0h5',
     requirements:'M7 3h10v4H7V3ZM5 5H3v16h18V5h-2M7 11h10M7 15h7',
+    'order-adjustments':'M5 4h14v16H5V4Zm3 4h8m-8 4h5m-5 4h7M17 11l2 2-4 4',
     snapshots:'M5 4h14v16H5V4Zm3-2h8v4H8V2Zm0 8h8m-8 4h8',
     purchases:'M3 5h2l2 10h10l3-7H6m3 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z',
     users:'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7-1a3 3 0 1 0 0-6m-7 9c-4 0-7 2-7 5v2h14v-2c0-3-3-5-7-5Zm7-1c3 0 6 2 6 5v2h-4',
@@ -102,7 +104,7 @@ function Application(){
       {page==='postpartum-conflicts'&&<PostpartumConflictPage/>}
       {page==='postpartum-change-sheet'&&<PostpartumChangeSheetPage onOpenConflicts={()=>navigate('postpartum-conflicts')}/>}
       {page==='postpartum-catering-overview'&&<PostpartumCateringOverviewPage/>}
-      {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage/>}{page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
+      {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage/>}{page==='order-adjustments'&&<OrderingAdjustmentsPage/>}{page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
       {page==='users'&&user.role==='admin'&&<UsersPage/>}{page==='audit'&&user.role==='admin'&&<AuditLogsPage/>}
     </main>
     {passwordOpen&&<ChangePasswordDialog busy={passwordBusy} error={passwordError} onClose={()=>setPasswordOpen(false)} onSubmit={changePassword}/>}
