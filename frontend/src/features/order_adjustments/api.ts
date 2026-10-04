@@ -1,4 +1,5 @@
 import { apiRequest } from '../../api/client'
+import type {MenuAggregate} from '../menus/types'
 import type { OrderingAdjustmentBatchUpdate,OrderingAdjustmentCreateRequest,OrderingAdjustmentDetail,OrderingAdjustmentList,OrderingAdjustmentStatus } from './types'
 
 export interface OrderingAdjustmentListParams {page:number;pageSize:number;status?:OrderingAdjustmentStatus;startDate?:string;endDate?:string;menuId?:string}
@@ -23,3 +24,5 @@ export function getOrderingAdjustment(sheetId:string){
 export function updateOrderingAdjustmentLines(sheetId:string,payload:OrderingAdjustmentBatchUpdate){
   return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/lines`,{method:'PATCH',body:JSON.stringify(payload)})
 }
+
+export function getOrderingAdjustmentMenuLayout(menuId:string){return apiRequest<MenuAggregate>(`/menus/${menuId}/editor`)}

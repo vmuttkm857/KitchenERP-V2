@@ -11,7 +11,7 @@ const line=(id,dish,system,adjusted=null)=>({id,source_menu_dish_id:dish,system_
 
 test('initial values prefer persisted adjustment and otherwise use system quantity without PATCH',()=>{
   const lines=[line('a','dish-a','1.710000','2.000000'),line('b','dish-b','2.350000')]
-  assert.deepEqual(initialAdjustmentValues(lines),{a:'2.000000',b:'2.350000'})
+  assert.deepEqual(initialAdjustmentValues(lines),{a:'2',b:'2.35'})
   assert.doesNotMatch(initialAdjustmentValues.toString(),/updateOrderingAdjustmentLines|apiRequest/)
 })
 
@@ -19,7 +19,7 @@ test('same ingredient source lines remain independent by line id and dish',()=>{
   const lines=[line('a','dish-a','1.710000'),line('b','dish-b','2.350000')]
   const values={...initialAdjustmentValues(lines),a:'2'}
   assert.deepEqual(dirtyAdjustmentLineIds(lines,values),['a'])
-  assert.equal(values.b,'2.350000')
+  assert.equal(values.b,'2.35')
 })
 
 test('decimal equality is string safe and never relies on floating point',()=>{
@@ -60,10 +60,10 @@ test('editor exposes dirty persisted and accessible input states without automat
   assert.match(page,/aria-label=\{`\$\{dish\.name\} - \$\{line\.ingredient_name_snapshot\} 實際叫貨量`\}/)
   assert.match(page,/人工調整/)
   assert.match(page,/已修改/)
-  assert.match(page,/恢復系統量/)
+  assert.match(page,/>恢復<\/button>/)
   assert.match(page,/尚有 \$\{dirtyIds\.length\} 筆修改未儲存/)
   assert.match(page,/if\(event\.key==='Enter'\)event\.preventDefault\(\)/)
-  assert.match(css,/\.ordering-adjustment-dish tr\.is-dirty/)
+  assert.match(css,/\.ordering-adjustment-cell-line\.is-dirty/)
 })
 
 test('successful save uses authoritative response and error paths retain local values',()=>{
@@ -84,8 +84,8 @@ test('reload and back require confirmation only when unsaved lines exist',()=>{
 })
 
 test('confirmed cancelled and stale sheets remain read-only while drafts save in one action',()=>{
-  assert.match(page,/const groups=groupAdjustmentLines\(detail\.lines\);const readOnly=detail\.status!=='draft'\|\|detail\.stale/)
-  assert.match(page,/readOnly\?<strong>\{formatAdjustmentQuantity\(line\.effective_quantity\)\}/)
+  assert.match(page,/const readOnly=detail\.status!=='draft'\|\|detail\.stale/)
+  assert.match(page,/readOnly\?<b>\{formatAdjustmentQuantity\(line\.effective_quantity\)\}/)
   assert.match(page,/儲存草稿/)
   assert.match(page,/updateOrderingAdjustmentLines\(detail\.id,/)
 })

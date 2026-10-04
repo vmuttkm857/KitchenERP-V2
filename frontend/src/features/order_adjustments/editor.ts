@@ -14,6 +14,8 @@ export function decimalStringsEqual(left:string,right:string){
   return normalizedLeft!==null&&normalizedRight!==null&&normalizedLeft===normalizedRight
 }
 
+export function editableDecimalString(value:string){return normalizeDecimalString(value)??value.trim()}
+
 export function validateAdjustmentQuantity(value:string){
   const trimmed=value.trim()
   if(!trimmed)return '請輸入實際叫貨量'
@@ -26,7 +28,7 @@ export function validateAdjustmentQuantity(value:string){
 }
 
 export function initialAdjustmentValues(lines:OrderingAdjustmentLine[]){
-  return Object.fromEntries(lines.map(line=>[line.id,line.adjusted_quantity??line.system_quantity]))
+  return Object.fromEntries(lines.map(line=>[line.id,editableDecimalString(line.adjusted_quantity??line.system_quantity)]))
 }
 
 export function dirtyAdjustmentLineIds(lines:OrderingAdjustmentLine[],values:Record<string,string>){

@@ -6,10 +6,13 @@ import { PaginationControls } from '../../components/ui/PaginationControls'
 import { dateRangeError,preserveSelected,RequestSequence } from '../../utils/listQuery'
 import type { Menu } from '../menus/types'
 import { useMenuCandidates } from '../menus/useMenuCandidates'
-import { createOrderingAdjustment,getOrderingAdjustment,listOrderingAdjustments,updateOrderingAdjustmentLines } from './api'
-import { buildAdjustmentUpdates,decimalStringsEqual,dirtyAdjustmentLineIds,initialAdjustmentValues,validateAdjustmentQuantity } from './editor'
+import type {MenuAggregate} from '../menus/types'
+import { createOrderingAdjustment,getOrderingAdjustment,getOrderingAdjustmentMenuLayout,listOrderingAdjustments,updateOrderingAdjustmentLines } from './api'
+import { buildAdjustmentUpdates,decimalStringsEqual,dirtyAdjustmentLineIds,editableDecimalString,initialAdjustmentValues,validateAdjustmentQuantity } from './editor'
+import { buildAdjustmentMenuMatrix } from './matrix'
+import type {AdjustmentMenuMatrix} from './matrix'
 import type { ExistingAdjustmentDetail,OrderingAdjustmentDetail,OrderingAdjustmentStatus,OrderingAdjustmentSummary } from './types'
-import { adjustmentDateRange,adjustmentStatusLabels,formatAdjustmentQuantity,groupAdjustmentLines,staleReasonLabel } from './view'
+import { adjustmentDateRange,adjustmentStatusLabels,formatAdjustmentQuantity,staleReasonLabel } from './view'
 
 const pageSize=25
 
@@ -84,13 +87,21 @@ function OrderingAdjustmentDetailView({detail,onDetailChange,onBack}:{detail:Ord
   const [values,setValues]=useState<Record<string,string>>(()=>initialAdjustmentValues(detail.lines))
   const [saving,setSaving]=useState(false),[reloading,setReloading]=useState(false),[message,setMessage]=useState(''),[saveError,setSaveError]=useState('')
   const [saveBlock,setSaveBlock]=useState<SaveBlock>(null),[confirmation,setConfirmation]=useState<AdjustmentConfirmation>(null)
-  const groups=groupAdjustmentLines(detail.lines);const readOnly=detail.status!=='draft'||detail.stale,saveLocked=saveBlock!==null
+  const [activeMenuId,setActiveMenuId]=useState(detail.source_menus[0]?.menu_id??''),[layouts,setLayouts]=useState<Record<string,MenuAggregate>>({}),[layoutLoading,setLayoutLoading]=useState(Boolean(detail.source_menus.length)),[layoutError,setLayoutError]=useState('')
+  const readOnly=detail.status!=='draft'||detail.stale,saveLocked=saveBlock!==null
   const dirtyIds=dirtyAdjustmentLineIds(detail.lines,values),dirtySet=new Set(dirtyIds)
+  const menuDirtyCounts=Object.fromEntries(detail.source_menus.map(menu=>[menu.menu_id,detail.lines.filter(line=>line.source_menu_id===menu.menu_id&&dirtySet.has(line.id)).length]))
   const validationErrors=Object.fromEntries(detail.lines.map(line=>[line.id,validateAdjustmentQuantity(values[line.id]??'')]))
   const hasInvalid=dirtyIds.some(id=>Boolean(validationErrors[id]))
   const clearEditorDirty=useEditorDirty(dirtyIds.length>0)
   const staleReasons=[...new Set([...detail.warnings.map(warning=>warning.code),...detail.lines.flatMap(line=>line.stale_reasons)].map(staleReasonLabel))]
+  const matrices=detail.source_menus.map(menu=>buildAdjustmentMenuMatrix(detail.lines,menu,layouts[menu.menu_id],detail.criteria)),activeMatrix=matrices.find(matrix=>matrix.menuId===activeMenuId)??matrices[0]
   useEffect(()=>{setValues(initialAdjustmentValues(detail.lines));setSaveBlock(null)},[detail])
+  useEffect(()=>{
+    let current=true;setLayoutLoading(Boolean(detail.source_menus.length));setLayoutError('')
+    void Promise.all(detail.source_menus.map(async menu=>[menu.menu_id,await getOrderingAdjustmentMenuLayout(menu.menu_id)] as const)).then(results=>{if(current)setLayouts(Object.fromEntries(results))}).catch(()=>{if(current)setLayoutError('部分菜單欄位名稱無法載入，已依調整單保存的原始順序顯示。')}).finally(()=>{if(current)setLayoutLoading(false)})
+    return()=>{current=false}
+  },[detail.id])
   function change(lineId:string,value:string){setValues(current=>({...current,[lineId]:value}));setMessage('');setSaveError('')}
   async function save(){
     if(readOnly||saveLocked||saving||!dirtyIds.length||hasInvalid)return
@@ -107,19 +118,26 @@ function OrderingAdjustmentDetailView({detail,onDetailChange,onBack}:{detail:Ord
   function requestReload(){if(dirtyIds.length)setConfirmation('reload');else void reload()}
   function requestBack(){if(dirtyIds.length)setConfirmation('back');else onBack()}
   return <section className={`ordering-adjustment-detail is-${detail.status}${detail.stale?' is-stale':''}`}>
-    <PageHeader title="叫貨調整單" description="依原週配料表順序，逐道菜調整每項食材的實際叫貨量。" actions={<button className="secondary" onClick={requestBack}>← 返回叫貨調整單</button>}/>
-    <div className="ordering-adjustment-header"><div><small>狀態</small><AdjustmentStatus status={detail.status}/></div><div><small>Revision</small><strong>{detail.revision}</strong></div><div><small>日期範圍</small><strong>{adjustmentDateRange(detail.criteria,detail)}</strong></div><div><small>菜單</small><strong>{detail.source_menus.map(menu=>menu.menu_name).join('、')}</strong></div><div><small>建立時間</small><strong>{new Date(detail.created_at).toLocaleString('zh-TW')}</strong></div><div><small>最後更新</small><strong>{new Date(detail.updated_at).toLocaleString('zh-TW')}</strong></div></div>
+    <PageHeader title="叫貨調整單" description="可直接編輯的週配料表" actions={<button className="secondary" onClick={requestBack}>← 返回列表</button>}/>
+    <div className="ordering-adjustment-summary"><div><strong>{activeMatrix?.menuName??detail.source_menus.map(menu=>menu.menu_name).join('、')}</strong><span>{activeMatrix?.dates.length?`${formatShortDate(activeMatrix.dates[0])} ～ ${formatShortDate(activeMatrix.dates.at(-1)!)}`:adjustmentDateRange(detail.criteria,detail)}</span><span><AdjustmentStatus status={detail.status}/> · Rev.{detail.revision}</span></div><small>建立：{new Date(detail.created_at).toLocaleString('zh-TW')}　最後更新：{new Date(detail.updated_at).toLocaleString('zh-TW')}</small></div>
     {detail.stale&&<Feedback type="error"><strong>來源資料已變更，此調整單需要重新建立。</strong>{staleReasons.length>0&&<ul>{staleReasons.map(reason=><li key={reason}>{reason}</li>)}</ul>}</Feedback>}
     {saveError&&<Feedback type="error">{saveError}{saveBlock&&<button type="button" className="secondary ordering-reload-action" disabled={reloading} onClick={requestReload}>{reloading?'重新載入中…':'重新載入'}</button>}</Feedback>}
     {message&&<Feedback type="success">{message}</Feedback>}
     {!detail.stale&&detail.status!=='draft'&&<Feedback type="info">此調整單為{adjustmentStatusLabels[detail.status]}狀態，目前僅供查看。</Feedback>}
-    {!groups.length?<EmptyState title="這張調整單沒有食材明細"/>:<div className="ordering-adjustment-hierarchy">{groups.map(menu=><section className="ordering-adjustment-menu" key={menu.id}><h2>{menu.name}</h2>{menu.dates.map(day=><section className="ordering-adjustment-day" key={day.date}><h3>{formatDate(day.date)}</h3>{day.meals.map(meal=><section className="ordering-adjustment-meal" key={meal.id}><h4>{meal.name}</h4>{meal.dishes.map(dish=><article className="ordering-adjustment-dish" key={dish.id}><header><strong>{dish.name}</strong><span>{dish.dinerCount} 人</span></header><table><thead><tr><th>食材</th><th>系統量</th><th>實際叫貨量</th><th>狀態</th></tr></thead><tbody>{dish.lines.map(line=>{
-      const persistedAdjusted=line.adjusted_quantity!==null&&!decimalStringsEqual(line.adjusted_quantity,line.system_quantity),dirty=dirtySet.has(line.id),error=dirty?validationErrors[line.id]:null
-      return <tr key={line.id} className={dirty?'is-dirty':undefined}><td>{line.ingredient_code_snapshot}　{line.ingredient_name_snapshot}</td><td><strong>{formatAdjustmentQuantity(line.system_quantity)}</strong> {line.system_unit}</td><td>{readOnly?<strong>{formatAdjustmentQuantity(line.effective_quantity)} {line.system_unit}</strong>:<div className="ordering-adjustment-quantity"><label><input type="text" inputMode="decimal" aria-label={`${dish.name} - ${line.ingredient_name_snapshot} 實際叫貨量`} disabled={saving||saveLocked} value={values[line.id]??''} onChange={event=>change(line.id,event.target.value)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault()}}/></label><span>{line.system_unit}</span>{error&&<small className="error">{error}</small>}</div>}</td><td><div className="ordering-adjustment-line-state">{persistedAdjusted&&<small className="persisted">人工調整</small>}{dirty&&<small className="dirty">已修改</small>}{!readOnly&&<button type="button" className="text-button" disabled={saving||saveLocked||decimalStringsEqual(values[line.id]??'',line.system_quantity)} onClick={()=>change(line.id,line.system_quantity)}>恢復系統量</button>}</div></td></tr>
-    })}</tbody></table></article>)}</section>)}</section>)}</section>)}</div>}
+    {detail.source_menus.length>1&&<div className="ordering-adjustment-tabs" role="tablist" aria-label="菜單"><>{matrices.map(matrix=><button role="tab" aria-selected={matrix.menuId===activeMenuId} className={matrix.menuId===activeMenuId?'active':''} key={matrix.menuId} onClick={()=>setActiveMenuId(matrix.menuId)}>{matrix.menuName}{menuDirtyCounts[matrix.menuId]?` · ${menuDirtyCounts[matrix.menuId]}`:''}</button>)}</></div>}
+    {layoutError&&<Feedback type="info">{layoutError}</Feedback>}
+    {layoutLoading?<LoadingState label="菜單欄位載入中…"/>:!activeMatrix||!activeMatrix.meals.length?<EmptyState title="這張調整單沒有食材明細"/>:<AdjustmentWeeklyMatrix matrix={activeMatrix} values={values} dirtySet={dirtySet} validationErrors={validationErrors} readOnly={readOnly} saving={saving} saveLocked={saveLocked} onChange={change}/>}
     {!readOnly&&<div className="ordering-adjustment-savebar"><strong>{dirtyIds.length?`尚有 ${dirtyIds.length} 筆修改未儲存`:'目前沒有未儲存的修改'}</strong><button disabled={saving||saveLocked||!dirtyIds.length||hasInvalid} onClick={()=>void save()}>{saving?'儲存中…':'儲存草稿'}</button></div>}
     {confirmation&&<AdjustmentConfirmDialog kind={confirmation} onCancel={()=>setConfirmation(null)} onConfirm={()=>{const action=confirmation;setConfirmation(null);if(action==='back'){clearEditorDirty();onBack()}else void reload()}}/>}
   </section>
+}
+
+function AdjustmentWeeklyMatrix({matrix,values,dirtySet,validationErrors,readOnly,saving,saveLocked,onChange}:{matrix:AdjustmentMenuMatrix;values:Record<string,string>;dirtySet:Set<string>;validationErrors:Record<string,string|null>;readOnly:boolean;saving:boolean;saveLocked:boolean;onChange:(lineId:string,value:string)=>void}){
+  return <div className="ordering-adjustment-matrix"><table><thead><tr><th className="matrix-meal-heading">餐別</th><th className="matrix-column-heading">菜單欄位</th>{matrix.dates.map(date=><th key={date}>{formatDate(date)}</th>)}</tr></thead><tbody>{matrix.meals.flatMap(meal=>meal.rows.map((row,rowIndex)=><tr key={`${meal.id}:${rowIndex}`}>{rowIndex===0&&<th className="matrix-meal-cell" rowSpan={meal.rows.length}>{meal.name}</th>}<th className="matrix-column-cell">{row.label}</th>{matrix.dates.map(date=><td key={date}><div className="ordering-adjustment-cell">{(row.cells[date]??[]).map(dish=><article className="ordering-adjustment-cell-dish" key={dish.id}><header><strong>{dish.name}</strong><span>{dish.dinerCount} 人</span></header>{dish.lines.map(line=>{
+    const persistedAdjusted=line.adjusted_quantity!==null&&!decimalStringsEqual(line.adjusted_quantity,line.system_quantity),dirty=dirtySet.has(line.id),error=dirty?validationErrors[line.id]:null
+    const actual=values[line.id]??editableDecimalString(line.effective_quantity),showRestore=!decimalStringsEqual(actual,line.system_quantity)||dirty
+    return <div className={`ordering-adjustment-cell-line${dirty?' is-dirty':''}`} key={line.id}><strong>{line.ingredient_name_snapshot}</strong><div className="ordering-adjustment-cell-quantity"><span>{formatAdjustmentQuantity(line.system_quantity)}</span><span aria-hidden="true">→</span>{readOnly?<b>{formatAdjustmentQuantity(line.effective_quantity)}</b>:<input type="text" inputMode="decimal" aria-label={`${dish.name} - ${line.ingredient_name_snapshot} 實際叫貨量`} disabled={saving||saveLocked} value={actual} onChange={event=>onChange(line.id,event.target.value)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault()}}/>}<span>{line.system_unit}</span></div><div className="ordering-adjustment-cell-state">{persistedAdjusted&&<small className="persisted">人工調整</small>}{dirty&&<small className="dirty">已修改</small>}{!readOnly&&showRestore&&<button type="button" className="text-button" disabled={saving||saveLocked} onClick={()=>onChange(line.id,editableDecimalString(line.system_quantity))}>恢復</button>}</div>{error&&<small className="error">{error}</small>}</div>
+  })}</article>)}</div></td>)}</tr>))}</tbody></table></div>
 }
 
 function apiErrorCode(error:unknown){
@@ -128,4 +146,5 @@ function apiErrorCode(error:unknown){
   return typeof code==='string'?code:null
 }
 
-function formatDate(value:string){const date=new Date(`${value}T00:00:00+08:00`);const weekday=['日','一','二','三','四','五','六'][date.getDay()];return `${value.slice(5).replace('-','/')}（${weekday}）`}
+function formatShortDate(value:string){const [,month,day]=value.split('-');return `${String(Number(month)).padStart(2,'0')}/${String(Number(day)).padStart(2,'0')}`}
+function formatDate(value:string){const date=new Date(`${value}T00:00:00+08:00`);const weekday=['日','一','二','三','四','五','六'][date.getDay()];return `${formatShortDate(value)}（${weekday}）`}

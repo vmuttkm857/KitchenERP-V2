@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import test from 'node:test'
-import {adjustmentDateRange,adjustmentStatusLabels,formatAdjustmentQuantity,groupAdjustmentLines,staleReasonLabel} from '../src/features/order_adjustments/view.ts'
+import {adjustmentDateRange,adjustmentStatusLabels,formatAdjustmentQuantity,staleReasonLabel} from '../src/features/order_adjustments/view.ts'
 
 const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
 const app=read('../src/app/App.tsx')
@@ -48,16 +48,15 @@ test('quantities stay string typed and presentation only trims trailing zeroes',
   assert.equal(formatAdjustmentQuantity('not-a-number'),'not-a-number')
 })
 
-test('hierarchy preserves API order and groups Menu date meal dish ingredient',()=>{
-  const base={snapshot_item_id:'s',source_line_key:'k',source_menu_id:'menu-b',menu_name_snapshot:'菜單 B',source_menu_day_id:'day',requirement_date:'2026-09-02',source_meal_type_id:'meal',meal_type_name_snapshot:'午餐',meal_type_sort_order_snapshot:1,source_menu_meal_type_column_id:null,menu_meal_type_column_sort_order_snapshot:null,source_menu_dish_id:'dish-a',menu_dish_sort_order_snapshot:1,source_dish_id:'dish',dish_code_snapshot:'01',dish_name_snapshot:'菜 A',diner_count_snapshot:30,source_dish_ingredient_id:'di',dish_ingredient_sort_order_snapshot:1,source_ingredient_id:'ingredient',ingredient_code_snapshot:'I',ingredient_name_snapshot:'食材',source_supplier_id:null,supplier_name_snapshot:null,quantity_per_person_snapshot:'1.0',loss_rate_snapshot:'0',recipe_unit_snapshot:'g',system_quantity:'30.0000',system_unit:'g',adjusted_quantity:null,effective_quantity:'30.0000',modified:false,stale:false,stale_reasons:[]}
-  const lines=[{...base,id:'2'},{...base,id:'1',source_menu_id:'menu-a',menu_name_snapshot:'菜單 A'}]
-  const grouped=groupAdjustmentLines(lines)
-  assert.deepEqual(grouped.map(item=>item.id),['menu-b','menu-a'])
-  assert.equal(grouped[0].dates[0].meals[0].dishes[0].lines[0].id,'2')
-  assert.match(page,/ordering-adjustment-menu/)
-  assert.match(page,/ordering-adjustment-day/)
-  assert.match(page,/ordering-adjustment-meal/)
-  assert.match(page,/ordering-adjustment-dish/)
+test('detail uses weekly matrix with menu tabs and compact ingredient rows',()=>{
+  assert.match(page,/buildAdjustmentMenuMatrix/)
+  assert.match(page,/ordering-adjustment-tabs/)
+  assert.match(page,/ordering-adjustment-matrix/)
+  assert.match(page,/matrix-meal-cell/)
+  assert.match(page,/matrix-column-cell/)
+  assert.match(page,/ordering-adjustment-cell-dish/)
+  assert.match(page,/ordering-adjustment-cell-line/)
+  assert.doesNotMatch(page,/ingredient_code_snapshot/)
 })
 
 test('status date range stale reasons and responsive presentation are available',()=>{
@@ -66,6 +65,7 @@ test('status date range stale reasons and responsive presentation are available'
   assert.equal(staleReasonLabel('NEW_SOURCE_LINE'),'目前來源新增了食材項目')
   assert.match(page,/來源資料已變更，此調整單需要重新建立/)
   assert.match(css,/\.ordering-adjustment-status\.is-draft/)
-  assert.match(css,/\.ordering-adjustment-hierarchy/)
+  assert.match(css,/\.ordering-adjustment-matrix/)
+  assert.match(css,/position:sticky/)
   assert.match(css,/@media\(max-width:760px\)/)
 })
