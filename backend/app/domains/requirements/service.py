@@ -12,6 +12,8 @@ class RequirementService:
         menus=self.repository.menus(criteria.menu_ids)
         if len(menus)!=len(criteria.menu_ids):raise RequirementMenuNotFoundError()
         source=self.repository.source_rows(criteria)
+        return self.calculate_from_source(criteria,menus,source)
+    def calculate_from_source(self,criteria,menus,source):
         rows,daily_rows,anomalies=calculate_requirement_rows(source)
         scheduled_menu_ids={row["menu_id"] for row in source}
         for menu in menus:

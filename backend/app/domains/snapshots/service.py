@@ -13,37 +13,39 @@ from app.shared.domain.quantities import convert_quantity
 
 class SnapshotService:
     def __init__(self,session):self.session=session;self.repository=SnapshotRepository(session);self.audit=AuditLogService(session)
-    def create(self,criteria,actor_id):
+    def build(self,criteria,actor_id,*,result=None,allow_duplicate=False,snapshot_kind="standard"):
         normalized=normalize(criteria.model_dump(exclude_none=True));criteria_hash=snapshot_fingerprint(normalized)
+        self.repository.lock_creation_key(criteria_hash)
+        result=result or RequirementService(self.session).calculate(criteria)
+        if not result["rows"]:raise EmptySnapshotError()
+        content_hash=content_fingerprint(result);existing=self.repository.by_content(criteria_hash,content_hash)
+        if existing and not allow_duplicate:raise DuplicateSnapshotError(existing.id)
+        revision=self.repository.next_revision(criteria_hash)
+        header=RequirementSnapshot(fingerprint=hash_payload({"criteria":criteria_hash,"content":content_hash,"revision":revision,"kind":snapshot_kind}),criteria_fingerprint=criteria_hash,content_fingerprint=content_hash,revision=revision,snapshot_kind=snapshot_kind,criteria=normalized,source_menus=normalize(result["source_menus"]),anomaly_snapshot=normalize(result["anomalies"]),anomaly_summary=result["anomaly_summary"],known_estimated_cost=result["known_estimated_cost"],total_estimated_cost=result["total_estimated_cost"],created_by=actor_id)
+        self.repository.add(header);self.session.flush();items=[]
+        for row in result["rows"]:
+            related=[a for a in result["anomalies"] if str(a.get("related_entity_id")) in {str(row["ingredient_id"])} or str(a.get("context",{}).get("ingredient_id"))==str(row["ingredient_id"])]
+            item=RequirementSnapshotItem(snapshot_id=header.id,row_key=row["row_key"],ingredient_id=row["ingredient_id"],ingredient_code_snapshot=row["ingredient_code"],ingredient_name_snapshot=row["ingredient_name"],supplier_id=row["supplier_id"],supplier_code_snapshot=row.get("supplier_code"),supplier_name_snapshot=row["supplier_name"],requirement_quantity=row["requirement_quantity"],requirement_unit=row["requirement_unit"],suggested_purchase_quantity=row["suggested_purchase_quantity"],adjusted_quantity=row["suggested_purchase_quantity"],suggested_purchase_unit_snapshot=row["suggested_purchase_unit"],purchase_unit_snapshot=row["suggested_purchase_unit"],configured_purchase_unit_snapshot=row["configured_purchase_unit"],package_size_snapshot=row["package_size"],minimum_order_quantity_snapshot=row["minimum_order_quantity"],unit_price_snapshot=row["current_price"],estimated_cost_snapshot=row["estimated_cost"],needs_review=row["needs_review"],total_diner_count=row["total_diner_count"],source_count=row["source_count"],anomaly_snapshot=normalize(related),source_summary=normalize(row["schedules"]),updated_by=actor_id)
+            self.repository.add(item);items.append(item)
+        self.audit.record(actor_id=actor_id,action="snapshot_create",entity_type="requirement_snapshot",entity_id=header.id,entity_label=f"Revision {header.revision}",after_data={"revision":header.revision,"source_menus":header.source_menus,"known_estimated_cost":header.known_estimated_cost,"total_estimated_cost":header.total_estimated_cost,"item_count":len(result["rows"])})
+        self.session.flush();return header,items,result
+    def create(self,criteria,actor_id):
         try:
-            result=RequirementService(self.session).calculate(criteria)
-            if not result["rows"]:raise EmptySnapshotError()
-            content_hash=content_fingerprint(result);existing=self.repository.by_content(criteria_hash,content_hash)
-            if existing:raise DuplicateSnapshotError(existing.id)
-            revision=self.repository.next_revision(criteria_hash)
-            header=RequirementSnapshot(fingerprint=hash_payload({"criteria":criteria_hash,"content":content_hash}),criteria_fingerprint=criteria_hash,content_fingerprint=content_hash,revision=revision,criteria=normalized,source_menus=normalize(result["source_menus"]),anomaly_snapshot=normalize(result["anomalies"]),anomaly_summary=result["anomaly_summary"],known_estimated_cost=result["known_estimated_cost"],total_estimated_cost=result["total_estimated_cost"],created_by=actor_id)
-            self.repository.add(header);self.session.flush()
-            for row in result["rows"]:
-                related=[a for a in result["anomalies"] if str(a.get("related_entity_id")) in {str(row["ingredient_id"])} or str(a.get("context",{}).get("ingredient_id"))==str(row["ingredient_id"])]
-                self.repository.add(RequirementSnapshotItem(snapshot_id=header.id,row_key=row["row_key"],ingredient_id=row["ingredient_id"],ingredient_code_snapshot=row["ingredient_code"],ingredient_name_snapshot=row["ingredient_name"],supplier_id=row["supplier_id"],supplier_code_snapshot=row.get("supplier_code"),supplier_name_snapshot=row["supplier_name"],requirement_quantity=row["requirement_quantity"],requirement_unit=row["requirement_unit"],suggested_purchase_quantity=row["suggested_purchase_quantity"],adjusted_quantity=row["suggested_purchase_quantity"],suggested_purchase_unit_snapshot=row["suggested_purchase_unit"],purchase_unit_snapshot=row["suggested_purchase_unit"],configured_purchase_unit_snapshot=row["configured_purchase_unit"],package_size_snapshot=row["package_size"],minimum_order_quantity_snapshot=row["minimum_order_quantity"],unit_price_snapshot=row["current_price"],estimated_cost_snapshot=row["estimated_cost"],needs_review=row["needs_review"],total_diner_count=row["total_diner_count"],source_count=row["source_count"],anomaly_snapshot=normalize(related),source_summary=normalize(row["schedules"]),updated_by=actor_id))
-            self.audit.record(actor_id=actor_id,action="snapshot_create",entity_type="requirement_snapshot",
-                entity_id=header.id,entity_label=f"Revision {header.revision}",
-                after_data={"revision":header.revision,"source_menus":header.source_menus,
-                            "known_estimated_cost":header.known_estimated_cost,"total_estimated_cost":header.total_estimated_cost,
-                            "item_count":len(result["rows"])})
+            header,_,_=self.build(criteria,actor_id)
             self.session.commit()
         except IntegrityError as exc:
-            self.session.rollback();existing=self.repository.by_content(criteria_hash,content_hash);raise DuplicateSnapshotError(existing.id if existing else None) from exc
+            self.session.rollback();raise DuplicateSnapshotError() from exc
         except Exception:
             self.session.rollback();raise
         return self.detail(header.id)
     def detail(self,snapshot_id):
         header,items=self.repository.detail(snapshot_id)
         if not header:raise SnapshotNotFoundError()
-        value,created_by_name=header
+        value,created_by_name,adjustment_id,adjustment_status=header
         data={column.name:getattr(value,column.name) for column in value.__table__.columns};data["created_by_name"]=created_by_name
         purchase=self._purchase(value.id);issues=self.readiness(items)
-        data.update(locked=purchase is not None,purchase_id=purchase.id if purchase else None,purchase_number=purchase.purchase_number if purchase else None,purchase_ready=purchase is None and not issues,blocking_issues=issues)
+        if adjustment_id and adjustment_status!="confirmed":issues.append({"code":"ORDERING_ADJUSTMENT_NOT_CONFIRMED","message":"Ordering adjustment sheet must be confirmed before purchase"})
+        data.update(locked=purchase is not None or adjustment_id is not None,purchase_id=purchase.id if purchase else None,purchase_number=purchase.purchase_number if purchase else None,purchase_ready=purchase is None and not issues,blocking_issues=issues,ordering_adjustment_sheet_id=adjustment_id,ordering_adjustment_status=adjustment_status)
         data["items"]=[self._item_data(item) for item in items];return data
     def list(self,page,page_size,created_by=None,start_date:date|None=None,end_date:date|None=None):
         if start_date and end_date and start_date>end_date:raise InvalidSnapshotDateRangeError()
@@ -53,6 +55,9 @@ class SnapshotService:
         rows,total=self.repository.list(page,page_size,created_by,start_at,end_before);return [dict({column.name:getattr(row[0],column.name) for column in row[0].__table__.columns},created_by_name=row[1]) for row in rows],total
     def update_adjusted(self,snapshot_id,item_id,quantity,purchase_unit,actor_id):
         if self._purchase(snapshot_id):raise SnapshotLockedError()
+        from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
+        adjustment=OrderingAdjustmentRepository(self.session).sheet_for_snapshot(snapshot_id)
+        if adjustment:raise SnapshotLockedError()
         item=self.repository.item(snapshot_id,item_id)
         if not item:raise SnapshotNotFoundError()
         before=audit_snapshot(item,"ingredient_code_snapshot","ingredient_name_snapshot","adjusted_quantity","purchase_unit_snapshot")
@@ -93,6 +98,8 @@ class SnapshotService:
         value=self.repository.get(snapshot_id)
         if not value:raise SnapshotNotFoundError()
         if self._purchase(snapshot_id):raise SnapshotInUseError()
+        from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
+        if OrderingAdjustmentRepository(self.session).sheet_for_snapshot(snapshot_id):raise SnapshotInUseError()
         AuthService(self.session).verify_current_password(actor_id,password)
         before={"revision":value.revision,"source_menus":value.source_menus,"known_estimated_cost":value.known_estimated_cost,
                 "total_estimated_cost":value.total_estimated_cost}

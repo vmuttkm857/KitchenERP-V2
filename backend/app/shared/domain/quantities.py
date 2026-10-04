@@ -5,6 +5,12 @@ from decimal import Decimal,ROUND_HALF_UP
 _UNIT_ALIASES = {"l": "L", "ml": "ml", "g": "g", "kg": "kg", "斤": "斤"}
 _WEIGHT_IN_GRAMS = {"g": Decimal("1"), "kg": Decimal("1000"), "斤": Decimal("600")}
 _VOLUME_IN_ML = {"ml": Decimal("1"), "L": Decimal("1000")}
+QUANTITY_QUANTUM = Decimal("0.000001")
+
+
+def quantize_quantity(value: Decimal) -> Decimal:
+    """Canonical persistence rounding for NUMERIC(18, 6) quantities."""
+    return Decimal(value).quantize(QUANTITY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
 @dataclass(frozen=True)

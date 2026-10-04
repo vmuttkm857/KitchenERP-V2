@@ -15,8 +15,10 @@ class PurchaseService:
     def create(self,snapshot_id,actor_id,notes=None):
         existing=self.repository.batch_for_snapshot(snapshot_id)
         if existing:raise DuplicatePurchaseError(existing.id)
-        snapshot=self.repository.snapshot(snapshot_id)
-        if not snapshot:raise PurchaseNotFoundError()
+        snapshot_row=self.repository.snapshot(snapshot_id)
+        if not snapshot_row:raise PurchaseNotFoundError()
+        snapshot,adjustment_status=snapshot_row
+        if adjustment_status is not None and adjustment_status!="confirmed":raise SnapshotNotReadyError([{"code":"ORDERING_ADJUSTMENT_NOT_CONFIRMED","message":"Ordering adjustment sheet must be confirmed before purchase"}])
         items=self.repository.snapshot_items(snapshot_id);issues=SnapshotService(self.session).readiness(items)
         if issues:raise SnapshotNotReadyError(issues)
         batch_id=uuid.uuid4();number=f"PO-{datetime.now(UTC):%Y%m%d}-{batch_id.hex[:8].upper()}"

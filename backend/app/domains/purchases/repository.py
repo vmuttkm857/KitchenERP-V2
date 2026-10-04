@@ -2,13 +2,15 @@ from sqlalchemy import func,or_,select
 from app.domains.purchases.models import PurchaseBatch,PurchaseOrder,PurchaseOrderItem
 from app.domains.snapshots.models import RequirementSnapshot,RequirementSnapshotItem
 from app.domains.users.models import User
+from app.domains.order_adjustments.models import OrderingAdjustmentSheet
 
 class PurchaseRepository:
     def __init__(self,session):self.session=session
     def add(self,value):self.session.add(value)
     def batch_for_snapshot(self,snapshot_id):return self.session.scalar(select(PurchaseBatch).where(PurchaseBatch.source_snapshot_id==snapshot_id))
     def batch(self,batch_id):return self.session.get(PurchaseBatch,batch_id)
-    def snapshot(self,snapshot_id):return self.session.get(RequirementSnapshot,snapshot_id)
+    def snapshot(self,snapshot_id):
+        return self.session.execute(select(RequirementSnapshot,OrderingAdjustmentSheet.status).outerjoin(OrderingAdjustmentSheet,OrderingAdjustmentSheet.baseline_snapshot_id==RequirementSnapshot.id).where(RequirementSnapshot.id==snapshot_id)).first()
     def snapshot_items(self,snapshot_id):return list(self.session.scalars(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id).order_by(RequirementSnapshotItem.supplier_name_snapshot,RequirementSnapshotItem.ingredient_code_snapshot)))
     def detail(self,batch_id):
         header=self.session.execute(select(PurchaseBatch,User.display_name).join(User,User.id==PurchaseBatch.created_by).where(PurchaseBatch.id==batch_id)).first()

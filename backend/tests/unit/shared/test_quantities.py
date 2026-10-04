@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.shared.domain.quantities import calculate_recipe_cost, convert_quantity
+from app.shared.domain.quantities import calculate_recipe_cost, convert_quantity, quantize_quantity
 
 
 def test_weight_and_volume_conversions_are_decimal_safe() -> None:
@@ -18,3 +18,9 @@ def test_recipe_cost_includes_percentage_loss() -> None:
     assert calculate_recipe_cost(
         Decimal("500"), Decimal("10"), "g", "kg", Decimal("120")
     ) == Decimal("66.00")
+
+
+def test_persisted_quantity_rounding_is_explicit_half_up() -> None:
+    assert quantize_quantity(Decimal("1.0000004")) == Decimal("1.000000")
+    assert quantize_quantity(Decimal("1.0000005")) == Decimal("1.000001")
+    assert quantize_quantity(Decimal("2.3456785")) == Decimal("2.345679")

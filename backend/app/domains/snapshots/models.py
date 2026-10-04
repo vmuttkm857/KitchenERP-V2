@@ -1,19 +1,20 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 class RequirementSnapshot(Base):
     __tablename__="requirement_snapshots"
-    __table_args__=(UniqueConstraint("criteria_fingerprint","content_fingerprint",name="uq_snapshots_criteria_content"),UniqueConstraint("criteria_fingerprint","revision",name="uq_snapshots_criteria_revision"),Index("ix_requirement_snapshots_created_at","created_at"),)
+    __table_args__=(CheckConstraint("snapshot_kind IN ('standard','ordering_adjustment')",name="ck_requirement_snapshots_kind"),UniqueConstraint("criteria_fingerprint","revision",name="uq_snapshots_criteria_revision"),Index("uq_requirement_snapshots_standard_content","criteria_fingerprint","content_fingerprint",unique=True,postgresql_where=text("snapshot_kind = 'standard'")),Index("ix_requirement_snapshots_created_at","created_at"),)
     id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
     fingerprint:Mapped[str]=mapped_column(String(64),nullable=False)
     criteria_fingerprint:Mapped[str]=mapped_column(String(64),nullable=False,index=True)
     content_fingerprint:Mapped[str]=mapped_column(String(64),nullable=False)
     revision:Mapped[int]=mapped_column(Integer,nullable=False)
+    snapshot_kind:Mapped[str]=mapped_column(String(32),nullable=False,default="standard",server_default="standard")
     criteria:Mapped[dict]=mapped_column(JSONB,nullable=False)
     source_menus:Mapped[list]=mapped_column(JSONB,nullable=False)
     anomaly_snapshot:Mapped[list]=mapped_column(JSONB,nullable=False,default=list)

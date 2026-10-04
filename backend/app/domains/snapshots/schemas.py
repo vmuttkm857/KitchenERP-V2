@@ -32,6 +32,7 @@ class SnapshotHeaderPublic(BaseModel):
     id:uuid.UUID; fingerprint:str; criteria_fingerprint:str; content_fingerprint:str; revision:int; criteria:dict[str,Any]; source_menus:list[dict[str,Any]]; anomaly_snapshot:list[dict[str,Any]]; anomaly_summary:dict[str,Any]
     known_estimated_cost:Decimal; total_estimated_cost:Decimal|None; created_at:datetime; created_by:uuid.UUID; created_by_name:str|None=None
     locked:bool=False; purchase_ready:bool=False; blocking_issues:list[dict[str,Any]]=[]; purchase_id:uuid.UUID|None=None; purchase_number:str|None=None
+    ordering_adjustment_sheet_id:uuid.UUID|None=None; ordering_adjustment_status:str|None=None
     @field_serializer("known_estimated_cost","total_estimated_cost")
     def decimal_string(self,value): return None if value is None else format(value,"f")
 

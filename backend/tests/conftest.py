@@ -65,6 +65,8 @@ def clean_auth_tables(migrated_test_database: Engine) -> Generator[None, None, N
         connection.execute(text("DELETE FROM production_batch_versions"))
         connection.execute(text("DELETE FROM dish_production_profiles"))
         connection.execute(text("DELETE FROM purchase_batches"))
+        connection.execute(text("DELETE FROM ordering_adjustment_lines"))
+        connection.execute(text("DELETE FROM ordering_adjustment_sheets"))
         connection.execute(text("DELETE FROM requirement_snapshots"))
         connection.execute(text("DELETE FROM menu_dishes"))
         connection.execute(text("DELETE FROM menu_days"))
