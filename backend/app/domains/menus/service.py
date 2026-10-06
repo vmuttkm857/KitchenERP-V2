@@ -412,19 +412,51 @@ class MenuService:
         self.session.flush()
         return destination_by_name
 
+    def _prepare_destination_column_mapping(self,source_menu_id,destination_menu_id,
+                                            source_meals,destination_meals_by_name,actor_id):
+        mapping={}
+        for source_meal in source_meals:
+            destination_meal=destination_meals_by_name.get(source_meal.name.lower())
+            if destination_meal is None:
+                raise InvalidMenuCopyError(f"Source meal type has no destination mapping: {source_meal.name}")
+            source_columns=self.repository.meal_type_columns(source_meal.id)
+            if source_menu_id==destination_menu_id and source_meal.id==destination_meal.id:
+                mapping.update({column.id:column.id for column in source_columns})
+                continue
+            destination_columns={
+                column.name.lower():column
+                for column in self.repository.meal_type_columns(destination_meal.id)
+            }
+            for source_column in source_columns:
+                destination_column=destination_columns.get(source_column.name.lower())
+                if destination_column is None:
+                    destination_column=MenuMealTypeColumn(
+                        id=uuid.uuid4(),menu_meal_type_id=destination_meal.id,name=source_column.name,
+                        sort_order=source_column.sort_order,created_by=actor_id,updated_by=actor_id,
+                    )
+                    self.repository.add(destination_column)
+                    destination_columns[source_column.name.lower()]=destination_column
+                elif destination_column.sort_order!=source_column.sort_order:
+                    destination_column.sort_order=source_column.sort_order
+                    destination_column.updated_by=actor_id
+                mapping[source_column.id]=destination_column.id
+        self.session.flush()
+        return mapping
+
     def _copy_day(self,destination_menu_id,source_menu_id,source_date,destination_date,mode,actor_id,
-                  destination_meals_by_name=None):
+                  destination_meals_by_name=None,column_mapping=None):
         source=self.model(source_menu_id); destination=self.model(destination_menu_id)
         if not (source.start_date<=source_date<=source.end_date and destination.start_date<=destination_date<=destination.end_date):
             raise InvalidMenuCopyError("Copy dates must fall within their menu ranges")
         source_rows=self.repository.source_rows(source_menu_id,source_date)
         source_meals={row[1].name.lower():row[1] for row in source_rows}
-        source_columns={column.id:column for column in self.repository.menu_columns(source_menu_id)}
-        destination_columns={(column.menu_meal_type_id,column.name):column for column in self.repository.menu_columns(destination_menu_id)}
         destination_meals=destination_meals_by_name
         if destination_meals is None:
             destination_meals=self._prepare_destination_meal_mapping(
                 destination_menu_id,source_meals.values(),actor_id)
+        if column_mapping is None:
+            column_mapping=self._prepare_destination_column_mapping(
+                source_menu_id,destination_menu_id,source_meals.values(),destination_meals,actor_id)
         for _,_,detail,dish in source_rows:
             if detail is not None and (dish is None or not dish.is_active): raise InvalidMenuCopyError("Inactive dish cannot be copied as a new assignment")
         destination_days=[day for day in self.repository.days(destination_menu_id) if day.menu_date==destination_date]
@@ -456,12 +488,7 @@ class MenuService:
                 next_orders[dest_day.id]=next_orders.get(dest_day.id,0)+1
                 column_id=None
                 if detail.menu_meal_type_column_id is not None:
-                    if source_menu_id==destination_menu_id and source_meal.id==dest_meal.id:
-                        column_id=detail.menu_meal_type_column_id
-                    else:
-                        source_column=source_columns.get(detail.menu_meal_type_column_id)
-                        destination_column=destination_columns.get((dest_meal.id,source_column.name)) if source_column else None
-                        column_id=destination_column.id if destination_column else None
+                    column_id=column_mapping.get(detail.menu_meal_type_column_id)
                     if column_id in columns_by_day.setdefault(dest_day.id,set()):column_id=None
                 self.repository.add(MenuDish(menu_day_id=dest_day.id,dish_id=detail.dish_id,diner_count=detail.diner_count,
                     menu_meal_type_column_id=column_id,notes=detail.notes,sort_order=next_orders[dest_day.id],created_by=actor_id,updated_by=actor_id))
@@ -474,9 +501,12 @@ class MenuService:
         if (source.end_date-source.start_date).days != 6 or (destination.end_date-destination.start_date).days != 6:
             raise InvalidMenuCopyError("Whole-week copy requires two exact seven-day menus")
         try:
+            source_meals=self.repository.meal_types(source.id)
             destination_by_name=self._prepare_destination_meal_mapping(
-                destination.id,self.repository.meal_types(source.id),actor_id)
-            for offset in range(7): self._copy_day(destination_menu_id,source.id,source.start_date+timedelta(days=offset),destination.start_date+timedelta(days=offset),command.mode,actor_id,destination_by_name)
+                destination.id,source_meals,actor_id)
+            column_mapping=self._prepare_destination_column_mapping(
+                source.id,destination.id,source_meals,destination_by_name,actor_id)
+            for offset in range(7): self._copy_day(destination_menu_id,source.id,source.start_date+timedelta(days=offset),destination.start_date+timedelta(days=offset),command.mode,actor_id,destination_by_name,column_mapping)
             after=self.aggregate(destination_menu_id)
             self.audit.record(actor_id=actor_id,action="copy_week",entity_type="menu",entity_id=destination.id,
                 entity_label=destination.name,before_data=before,after_data=after,

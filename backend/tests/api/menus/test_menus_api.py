@@ -136,7 +136,7 @@ def test_editor_save_normalizes_dishes_by_custom_column_order_and_keeps_fallback
     assert [item["notes"] for item in saved]==["前欄","後欄","未指定"]
 
 
-def test_copy_day_preserves_same_menu_column_and_maps_cross_menu_by_exact_name(client,db_session):
+def test_copy_day_preserves_same_menu_column_and_creates_or_reuses_cross_menu_columns(client,db_session):
     headers,_=auth(client,db_session);category,dishes=foundations(client,headers)
     source=menu(client,headers,category["id"],"欄位來源");source_meal=meals(client,headers,source["id"],("早餐",))[0]
     matching=menu(client,headers,category["id"],"同名目的");matching_meal=meals(client,headers,matching["id"],("早餐",))[0]
@@ -162,7 +162,104 @@ def test_copy_day_preserves_same_menu_column_and_maps_cross_menu_by_exact_name(c
 
     unmapped=client.post(f"/api/v1/menus/{missing['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
     assert unmapped.status_code==200,unmapped.text
-    assert unmapped.json()["slots"][0]["dishes"][0]["menu_meal_type_column_id"] is None
+    created_column=unmapped.json()["meal_type_columns"][0]
+    assert created_column["name"]=="主菜" and created_column["id"]!=source_column["id"]
+    assert unmapped.json()["slots"][0]["dishes"][0]["menu_meal_type_column_id"]==created_column["id"]
+
+
+def test_copy_day_preserves_column_order_assignments_unassigned_and_modes(client,db_session):
+    headers,_=auth(client,db_session);category,dishes=foundations(client,headers,dish_count=4)
+    source=menu(client,headers,category["id"],"欄位完整來源")
+    source_meal=meals(client,headers,source["id"],("中餐",))[0]
+    def create_column(menu_id,meal,name,order):
+        response=client.post(f"/api/v1/menus/{menu_id}/meal-types/{meal['id']}/columns",headers=headers,
+            json={"name":name,"sort_order":order})
+        assert response.status_code==201,response.text
+        return response.json()
+    soup=create_column(source["id"],source_meal,"素食+治飲湯",30)
+    main=create_column(source["id"],source_meal,"便當主菜",10)
+    side=create_column(source["id"],source_meal,"副菜1",20)
+    source_payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":source_meal["id"],"dishes":[
+        {"dish_id":dishes[0]["id"],"menu_meal_type_column_id":main["id"],"diner_count":100,"sort_order":1},
+        {"dish_id":dishes[1]["id"],"menu_meal_type_column_id":side["id"],"diner_count":80,"sort_order":2},
+        {"dish_id":dishes[2]["id"],"menu_meal_type_column_id":soup["id"],"diner_count":60,"sort_order":3},
+        {"dish_id":dishes[3]["id"],"menu_meal_type_column_id":None,"diner_count":40,"sort_order":4},
+    ]}]}
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=source_payload).status_code==200
+
+    add_target=menu(client,headers,category["id"],"欄位加入目的")
+    add_meal=meals(client,headers,add_target["id"],("中餐",))[0]
+    existing_main=create_column(add_target["id"],add_meal,"便當主菜",99)
+    add_response=client.post(f"/api/v1/menus/{add_target['id']}/copy-day",headers=headers,json={
+        "source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
+    assert add_response.status_code==200,add_response.text
+    add_result=add_response.json()
+    add_columns=[column for column in add_result["meal_type_columns"] if column["menu_meal_type_id"]==add_meal["id"]]
+    assert [column["name"] for column in add_columns]==["便當主菜","副菜1","素食+治飲湯"]
+    assert [column["sort_order"] for column in add_columns]==[10,20,30]
+    assert len([column for column in add_columns if column["name"]=="便當主菜"])==1
+    assert next(column for column in add_columns if column["name"]=="便當主菜")["id"]==existing_main["id"]
+    add_by_dish={dish["dish_id"]:dish for dish in add_result["slots"][0]["dishes"]}
+    destination_ids={column["name"]:column["id"] for column in add_columns}
+    assert add_by_dish[dishes[0]["id"]]["menu_meal_type_column_id"]==destination_ids["便當主菜"]
+    assert add_by_dish[dishes[1]["id"]]["menu_meal_type_column_id"]==destination_ids["副菜1"]
+    assert add_by_dish[dishes[2]["id"]]["menu_meal_type_column_id"]==destination_ids["素食+治飲湯"]
+    assert add_by_dish[dishes[3]["id"]]["menu_meal_type_column_id"] is None
+    assert not ({main["id"],side["id"],soup["id"]}&set(destination_ids.values()))
+
+    replace_target=menu(client,headers,category["id"],"欄位覆蓋目的")
+    replace_meal=meals(client,headers,replace_target["id"],("中餐",))[0]
+    old_column=create_column(replace_target["id"],replace_meal,"舊欄位",1)
+    assert client.put(f"/api/v1/menus/{replace_target['id']}/editor",headers=headers,json={"slots":[{
+        "menu_date":"2026-09-02","menu_meal_type_id":replace_meal["id"],"dishes":[{
+            "dish_id":dishes[3]["id"],"menu_meal_type_column_id":old_column["id"],"diner_count":1,"sort_order":1}]}]}).status_code==200
+    replace_response=client.post(f"/api/v1/menus/{replace_target['id']}/copy-day",headers=headers,json={
+        "source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02",
+        "mode":"replace","confirm_replace":True})
+    assert replace_response.status_code==200,replace_response.text
+    replaced=replace_response.json()
+    copied_slot=next(slot for slot in replaced["slots"] if slot["menu_date"]=="2026-09-02")
+    assert [dish["dish_id"] for dish in copied_slot["dishes"]]==[
+        dishes[0]["id"],dishes[1]["id"],dishes[2]["id"],dishes[3]["id"]]
+    assert all(dish["menu_meal_type_column_id"] is not None for dish in copied_slot["dishes"][:3])
+    assert copied_slot["dishes"][3]["menu_meal_type_column_id"] is None
+
+
+def test_copy_week_uses_distinct_destination_columns_and_persists_assignments(client,db_session):
+    headers,_=auth(client,db_session);category,dishes=foundations(client,headers)
+    source=menu(client,headers,category["id"],"欄位週來源","2026-09-01","2026-09-07")
+    target=menu(client,headers,category["id"],"欄位週目的","2026-09-08","2026-09-14")
+    source_meal=meals(client,headers,source["id"],("中餐",))[0]
+    target_meal=meals(client,headers,target["id"],("中餐",))[0]
+    def create_column(name,order):
+        response=client.post(f"/api/v1/menus/{source['id']}/meal-types/{source_meal['id']}/columns",headers=headers,
+            json={"name":name,"sort_order":order})
+        assert response.status_code==201,response.text
+        return response.json()
+    main=create_column("便當主菜",1);side=create_column("副菜1",2)
+    slots=[]
+    for offset in range(7):
+        slots.append({"menu_date":str(date(2026,9,1)+timedelta(days=offset)),"menu_meal_type_id":source_meal["id"],"dishes":[
+            {"dish_id":dishes[0]["id"],"menu_meal_type_column_id":main["id"],"diner_count":100+offset,"sort_order":1},
+            {"dish_id":dishes[1]["id"],"menu_meal_type_column_id":side["id"],"diner_count":80+offset,"sort_order":2},
+            {"dish_id":dishes[2]["id"],"menu_meal_type_column_id":None,"diner_count":60+offset,"sort_order":3},
+        ]})
+    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
+    response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
+    assert response.status_code==200,response.text
+    copied=response.json()
+    target_columns=[column for column in copied["meal_type_columns"] if column["menu_meal_type_id"]==target_meal["id"]]
+    assert [column["name"] for column in target_columns]==["便當主菜","副菜1"]
+    assert {column["id"] for column in target_columns}.isdisjoint({main["id"],side["id"]})
+    target_ids={column["name"]:column["id"] for column in target_columns}
+    assert len(copied["slots"])==7
+    for slot in copied["slots"]:
+        assert [dish["menu_meal_type_column_id"] for dish in slot["dishes"]]==[
+            target_ids["便當主菜"],target_ids["副菜1"],None]
+    reopened=client.get(f"/api/v1/menus/{target['id']}/editor",headers=headers)
+    assert reopened.status_code==200
+    assert reopened.json()["meal_type_columns"]==copied["meal_type_columns"]
+    assert reopened.json()["slots"]==copied["slots"]
 
 
 def test_unauthorized_menu_requests(client):
