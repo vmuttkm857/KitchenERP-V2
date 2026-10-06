@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_serializer, model_validator
 
 class RequirementCriteria(BaseModel):
     menu_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    ordering_adjustment_sheet_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
     selected_dates: list[date] | None = Field(default=None, max_length=366)
     start_date: date | None = None
     end_date: date | None = None
@@ -15,6 +16,9 @@ class RequirementCriteria(BaseModel):
     @model_validator(mode="after")
     def validate_dates(self):
         if len(set(self.menu_ids)) != len(self.menu_ids): raise ValueError("menu_ids must be unique")
+        if self.ordering_adjustment_sheet_ids is not None:
+            if len(set(self.ordering_adjustment_sheet_ids)) != len(self.ordering_adjustment_sheet_ids): raise ValueError("ordering_adjustment_sheet_ids must be unique")
+            if not self.ordering_adjustment_sheet_ids: self.ordering_adjustment_sheet_ids=None
         if self.selected_dates is not None and (self.start_date is not None or self.end_date is not None): raise ValueError("Use selected_dates or a date range, not both")
         if (self.start_date is None) != (self.end_date is None): raise ValueError("start_date and end_date must be provided together")
         if self.start_date and self.end_date and self.end_date < self.start_date: raise ValueError("end_date must not precede start_date")

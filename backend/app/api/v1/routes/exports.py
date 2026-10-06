@@ -13,7 +13,7 @@ from app.domains.kitchen_operations.schemas import KitchenCriteria
 from app.domains.menus.exceptions import MenuNotFoundError
 from app.domains.purchases.exceptions import PurchaseNotFoundError
 from app.domains.production.exceptions import ProductionMenuNotFound,ProductionValidationError
-from app.domains.requirements.exceptions import RequirementMenuNotFoundError
+from app.domains.requirements.exceptions import RequirementAdjustmentError,RequirementMenuNotFoundError
 from app.domains.requirements.schemas import RequirementCriteria
 from app.domains.snapshots.exceptions import SnapshotNotFoundError
 router=APIRouter(prefix="/exports",tags=["exports"],dependencies=[Depends(get_current_user)])
@@ -21,6 +21,7 @@ TYPES={"xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 def binary(payload,name,format):
     filename=safe_filename(name,format);return Response(payload,media_type=TYPES[format],headers={"Content-Disposition":content_disposition(filename),"X-Content-Type-Options":"nosniff"})
 def mapped(exc):
+    if isinstance(exc,RequirementAdjustmentError):return HTTPException(exc.status_code,detail={"code":exc.code,**exc.context})
     if isinstance(exc,(KitchenMenuNotFoundError,MenuNotFoundError,RequirementMenuNotFoundError,SnapshotNotFoundError,PurchaseNotFoundError,ProductionMenuNotFound)):return HTTPException(404,"Export source not found")
     if isinstance(exc,ProductionValidationError):return HTTPException(422,detail={"code":"INVALID_PRODUCTION_SCOPE","message":str(exc)})
     if isinstance(exc,EmptyExportError):return HTTPException(422,detail={"code":"EMPTY_EXPORT","message":str(exc)})

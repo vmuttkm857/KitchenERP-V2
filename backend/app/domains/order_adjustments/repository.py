@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.domains.order_adjustments.models import OrderingAdjustmentLine, OrderingAdjustmentSheet
 from app.domains.purchases.models import PurchaseBatch
@@ -13,6 +13,14 @@ class OrderingAdjustmentRepository:
         statement=select(OrderingAdjustmentSheet).where(OrderingAdjustmentSheet.id==sheet_id)
         if for_update: statement=statement.with_for_update()
         return self.session.scalar(statement)
+    def sheets(self,sheet_ids,for_update=False):
+        statement=select(OrderingAdjustmentSheet).where(OrderingAdjustmentSheet.id.in_(sheet_ids)).order_by(OrderingAdjustmentSheet.id)
+        if for_update:statement=statement.with_for_update()
+        return list(self.session.scalars(statement))
+    def lines_for_sheets(self,sheet_ids,for_update=False):
+        statement=select(OrderingAdjustmentLine).where(OrderingAdjustmentLine.sheet_id.in_(sheet_ids)).order_by(OrderingAdjustmentLine.sheet_id,OrderingAdjustmentLine.source_line_key)
+        if for_update:statement=statement.with_for_update()
+        return list(self.session.scalars(statement))
     def sheet_for_snapshot(self,snapshot_id):
         return self.session.scalar(select(OrderingAdjustmentSheet).where(OrderingAdjustmentSheet.baseline_snapshot_id==snapshot_id))
     def lock_creation_key(self,criteria_fingerprint):
@@ -26,11 +34,22 @@ class OrderingAdjustmentRepository:
         if for_update: statement=statement.with_for_update()
         return list(self.session.scalars(statement))
     def snapshot(self,snapshot_id): return self.session.get(RequirementSnapshot,snapshot_id)
+    def snapshot_for_update(self,snapshot_id):
+        return self.session.scalar(select(RequirementSnapshot).where(RequirementSnapshot.id==snapshot_id).with_for_update())
     def snapshot_items(self,snapshot_id,for_update=False):
         statement=select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id)
         if for_update: statement=statement.with_for_update()
         return list(self.session.scalars(statement))
+    def snapshot_items_by_ids(self,item_ids):
+        return list(self.session.scalars(select(RequirementSnapshotItem).where(RequirementSnapshotItem.id.in_(item_ids))))
     def purchase(self,snapshot_id): return self.session.scalar(select(PurchaseBatch).where(PurchaseBatch.source_snapshot_id==snapshot_id))
+    def delete_owned_draft(self,sheet_id,snapshot_id):
+        # Keep the ownership order explicit: adjustment lines reference both the
+        # sheet and snapshot items, while the sheet references the snapshot.
+        self.session.execute(delete(OrderingAdjustmentLine).where(OrderingAdjustmentLine.sheet_id==sheet_id))
+        self.session.execute(delete(OrderingAdjustmentSheet).where(OrderingAdjustmentSheet.id==sheet_id))
+        self.session.execute(delete(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id))
+        self.session.execute(delete(RequirementSnapshot).where(RequirementSnapshot.id==snapshot_id))
     def listing(self,page,page_size,status=None,menu_id=None,start_date=None,end_date=None):
         filters=[]
         if status:filters.append(OrderingAdjustmentSheet.status==status)

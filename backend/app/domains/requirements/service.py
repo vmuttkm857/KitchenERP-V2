@@ -12,9 +12,14 @@ class RequirementService:
         menus=self.repository.menus(criteria.menu_ids)
         if len(menus)!=len(criteria.menu_ids):raise RequirementMenuNotFoundError()
         source=self.repository.source_rows(criteria)
-        return self.calculate_from_source(criteria,menus,source)
-    def calculate_from_source(self,criteria,menus,source):
-        rows,daily_rows,anomalies=calculate_requirement_rows(source)
+        overrides={}
+        if criteria.ordering_adjustment_sheet_ids:
+            # Lazy import avoids the existing adjustment -> requirements service dependency.
+            from app.domains.order_adjustments.service import OrderingAdjustmentService
+            source,overrides=OrderingAdjustmentService(self.repository.session).requirement_context(criteria.ordering_adjustment_sheet_ids,source,criteria)
+        return self.calculate_from_source(criteria,menus,source,overrides)
+    def calculate_from_source(self,criteria,menus,source,quantity_overrides=None):
+        rows,daily_rows,anomalies=calculate_requirement_rows(source,quantity_overrides)
         scheduled_menu_ids={row["menu_id"] for row in source}
         for menu in menus:
             # Source rows already report inactive menus. Report it here only when

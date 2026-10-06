@@ -9,7 +9,8 @@ def anomaly(code,severity,message,entity_id,entity_name,**context):
     return {"code":code,"severity":severity,"message":message,"related_entity_id":entity_id,"related_entity_name":entity_name,"context":context}
 
 
-def calculate_requirement_rows(source_rows):
+def calculate_requirement_rows(source_rows,quantity_overrides=None):
+    quantity_overrides=quantity_overrides or {}
     aggregates={}; daily_aggregates={}; anomalies=[]
     inactive_seen=set(); missing_supplier_seen=set()
     for source in source_rows:
@@ -34,6 +35,13 @@ def calculate_requirement_rows(source_rows):
         convertible=converted.convertible and converted.quantity is not None
         final_unit=source["base_unit"] if convertible else source["recipe_unit"]
         quantity=converted.quantity if convertible else with_loss
+        source_line_key=f'{source["menu_dish_id"]}:{source["recipe_detail_id"]}'
+        override=quantity_overrides.get(source_line_key)
+        if override is not None:
+            if override["unit"]!=final_unit:
+                from app.domains.requirements.exceptions import RequirementAdjustmentError
+                raise RequirementAdjustmentError("ADJUSTMENT_UNIT_MISMATCH",source_line_key=source_line_key,expected_unit=final_unit,actual_unit=override["unit"])
+            quantity=override["quantity"]
         row_key=f"{source['ingredient_id']}:{final_unit}"
         if not convertible:
             anomalies.append(anomaly("INCOMPATIBLE_UNIT","error","Recipe unit cannot be safely converted to ingredient base unit",source["recipe_detail_id"],source["ingredient_name"],recipe_unit=source["recipe_unit"],base_unit=source["base_unit"],**source_context))

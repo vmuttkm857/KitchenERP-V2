@@ -13,6 +13,7 @@ import { MenusPage } from '../features/menus/MenusPage'
 import { Menu } from '../features/menus/types'
 import { NutritionPage } from '../features/nutrition/NutritionPage'
 import { OrderingAdjustmentsPage } from '../features/order_adjustments/OrderingAdjustmentsPage'
+import type { OrderingAdjustmentDetail } from '../features/order_adjustments/types'
 import { PurchasesPage } from '../features/purchases/PurchasesPage'
 import { PostpartumCasesPage } from '../features/postpartum/PostpartumCasesPage'
 import { RestrictionGroupsPage } from '../features/postpartum/RestrictionGroupsPage'
@@ -33,7 +34,7 @@ const businessGroups=[
   {label:'主檔管理',items:[['categories','分類'],['suppliers','供應商'],['ingredients','食材'],['nutrition','營養資料'],['dishes','菜色／配方']]},
   {label:'菜單',items:[['menus','菜單管理'],['kitchen','廚房作業']]},
   {label:'月子餐',items:[['postpartum','個案管理'],['postpartum-restrictions','禁忌群組管理'],['postpartum-menu-source','菜單來源／週期'],['postpartum-conflicts','禁忌總覽'],['postpartum-change-sheet','每日異動單'],['postpartum-catering-overview','供餐總覽']]},
-  {label:'需求／採購',items:[['requirements','食材需求'],['order-adjustments','叫貨調整'],['snapshots','固定需求快照'],['purchases','正式採購']]},
+  {label:'需求／採購',items:[['order-adjustments','叫貨調整'],['requirements','食材需求'],['snapshots','固定需求快照'],['purchases','正式採購']]},
 ] as const
 const systemGroup={label:'系統管理',items:[['users','使用者管理'],['audit','操作紀錄']]} as const
 
@@ -73,7 +74,7 @@ function Application(){
   const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>{
     try{const saved=localStorage.getItem(sidebarPreferenceKey);return saved===null?window.matchMedia('(max-width: 1100px)').matches:saved==='true'}catch{return false}
   })
-  const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [productionDish,setProductionDish]=useState<Dish|null>(null);const [dishListState,setDishListState]=useState<DishListState>(initialDishListState);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null)
+  const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [productionDish,setProductionDish]=useState<Dish|null>(null);const [dishListState,setDishListState]=useState<DishListState>(initialDishListState);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null);const [requirementAdjustment,setRequirementAdjustment]=useState<OrderingAdjustmentDetail|null>(null)
   const [passwordOpen,setPasswordOpen]=useState(false),[passwordBusy,setPasswordBusy]=useState(false),[passwordError,setPasswordError]=useState('')
   useEffect(()=>{try{localStorage.setItem(sidebarPreferenceKey,String(sidebarCollapsed))}catch{/* UI preference remains in memory. */}},[sidebarCollapsed])
   useEffect(()=>{
@@ -84,7 +85,8 @@ function Application(){
   if(isLoading)return <main className="shell"><LoadingState label="系統載入中…"/></main>
   if(!user)return <LoginPage/>
   const groups=user.role==='admin'?[...businessGroups,systemGroup]:businessGroups
-  function navigate(next:Page){requestNavigation(()=>{setPage(next);setNavOpen(false)})}
+  function navigate(next:Page){requestNavigation(()=>{if(next==='requirements'||next==='order-adjustments')setRequirementAdjustment(null);setPage(next);setNavOpen(false)})}
+  function openAdjustmentRequirements(detail:OrderingAdjustmentDetail){requestNavigation(()=>{setRequirementAdjustment(detail);setPage('requirements');setNavOpen(false)})}
   async function changePassword(current:string,next:string,confirm:string){setPasswordBusy(true);setPasswordError('');try{await apiRequest('/users/me/change-password',{method:'POST',body:JSON.stringify({current_password:current,new_password:next,confirm_password:confirm})});setPasswordOpen(false);await logout()}catch(cause){setPasswordError(cause instanceof ApiError&&cause.status<500?cause.message:'密碼修改失敗，請稍後再試。')}finally{setPasswordBusy(false)}}
   const isActive=(id:NavPage)=>page===id||(id==='dishes'&&(page==='recipe'||page==='production-profile'))||(id==='menus'&&page==='menu-editor')
   return <div className={`app-layout ${sidebarCollapsed?'sidebar-collapsed':''}`}>
@@ -104,7 +106,7 @@ function Application(){
       {page==='postpartum-conflicts'&&<PostpartumConflictPage/>}
       {page==='postpartum-change-sheet'&&<PostpartumChangeSheetPage onOpenConflicts={()=>navigate('postpartum-conflicts')}/>}
       {page==='postpartum-catering-overview'&&<PostpartumCateringOverviewPage/>}
-      {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage/>}{page==='order-adjustments'&&<OrderingAdjustmentsPage/>}{page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
+      {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage adjustmentContext={requirementAdjustment}/>} {page==='order-adjustments'&&<OrderingAdjustmentsPage initialSheetId={requirementAdjustment?.id} onReview={openAdjustmentRequirements}/>} {page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
       {page==='users'&&user.role==='admin'&&<UsersPage/>}{page==='audit'&&user.role==='admin'&&<AuditLogsPage/>}
     </main>
     {passwordOpen&&<ChangePasswordDialog busy={passwordBusy} error={passwordError} onClose={()=>setPasswordOpen(false)} onSubmit={changePassword}/>}

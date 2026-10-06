@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +28,9 @@ class OrderingAdjustmentSheet(Base):
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     notes: Mapped[str | None] = mapped_column(Text)
+    last_reuse_source_sheet_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    reuse_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reuse_applied_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     confirmed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -86,6 +89,7 @@ class OrderingAdjustmentLine(Base):
     system_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     system_unit: Mapped[str] = mapped_column(String(30), nullable=False)
     adjusted_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)

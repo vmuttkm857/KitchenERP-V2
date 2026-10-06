@@ -25,6 +25,91 @@ def create_sheet(client,headers,menu):
     return client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[menu["id"]],"selected_dates":["2026-09-01"]},"notes":"第一版"})
 
 
+def test_reuse_preview_and_apply_are_authoritative_versioned_and_audited(client,db_session):
+    headers=auth(client,db_session);previous_menu,_,dishes,*_=fixture(client,headers)
+    previous=create_sheet(client,headers,previous_menu).json();source=previous["lines"][0]
+    previous=client.patch(f"/api/v1/order-adjustments/{previous['id']}/lines",headers=headers,json={"lock_version":previous["lock_version"],"lines":[{"id":source["id"],"adjusted_quantity":"2"}]}).json()
+    previous=client.post(f"/api/v1/order-adjustments/{previous['id']}/confirm",headers=headers,json={"lock_version":previous["lock_version"]}).json()
+    assert previous["status"]=="confirmed"
+    current_menu=client.post("/api/v1/menus",headers=headers,json={"name":"下一週菜單","start_date":"2026-09-08","end_date":"2026-09-08"}).json()
+    meal=client.post(f"/api/v1/menus/{current_menu['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
+    assert client.put(f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":9},{"dish_id":dishes[1]["id"],"diner_count":5,"sort_order":1}]}]}).status_code==200
+    current=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[current_menu["id"]],"selected_dates":["2026-09-08"]}}).json()
+    payload={"previous_sheet_id":previous["id"],"current_lock_version":current["lock_version"],"previous_lock_version":previous["lock_version"],"menu_pairs":[{"previous_menu_id":previous_menu["id"],"current_menu_id":current_menu["id"]}]}
+    preview=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=payload)
+    assert preview.status_code==200,preview.text;body=preview.json();assert body["summary"]["safe_to_reuse"]>=1
+    statements=[]
+    def record_reuse_query(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    event.listen(process_engine,"before_cursor_execute",record_reuse_query)
+    try:assert client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=payload).status_code==200
+    finally:event.remove(process_engine,"before_cursor_execute",record_reuse_query)
+    assert len([value for value in statements if value.lstrip().upper().startswith("SELECT")])<=10
+    target=next(item for item in body["lines"] if item["status"]=="safe_to_reuse" and item["ingredient_name"]==source["ingredient_name_snapshot"])
+    applied=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse",headers=headers,json={**payload,"selected_current_line_ids":[target["current_line_id"]]})
+    assert applied.status_code==200,applied.text;result=applied.json();assert result["lock_version"]==current["lock_version"]+1
+    assert next(line for line in result["lines"] if line["id"]==target["current_line_id"])["adjusted_quantity"]=="2.000000"
+    assert db_session.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action=="ordering_adjustment_reuse"))==1
+    assert client.post(f"/api/v1/order-adjustments/{current['id']}/reuse",headers=headers,json={**payload,"selected_current_line_ids":[target["current_line_id"]]}).status_code==409
+
+
+def test_reference_only_review_state_persists_until_each_line_is_saved(client,db_session):
+    headers=auth(client,db_session);previous_menu,_,dishes,*_=fixture(client,headers)
+    previous=create_sheet(client,headers,previous_menu).json()
+    reusable=[line for line in previous["lines"] if line["source_dish_id"] in {dishes[0]["id"],dishes[1]["id"]}]
+    previous=client.patch(
+        f"/api/v1/order-adjustments/{previous['id']}/lines",headers=headers,
+        json={"lock_version":previous["lock_version"],"lines":[{"id":line["id"],"adjusted_quantity":str(index+2)} for index,line in enumerate(reusable)]},
+    ).json()
+    previous=client.post(f"/api/v1/order-adjustments/{previous['id']}/confirm",headers=headers,json={"lock_version":previous["lock_version"]}).json()
+
+    current_menu=client.post("/api/v1/menus",headers=headers,json={"name":"Review 持久化菜單","start_date":"2026-09-08","end_date":"2026-09-08"}).json()
+    meal=client.post(f"/api/v1/menus/{current_menu['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
+    saved=client.put(f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[
+        {"dish_id":dishes[0]["id"],"diner_count":11,"sort_order":1},
+        {"dish_id":dishes[1]["id"],"diner_count":5,"sort_order":2},
+    ]}]})
+    assert saved.status_code==200,saved.text
+    current=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[current_menu["id"]],"selected_dates":["2026-09-08"]}}).json()
+    assert current["reuse_applied_at"] is None and current["last_reuse_source_sheet_id"] is None
+    payload={"previous_sheet_id":previous["id"],"current_lock_version":current["lock_version"],"previous_lock_version":previous["lock_version"],"menu_pairs":[{"previous_menu_id":previous_menu["id"],"current_menu_id":current_menu["id"]}]}
+    preview=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=payload).json()
+    reference_ids={line["current_line_id"] for line in preview["lines"] if line["status"]=="reference_only"}
+    safe_ids=[line["current_line_id"] for line in preview["lines"] if line["status"]=="safe_to_reuse"]
+    assert len(reference_ids)>=2 and safe_ids
+    preview_only=client.get(f"/api/v1/order-adjustments/{current['id']}",headers=headers).json()
+    assert preview_only["reuse_applied_at"] is None and not any(line["review_required"] for line in preview_only["lines"])
+
+    applied=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse",headers=headers,json={**payload,"selected_current_line_ids":safe_ids}).json()
+    assert applied["reuse_applied_at"] is not None and applied["last_reuse_source_sheet_id"]==previous["id"]
+    by_id={line["id"]:line for line in applied["lines"]}
+    assert {line_id for line_id,line in by_id.items() if line["review_required"]}==reference_ids
+    assert all(not by_id[line_id]["review_required"] for line_id in safe_ids)
+
+    reopened=client.get(f"/api/v1/order-adjustments/{current['id']}",headers=headers).json()
+    assert datetime.fromisoformat(reopened["reuse_applied_at"].replace("Z","+00:00"))==datetime.fromisoformat(applied["reuse_applied_at"].replace("Z","+00:00"))
+    assert reopened["last_reuse_source_sheet_id"]==previous["id"]
+    assert {line["id"] for line in reopened["lines"] if line["review_required"]}==reference_ids
+    first=next(iter(reference_ids))
+    updated=client.patch(f"/api/v1/order-adjustments/{current['id']}/lines",headers=headers,json={"lock_version":reopened["lock_version"],"lines":[{"id":first,"adjusted_quantity":"2.5"}]}).json()
+    remaining=reference_ids-{first}
+    assert {line["id"] for line in updated["lines"] if line["review_required"]}==remaining
+    second_preview_payload={**payload,"current_lock_version":updated["lock_version"]}
+    assert client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=second_preview_payload).status_code==200
+    after_preview=client.get(f"/api/v1/order-adjustments/{current['id']}",headers=headers).json()
+    assert {line["id"] for line in after_preview["lines"] if line["review_required"]}==remaining
+    assert next(line for line in after_preview["lines"] if line["id"]==first)["adjusted_quantity"]=="2.500000"
+
+    failed=client.patch(f"/api/v1/order-adjustments/{current['id']}/lines",headers=headers,json={"lock_version":reopened["lock_version"],"lines":[{"id":next(iter(remaining)),"adjusted_quantity":"3"}]})
+    assert failed.status_code==409
+    after_failure=client.get(f"/api/v1/order-adjustments/{current['id']}",headers=headers).json()
+    assert {line["id"] for line in after_failure["lines"] if line["review_required"]}==remaining
+
+    completed=client.patch(f"/api/v1/order-adjustments/{current['id']}/lines",headers=headers,json={"lock_version":after_failure["lock_version"],"lines":[{"id":line_id,"adjusted_quantity":"3"} for line_id in remaining]}).json()
+    assert not any(line["review_required"] for line in completed["lines"])
+    final=client.get(f"/api/v1/order-adjustments/{current['id']}",headers=headers).json()
+    assert not any(line["review_required"] for line in final["lines"])
+
+
 def test_create_preserves_source_identity_and_atomic_baseline(client,db_session):
     headers=auth(client,db_session);menu,*_=fixture(client,headers)
     response=create_sheet(client,headers,menu);assert response.status_code==201,response.text
@@ -32,7 +117,7 @@ def test_create_preserves_source_identity_and_atomic_baseline(client,db_session)
     assert len(body["lines"])==12
     assert len({line["source_line_key"] for line in body["lines"]})==12
     assert all(line["source_menu_dish_id"] and line["source_dish_ingredient_id"] for line in body["lines"])
-    assert all(line["adjusted_quantity"] is None and line["effective_quantity"]==line["system_quantity"] for line in body["lines"])
+    assert all(line["adjusted_quantity"] is None and line["effective_quantity"]==line["system_quantity"] and line["review_required"] is False for line in body["lines"])
     snapshot=db_session.get(RequirementSnapshot,body["baseline_snapshot_id"]);assert snapshot is not None
     items=list(db_session.scalars(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot.id)))
     for item in items:
@@ -256,7 +341,8 @@ def test_source_mutation_stale_reason_matrix(client,db_session,change,reason):
     headers=auth(client,db_session);menu,_,_,ingredients,suppliers=fixture(client,headers)
     created=create_sheet(client,headers,menu).json()
     ingredient=db_session.get(Ingredient,ingredients[0]["id"])
-    recipe=db_session.scalar(select(DishIngredient).where(DishIngredient.ingredient_id==ingredient.id))
+    recipes=list(db_session.scalars(select(DishIngredient).where(DishIngredient.ingredient_id==ingredient.id).order_by(DishIngredient.id)))
+    recipe=next((value for value in recipes if change!="recipe_unit" or value.unit!="kg"),recipes[0])
     if change=="recipe_quantity":recipe.quantity+=Decimal("0.1")
     elif change=="loss_rate":recipe.loss_rate+=Decimal("1")
     elif change=="supplier":ingredient.primary_supplier_id=uuid.UUID(suppliers[1]["id"])
@@ -420,5 +506,63 @@ def test_list_is_authenticated_paginated_and_constant_query_count(client,db_sess
     try:response=client.get("/api/v1/order-adjustments?page=1&page_size=1",headers=headers)
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200 and response.json()["pagination"]["total"]==1
-    assert response.json()["items"][0]["stale"] is None
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=3
+    assert response.json()["items"][0]["stale"] is False
+    # The fourth fixed query batch-loads current source rows so list badges can
+    # distinguish stale drafts without one query per adjustment sheet.
+    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=4
+
+
+def test_delete_stale_draft_cleans_owned_lines_and_snapshot_but_keeps_audit(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_sheet(client,headers,menu).json()
+    snapshot_id=uuid.UUID(created["baseline_snapshot_id"]);sheet_id=uuid.UUID(created["id"])
+    source=db_session.get(MenuDish,created["lines"][0]["source_menu_dish_id"]);source.diner_count+=1;db_session.commit()
+    assert client.get(f"/api/v1/order-adjustments/{created['id']}",headers=headers).json()["stale"] is True
+    listed=client.get("/api/v1/order-adjustments",headers=headers).json()
+    assert next(item for item in listed["items"] if item["id"]==created["id"])["stale"] is True
+    response=client.delete(f"/api/v1/order-adjustments/{created['id']}?lock_version={created['lock_version']}",headers=headers)
+    assert response.status_code==204,response.text
+    db_session.expire_all()
+    assert db_session.get(OrderingAdjustmentSheet,sheet_id) is None
+    assert db_session.get(RequirementSnapshot,snapshot_id) is None
+    assert db_session.scalar(select(func.count()).select_from(OrderingAdjustmentLine).where(OrderingAdjustmentLine.sheet_id==sheet_id))==0
+    assert db_session.scalar(select(func.count()).select_from(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id))==0
+    audit=db_session.scalar(select(AuditLog).where(AuditLog.action=="ordering_adjustment_delete"))
+    assert audit is not None and audit.before_data["baseline_snapshot_id"]==str(snapshot_id)
+    listing=client.get("/api/v1/order-adjustments",headers=headers).json()
+    assert all(item["id"]!=str(sheet_id) for item in listing["items"])
+
+
+def test_delete_draft_is_versioned_status_guarded_and_does_not_delete_unrelated_snapshot(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers)
+    first=create_sheet(client,headers,menu).json()
+    second=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[menu["id"]],"selected_dates":["2026-09-02"]}}).json()
+    unrelated_snapshot_id=uuid.UUID(second["baseline_snapshot_id"])
+    assert client.delete(f"/api/v1/order-adjustments/{first['id']}?lock_version=99",headers=headers).status_code==409
+    assert client.delete(f"/api/v1/order-adjustments/{first['id']}?lock_version={first['lock_version']}",headers=headers).status_code==204
+    db_session.expire_all();assert db_session.get(RequirementSnapshot,unrelated_snapshot_id) is not None
+
+    confirmed=client.post(f"/api/v1/order-adjustments/{second['id']}/confirm",headers=headers,json={"lock_version":second["lock_version"]}).json()
+    rejected=client.delete(f"/api/v1/order-adjustments/{confirmed['id']}?lock_version={confirmed['lock_version']}",headers=headers)
+    assert rejected.status_code==409 and rejected.json()["detail"]["code"]=="CONFIRMED_DELETE_FORBIDDEN"
+
+    third=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[menu["id"]],"selected_dates":["2026-09-03"]}}).json()
+    cancelled=client.post(f"/api/v1/order-adjustments/{third['id']}/cancel",headers=headers,json={"lock_version":third["lock_version"]}).json()
+    rejected=client.delete(f"/api/v1/order-adjustments/{cancelled['id']}?lock_version={cancelled['lock_version']}",headers=headers)
+    assert rejected.status_code==409 and rejected.json()["detail"]["code"]=="CANCELLED_DELETE_FORBIDDEN"
+
+
+def test_delete_draft_rolls_back_all_owned_data_on_failure(client,db_session,monkeypatch):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_sheet(client,headers,menu).json()
+    from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
+    original=OrderingAdjustmentRepository.delete_owned_draft
+    def fail_after_delete(self,sheet_id,snapshot_id):
+        original(self,sheet_id,snapshot_id)
+        raise RuntimeError("injected")
+    monkeypatch.setattr(OrderingAdjustmentRepository,"delete_owned_draft",fail_after_delete)
+    response=client.delete(f"/api/v1/order-adjustments/{created['id']}?lock_version={created['lock_version']}",headers=headers)
+    assert response.status_code==400
+    db_session.expire_all()
+    assert db_session.get(OrderingAdjustmentSheet,created["id"]) is not None
+    assert db_session.get(RequirementSnapshot,created["baseline_snapshot_id"]) is not None
+    assert db_session.scalar(select(func.count()).select_from(OrderingAdjustmentLine).where(OrderingAdjustmentLine.sheet_id==created["id"]))==len(created["lines"])
+    assert db_session.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action=="ordering_adjustment_delete"))==0

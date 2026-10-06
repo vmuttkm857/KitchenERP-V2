@@ -10,11 +10,13 @@ from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.snapshots.schemas import SnapshotCreate,SnapshotDetail,SnapshotHeaderPublic,SnapshotItemPublic,SnapshotItemUpdate,SnapshotList
 from app.domains.snapshots.service import SnapshotService
 from app.domains.users.models import User
+from app.domains.requirements.exceptions import RequirementAdjustmentError
 from app.shared.schemas import PaginationMeta
 from app.shared.schemas import PasswordConfirmation
 
 router=APIRouter(prefix="/requirement-snapshots",tags=["requirement-snapshots"])
 def mapped(exc):
+    if isinstance(exc,RequirementAdjustmentError):return HTTPException(exc.status_code,detail={"code":exc.code,**exc.context})
     if isinstance(exc,SnapshotNotFoundError):return HTTPException(404,"Snapshot not found")
     if isinstance(exc,DuplicateSnapshotError):return HTTPException(409,detail={"code":"DUPLICATE_SNAPSHOT","existing_snapshot_id":str(exc.snapshot_id) if exc.snapshot_id else None})
     if isinstance(exc,EmptySnapshotError):return HTTPException(422,"Requirement calculation has no rows to snapshot")

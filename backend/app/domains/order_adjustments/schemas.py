@@ -41,6 +41,55 @@ class OrderingAdjustmentAction(BaseModel):
     lock_version: int = Field(ge=1)
 
 
+class OrderingAdjustmentMenuPair(BaseModel):
+    previous_menu_id: uuid.UUID
+    current_menu_id: uuid.UUID
+
+
+class OrderingAdjustmentReusePreviewRequest(BaseModel):
+    previous_sheet_id: uuid.UUID
+    current_lock_version: int = Field(ge=1)
+    previous_lock_version: int = Field(ge=1)
+    menu_pairs: list[OrderingAdjustmentMenuPair] = Field(min_length=1)
+
+    @field_validator("menu_pairs")
+    @classmethod
+    def unique_menu_pairs(cls,value):
+        if len({item.current_menu_id for item in value})!=len(value) or len({item.previous_menu_id for item in value})!=len(value):
+            raise ValueError("menu pairs must be one-to-one")
+        return value
+
+
+class OrderingAdjustmentReuseApplyRequest(OrderingAdjustmentReusePreviewRequest):
+    selected_current_line_ids: list[uuid.UUID] = Field(min_length=1)
+
+    @field_validator("selected_current_line_ids")
+    @classmethod
+    def unique_selected_lines(cls,value):
+        if len(set(value))!=len(value):raise ValueError("selected line ids must be unique")
+        return value
+
+
+class OrderingAdjustmentReuseLine(BaseModel):
+    status:Literal["safe_to_reuse","reference_only","no_match","ambiguous"]
+    reason_codes:list[str]
+    current_line_id:uuid.UUID;previous_line_id:uuid.UUID|None;current_menu_id:uuid.UUID
+    requirement_date:date;meal_name:str;dish_name:str;ingredient_name:str
+    current_system_quantity:Decimal;current_system_unit:str;current_adjusted_quantity:Decimal|None
+    previous_system_quantity:Decimal|None;previous_system_unit:str|None;previous_adjusted_quantity:Decimal|None
+    reused_quantity:Decimal|None
+
+    @field_serializer("current_system_quantity","current_adjusted_quantity","previous_system_quantity","previous_adjusted_quantity","reused_quantity")
+    def reuse_decimal_string(self,value):return None if value is None else format(value,"f")
+
+
+class OrderingAdjustmentReusePreview(BaseModel):
+    current_sheet_id:uuid.UUID;previous_sheet_id:uuid.UUID
+    current_lock_version:int;previous_lock_version:int
+    summary:dict[str,int]
+    lines:list[OrderingAdjustmentReuseLine]
+
+
 class OrderingAdjustmentLinePublic(BaseModel):
     model_config=ConfigDict(from_attributes=True)
     id:uuid.UUID; snapshot_item_id:uuid.UUID; source_line_key:str
@@ -52,7 +101,7 @@ class OrderingAdjustmentLinePublic(BaseModel):
     source_supplier_id:uuid.UUID|None; supplier_name_snapshot:str|None
     quantity_per_person_snapshot:Decimal; loss_rate_snapshot:Decimal; recipe_unit_snapshot:str
     system_quantity:Decimal; system_unit:str; adjusted_quantity:Decimal|None; effective_quantity:Decimal
-    modified:bool; stale:bool; stale_reasons:list[str]
+    modified:bool; review_required:bool; stale:bool; stale_reasons:list[str]
 
     @field_serializer("quantity_per_person_snapshot","loss_rate_snapshot","system_quantity","adjusted_quantity","effective_quantity")
     def decimal_string(self,value): return None if value is None else format(value,"f")
@@ -61,6 +110,7 @@ class OrderingAdjustmentLinePublic(BaseModel):
 class OrderingAdjustmentDetail(BaseModel):
     id:uuid.UUID; baseline_snapshot_id:uuid.UUID; status:Literal["draft","confirmed","cancelled"]
     source_fingerprint:str; revision:int; lock_version:int; notes:str|None
+    last_reuse_source_sheet_id:uuid.UUID|None; reuse_applied_at:datetime|None; reuse_applied_by:uuid.UUID|None
     criteria:dict[str,Any]; source_menus:list[dict[str,Any]]
     stale:bool; warnings:list[dict[str,Any]]
     confirmed_at:datetime|None; confirmed_by:uuid.UUID|None; created_at:datetime; updated_at:datetime
