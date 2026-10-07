@@ -6,6 +6,7 @@ from app.api.v1.routes.dishes import router as dishes_router
 from app.api.v1.routes.health import router as health_router
 from app.api.v1.routes.ingredients import router as ingredients_router
 from app.api.v1.routes.menus import router as menus_router
+from app.api.v1.routes.menu_imports import router as menu_imports_router
 from app.api.v1.routes.nutrition import router as nutrition_router
 from app.api.v1.routes.recipes import router as recipes_router
 from app.api.v1.routes.requirements import router as requirements_router
@@ -31,6 +32,7 @@ api_v1_router.include_router(nutrition_router)
 api_v1_router.include_router(dishes_router)
 api_v1_router.include_router(recipes_router)
 api_v1_router.include_router(menus_router)
+api_v1_router.include_router(menu_imports_router)
 api_v1_router.include_router(requirements_router)
 api_v1_router.include_router(snapshots_router)
 api_v1_router.include_router(purchases_router)

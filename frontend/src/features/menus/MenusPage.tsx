@@ -1,11 +1,12 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { apiRequest } from '../../api/client'
 import { Menu, List } from './types'
+import { MenuImportDialog } from './MenuImportDialog'
 
 interface Category { id:string; name:string }
 interface Paged<T> { items:T[]; pagination:{page:number;page_size:number;total:number} }
 
-export function MenusPage({onOpen}:{onOpen:(menu:Menu)=>void}) {
+export function MenusPage({onOpen,onOpenImportDraft}:{onOpen:(menu:Menu)=>void;onOpenImportDraft:(batchId:string)=>void}) {
   const [items,setItems]=useState<Menu[]>([]); const [categories,setCategories]=useState<Category[]>([])
   const [name,setName]=useState(''); const [startDate,setStartDate]=useState(''); const [endDate,setEndDate]=useState('')
   const [categoryId,setCategoryId]=useState(''); const [notes,setNotes]=useState(''); const [search,setSearch]=useState('')
@@ -13,6 +14,7 @@ export function MenusPage({onOpen}:{onOpen:(menu:Menu)=>void}) {
   const [page,setPage]=useState(1); const [total,setTotal]=useState(0)
   const [editing,setEditing]=useState<Menu|null>(null); const [deleting,setDeleting]=useState<Menu|null>(null); const [password,setPassword]=useState('')
   const [loading,setLoading]=useState(true); const [error,setError]=useState(''); const [message,setMessage]=useState('')
+  const [importOpen,setImportOpen]=useState(false)
   const invalidFilterRange=Boolean(filterStartDate&&filterEndDate&&filterStartDate>filterEndDate)
   const load=useCallback(async()=>{if(invalidFilterRange)return;setLoading(true);try{const params=new URLSearchParams({page:String(page),page_size:'25',search});if(filterStartDate)params.set('start_date',filterStartDate);if(filterEndDate)params.set('end_date',filterEndDate);const [menus,cats]=await Promise.all([apiRequest<Paged<Menu>>(`/menus?${params}`),apiRequest<List<Category>>('/categories/menu?active=true&page_size=100')]);setItems(menus.items);setTotal(menus.pagination.total);setCategories(cats.items);setError('')}catch{setError('菜單資料載入失敗')}finally{setLoading(false)}},[filterEndDate,filterStartDate,invalidFilterRange,page,search])
   useEffect(()=>{void load()},[load])
@@ -20,7 +22,7 @@ export function MenusPage({onOpen}:{onOpen:(menu:Menu)=>void}) {
   async function saveEdit(event:FormEvent){event.preventDefault();if(!editing)return;try{await apiRequest(`/menus/${editing.id}`,{method:'PATCH',body:JSON.stringify({name:editing.name,start_date:editing.start_date,end_date:editing.end_date,category_id:editing.category_id,notes:editing.notes})});setEditing(null);setMessage('菜單已更新');await load()}catch{setError('菜單更新失敗；已有餐格時不可縮小到排除餐格的日期範圍')}}
   async function toggle(menu:Menu){try{await apiRequest(`/menus/${menu.id}/${menu.is_active?'deactivate':'reactivate'}`,{method:'POST'});await load()}catch{setError('菜單狀態更新失敗')}}
   async function hardDelete(){if(!deleting||!password)return;try{await apiRequest(`/menus/${deleting.id}/hard-delete`,{method:'POST',body:JSON.stringify({password})});setPassword('');setDeleting(null);setMessage('未被引用的空菜單已永久刪除');await load()}catch{setError('密碼錯誤，或菜單已有餐別／餐格而不可永久刪除')}}
-  return <section><h2>菜單管理</h2>
+  return <section><header className="page-heading-actions"><h2>菜單管理</h2><button type="button" onClick={()=>setImportOpen(true)}>匯入 Excel</button></header>
     <form className="panel-form" onSubmit={create}><label>名稱<input value={name} onChange={e=>setName(e.target.value)} required/></label><label>開始日期<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} required/></label><label>結束日期<input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} required/></label><label>分類<select value={categoryId} onChange={e=>setCategoryId(e.target.value)}><option value="">未分類</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>備註<input value={notes} onChange={e=>setNotes(e.target.value)}/></label><button>建立菜單</button></form>
     <div className="toolbar"><label>搜尋<input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}}/></label><label>開始日期<input type="date" value={filterStartDate} onChange={e=>{setFilterStartDate(e.target.value);setPage(1)}}/></label><label>結束日期<input type="date" value={filterEndDate} onChange={e=>{setFilterEndDate(e.target.value);setPage(1)}}/></label><label>頁碼<input type="number" min="1" max={Math.max(1,Math.ceil(total/25))} value={page} onChange={e=>setPage(Math.max(1,Number(e.target.value)))}/></label><span>共 {total} 筆／{Math.max(1,Math.ceil(total/25))} 頁</span><button type="button" disabled={page<=1||invalidFilterRange} onClick={()=>setPage(value=>value-1)}>上一頁</button><button type="button" disabled={invalidFilterRange||page>=Math.ceil(total/25)} onClick={()=>setPage(value=>value+1)}>下一頁</button></div>
     {invalidFilterRange&&<p className="error">開始日期不可晚於結束日期。</p>}
@@ -28,5 +30,6 @@ export function MenusPage({onOpen}:{onOpen:(menu:Menu)=>void}) {
     {editing&&<form className="panel-form" onSubmit={saveEdit}><h3>修改菜單</h3><label>名稱<input value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})}/></label><label>開始<input type="date" value={editing.start_date} onChange={e=>setEditing({...editing,start_date:e.target.value})}/></label><label>結束<input type="date" value={editing.end_date} onChange={e=>setEditing({...editing,end_date:e.target.value})}/></label><label>分類<select value={editing.category_id??''} onChange={e=>setEditing({...editing,category_id:e.target.value||null})}><option value="">未分類</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>備註<input value={editing.notes??''} onChange={e=>setEditing({...editing,notes:e.target.value||null})}/></label><button>儲存修改</button><button type="button" className="secondary" onClick={()=>setEditing(null)}>取消</button></form>}
     {loading?<p>載入中…</p>:<table><thead><tr><th>名稱</th><th>日期</th><th>分類</th><th>狀態</th><th>操作</th></tr></thead><tbody>{items.map(item=><tr key={item.id}><td>{item.name}</td><td>{item.start_date} ～ {item.end_date}</td><td>{item.category_name??'未分類'}</td><td>{item.is_active?'啟用':'停用'}</td><td className="actions"><button onClick={()=>onOpen(item)}>開啟編輯器</button><button onClick={()=>setEditing(item)}>修改</button><button onClick={()=>void toggle(item)}>{item.is_active?'停用':'恢復'}</button><button className="danger" onClick={()=>{setDeleting(item);setPassword('');setError('')}}>永久刪除</button></td></tr>)}</tbody></table>}
     {deleting&&<div className="modal-backdrop" onMouseDown={()=>setDeleting(null)}><section className="modal-panel danger-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-menu-title" onMouseDown={event=>event.stopPropagation()}><header><div><h2 id="delete-menu-title">永久刪除菜單</h2><p>菜單：<strong>{deleting.name}</strong></p></div><button className="secondary" onClick={()=>setDeleting(null)}>取消</button></header><p className="error">此操作無法復原，且只有未建立餐別與餐格的空菜單才能刪除。</p><label>目前帳號密碼<input autoFocus type="password" value={password} onChange={event=>setPassword(event.target.value)} autoComplete="current-password"/></label><footer><button className="danger" disabled={!password} onClick={()=>void hardDelete()}>確認永久刪除</button></footer></section></div>}
+    {importOpen&&<MenuImportDialog onClose={()=>setImportOpen(false)} onOpenDraft={batchId=>{setImportOpen(false);onOpenImportDraft(batchId)}}/>}
   </section>
 }

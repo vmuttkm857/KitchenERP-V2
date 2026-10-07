@@ -55,6 +55,89 @@ class MenuService:
             entity_label=menu.name,after_data=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active"))
         self.session.commit(); return self.get(menu.id)
 
+    def stage_imported_menu(self, *, name, start_date, end_date, category_id, notes, layout, assignments, actor_id):
+        """Build one complete formal Menu without committing; the calling service owns the transaction."""
+        self._category(category_id)
+        clean_name=name.strip()
+        if not clean_name or end_date < start_date:
+            raise InvalidMenuStructureError("Invalid imported menu metadata")
+        meal_defs={}
+        meal_names=set()
+        meal_orders=set()
+        for row in layout:
+            meal_name=str(row.get("meal_name","")).strip()
+            column_name=str(row.get("column_name","")).strip()
+            meal_order=row.get("meal_sort_order")
+            column_order=row.get("column_sort_order")
+            if not meal_name or not column_name or not isinstance(meal_order,int) or meal_order<1 or not isinstance(column_order,int) or column_order<1:
+                raise InvalidMenuStructureError("Import layout is incomplete")
+            meal_key=(meal_order,meal_name)
+            lower_name=meal_name.casefold()
+            existing_name=next((key for key in meal_defs if key[1].casefold()==lower_name),None)
+            if existing_name is not None and existing_name!=meal_key:
+                raise InvalidMenuStructureError("Import meal identity is inconsistent")
+            if meal_order in meal_orders and meal_key not in meal_defs:
+                raise InvalidMenuStructureError("Import meal sort order is duplicated")
+            meal_orders.add(meal_order);meal_names.add(lower_name)
+            columns=meal_defs.setdefault(meal_key,{})
+            if column_order in columns or any(value.casefold()==column_name.casefold() for value in columns.values()):
+                raise InvalidMenuStructureError("Import menu column identity is duplicated")
+            columns[column_order]=column_name
+        if not meal_defs:
+            raise InvalidMenuStructureError("Import layout has no meal types")
+
+        menu=Menu(id=uuid.uuid4(),name=clean_name,start_date=start_date,end_date=end_date,
+            category_id=category_id,notes=notes,created_by=actor_id,updated_by=actor_id)
+        self.repository.add(menu);self.session.flush()
+        meal_models={}
+        column_models={}
+        for (meal_order,meal_name),columns in sorted(meal_defs.items()):
+            meal=MenuMealType(id=uuid.uuid4(),menu_id=menu.id,name=meal_name,sort_order=meal_order,
+                created_by=actor_id,updated_by=actor_id)
+            self.repository.add(meal);meal_models[(meal_order,meal_name)]=meal
+        self.session.flush()
+        for (meal_order,meal_name),columns in sorted(meal_defs.items()):
+            meal=meal_models[(meal_order,meal_name)]
+            for column_order,column_name in sorted(columns.items()):
+                column=MenuMealTypeColumn(id=uuid.uuid4(),menu_meal_type_id=meal.id,name=column_name,
+                    sort_order=column_order,created_by=actor_id,updated_by=actor_id)
+                self.repository.add(column);column_models[(meal_order,meal_name,column_order,column_name)]=column
+        self.session.flush()
+
+        days={}
+        current=start_date
+        while current<=end_date:
+            for meal_key,meal in meal_models.items():
+                day=MenuDay(id=uuid.uuid4(),menu_id=menu.id,menu_date=current,menu_meal_type_id=meal.id,
+                    created_by=actor_id,updated_by=actor_id)
+                self.repository.add(day);days[(current,*meal_key)]=day
+            current+=timedelta(days=1)
+        self.session.flush()
+
+        seen_dishes=set();seen_slots=set();orders={}
+        dish_ids={item["dish_id"] for item in assignments}
+        dishes=self.repository.dish_models(dish_ids)
+        if len(dishes)!=len(dish_ids) or any(not dish.is_active for dish in dishes.values()):
+            raise InvalidMenuStructureError("Imported menu contains missing or inactive dishes")
+        for item in sorted(assignments,key=lambda value:(value["menu_date"],value["meal_sort_order"],value["column_sort_order"],value["source_row"],value["source_column"])):
+            meal_key=(item["meal_sort_order"],item["meal_name"])
+            column_key=(*meal_key,item["column_sort_order"],item["column_name"])
+            day=days.get((item["menu_date"],*meal_key));column=column_models.get(column_key)
+            if day is None or column is None:
+                raise InvalidMenuStructureError("Import line does not match the saved layout")
+            dish_key=(day.id,item["dish_id"]);slot_key=(day.id,column.id)
+            if dish_key in seen_dishes:
+                raise DuplicateMenuDishError()
+            if slot_key in seen_slots:
+                raise InvalidMenuStructureError("Menu column may be used only once in a meal slot")
+            seen_dishes.add(dish_key);seen_slots.add(slot_key)
+            orders[day.id]=orders.get(day.id,0)+1
+            self.repository.add(MenuDish(id=uuid.uuid4(),menu_day_id=day.id,dish_id=item["dish_id"],
+                menu_meal_type_column_id=column.id,diner_count=item["diner_count"],notes=None,
+                sort_order=orders[day.id],created_by=actor_id,updated_by=actor_id))
+        self.session.flush()
+        return menu
+
     def update(self, menu_id, data: MenuUpdate, actor_id):
         menu=self.model(menu_id); before=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active"); changes=data.model_dump(exclude_unset=True)
         start=changes.get("start_date",menu.start_date); end=changes.get("end_date",menu.end_date)

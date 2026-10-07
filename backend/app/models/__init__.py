@@ -16,6 +16,7 @@ from app.domains.users.models import User
 from app.domains.postpartum.models import PostpartumCaseRestrictionGroup, PostpartumConflictHandling, PostpartumMenuMealMapping, PostpartumMenuSource, PostpartumReplacementGroup, PostpartumRestrictionGroup, PostpartumRestrictionGroupDish, PostpartumRestrictionGroupIngredient
 from app.domains.postpartum.models import PostpartumCase, PostpartumRoomHistory, PostpartumServicePause
 from app.domains.order_adjustments.models import OrderingAdjustmentLine, OrderingAdjustmentSheet
+from app.domains.menu_imports.models import MenuImportBatch, MenuImportLine
 
 __all__ = ["AuditLog", "Dish", "DishCategory", "DishIngredient", "DishProductionProfile", "Ingredient", "IngredientCategory", "IngredientNutritionUnitConversion", "IngredientPriceHistory", "Menu", "MenuCategory", "MenuDay", "MenuDish", "MenuMealType", "MenuMealTypeColumn", "NutritionFood", "NutritionFoodValue", "NutritionImportBatch", "NutritionNutrient", "ProductionBatchIngredient", "ProductionBatchVersion", "ProductionProcessStep", "PurchaseBatch", "PurchaseOrder", "PurchaseOrderItem", "RefreshSession", "RequirementSnapshot", "RequirementSnapshotItem", "Supplier", "User"]
 __all__ += ["PostpartumCase", "PostpartumRoomHistory", "PostpartumServicePause"]
