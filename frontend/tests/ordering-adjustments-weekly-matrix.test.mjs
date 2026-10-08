@@ -56,7 +56,7 @@ test('friendly decimal display is string-safe and tabs share one unsaved values 
 test('editable and read-only states share the same matrix and only editable mode renders inputs',()=>{
   assert.match(page,/<AdjustmentWeeklyMatrix matrix=\{activeMatrix\}/)
   assert.match(page,/readOnly\?<b>\{formatAdjustmentQuantity\(line\.effective_quantity\)\}<\/b>:<input/)
-  assert.match(page,/showRestore=!decimalStringsEqual\(actual,line\.system_quantity\)\|\|dirty/)
+  assert.match(page,/showRestore=!decimalStringsEqual\(actual,line\.system_quantity\)\|\|actualUnit!==line\.system_unit\|\|dirty/)
   assert.match(css,/\.ordering-adjustment-matrix/)
   assert.match(css,/\.ordering-adjustment-matrix \.matrix-column-cell\{position:sticky/)
   assert.match(css,/\.ordering-adjustment-savebar\{position:sticky/)

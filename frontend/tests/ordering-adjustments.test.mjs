@@ -79,9 +79,32 @@ test('structured API detail is preserved for duplicate draft handling',()=>{
 
 test('quantities stay string typed and presentation only trims trailing zeroes',()=>{
   for(const field of ['system_quantity','adjusted_quantity','effective_quantity'])assert.match(types,new RegExp(`${field}:string`))
+  for(const field of ['adjusted_unit','effective_unit'])assert.match(types,new RegExp(`${field}:string`))
   assert.equal(formatAdjustmentQuantity('1.7100'),'1.71')
   assert.equal(formatAdjustmentQuantity('2.0000'),'2')
   assert.equal(formatAdjustmentQuantity('not-a-number'),'not-a-number')
+})
+
+test('draft exposes three confirmed server-side batch unit conversions',()=>{
+  for(const label of ['g、斤 → kg','g → kg','斤 → g'])assert.match(page,new RegExp(label))
+  assert.match(page,/批次換算叫貨單位？/)
+  assert.match(page,/數量會同步精確換算，其他單位不受影響/)
+  assert.match(page,/convertOrderingAdjustmentUnits\(detail\.id,detail\.lock_version,unitConversion\)/)
+  assert.match(page,/onDetailChange\(updated\)/)
+  assert.match(api,/`\/order-adjustments\/\$\{sheetId\}\/convert-units`/)
+  assert.match(api,/method:'POST'/)
+  assert.match(page,/請先儲存或還原目前修改，再進行批次單位換算/)
+})
+
+test('detail downloads saved adjusted weekly Excel with explicit multi-menu selection',()=>{
+  assert.match(page,/下載 Excel/)
+  assert.match(page,/下載調整後廚房配料表/)
+  assert.match(page,/這張調整單包含多份菜單，請選擇要匯出的菜單/)
+  assert.match(page,/detail\.source_menus\.length===1/)
+  assert.match(page,/downloadOrderingAdjustmentWeekly\(detail\.id,menuId\)/)
+  assert.match(page,/目前有尚未儲存的修改，請先儲存後再下載 Excel/)
+  assert.match(api,/apiDownload\(`\/exports\/order-adjustments\/\$\{sheetId\}\/weekly-ingredients\.xlsx/)
+  assert.match(api,/menu_id:menuId/)
 })
 
 test('detail uses weekly matrix with menu tabs and compact ingredient rows',()=>{

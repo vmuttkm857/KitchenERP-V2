@@ -15,7 +15,7 @@ from app.domains.order_adjustments.exceptions import (
     OrderingAdjustmentStaleError, OrderingAdjustmentStateError,
     OrderingAdjustmentVersionConflictError,
 )
-from app.domains.order_adjustments.schemas import OrderingAdjustmentAction, OrderingAdjustmentBatchUpdate, OrderingAdjustmentCreate, OrderingAdjustmentDetail, OrderingAdjustmentList, OrderingAdjustmentReuseApplyRequest, OrderingAdjustmentReusePreview, OrderingAdjustmentReusePreviewRequest, OrderingAdjustmentSummary
+from app.domains.order_adjustments.schemas import OrderingAdjustmentAction, OrderingAdjustmentBatchUpdate, OrderingAdjustmentCreate, OrderingAdjustmentDetail, OrderingAdjustmentList, OrderingAdjustmentReuseApplyRequest, OrderingAdjustmentReusePreview, OrderingAdjustmentReusePreviewRequest, OrderingAdjustmentSummary, OrderingAdjustmentUnitConversion
 from app.domains.order_adjustments.service import OrderingAdjustmentService
 from app.domains.snapshots.exceptions import DuplicateSnapshotError, EmptySnapshotError
 from app.domains.users.models import User
@@ -66,6 +66,12 @@ def detail(sheet_id:uuid.UUID,user:Annotated[User,Depends(get_current_user)],ses
 @router.patch("/{sheet_id}/lines",response_model=OrderingAdjustmentDetail)
 def update_lines(sheet_id:uuid.UUID,data:OrderingAdjustmentBatchUpdate,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
     try:return OrderingAdjustmentDetail.model_validate(OrderingAdjustmentService(session).update_lines(sheet_id,data.lines,data.lock_version,user.id))
+    except Exception as exc:raise mapped(exc) from exc
+
+
+@router.post("/{sheet_id}/convert-units",response_model=OrderingAdjustmentDetail)
+def convert_units(sheet_id:uuid.UUID,data:OrderingAdjustmentUnitConversion,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return OrderingAdjustmentDetail.model_validate(OrderingAdjustmentService(session).convert_units(sheet_id,data.conversion,data.lock_version,user.id))
     except Exception as exc:raise mapped(exc) from exc
 
 

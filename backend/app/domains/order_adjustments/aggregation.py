@@ -15,7 +15,8 @@ def aggregate_effective_quantities(lines, items):
             raise OrderingAdjustmentInvariantError()
         target_unit = item.purchase_unit_snapshot or item.requirement_unit
         quantity = line.adjusted_quantity if line.adjusted_quantity is not None else line.system_quantity
-        converted = convert_quantity(quantity, line.system_unit, target_unit)
+        unit = line.adjusted_unit if line.adjusted_quantity is not None else line.system_unit
+        converted = convert_quantity(quantity, unit, target_unit)
         if not converted.convertible or converted.quantity is None:
             raise OrderingAdjustmentInvariantError()
         totals[item.id] += converted.quantity

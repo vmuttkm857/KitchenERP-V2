@@ -68,7 +68,9 @@ export interface OrderingAdjustmentLine {
   system_quantity:string
   system_unit:string
   adjusted_quantity:string|null
+  adjusted_unit:string|null
   effective_quantity:string
+  effective_unit:string
   modified:boolean
   review_required:boolean
   stale:boolean
@@ -89,8 +91,9 @@ export interface OrderingAdjustmentDetail extends Omit<OrderingAdjustmentSummary
 
 export interface OrderingAdjustmentList {items:OrderingAdjustmentSummary[];pagination:PaginationMeta}
 export interface OrderingAdjustmentCreateRequest {criteria:OrderingAdjustmentCriteria;notes?:string|null}
-export interface OrderingAdjustmentLineUpdate {id:string;adjusted_quantity:string|null}
+export interface OrderingAdjustmentLineUpdate {id:string;adjusted_quantity:string|null;adjusted_unit:string|null}
 export interface OrderingAdjustmentBatchUpdate {lock_version:number;lines:OrderingAdjustmentLineUpdate[]}
+export type OrderingAdjustmentUnitConversion='g_and_jin_to_kg'|'g_to_kg'|'jin_to_g'
 export interface ExistingAdjustmentDetail {code:'ADJUSTMENT_DRAFT_EXISTS'|'ADJUSTMENT_ALREADY_CONFIRMED';existing_sheet_id:string}
 
 export interface OrderingAdjustmentMenuPair {previous_menu_id:string;current_menu_id:string}
@@ -98,8 +101,8 @@ export type OrderingAdjustmentReuseStatus='safe_to_reuse'|'reference_only'|'no_m
 export interface OrderingAdjustmentReuseLine {
   status:OrderingAdjustmentReuseStatus;reason_codes:string[];current_line_id:string;previous_line_id:string|null;current_menu_id:string
   requirement_date:string;meal_name:string;dish_name:string;ingredient_name:string
-  current_system_quantity:string;current_system_unit:string;current_adjusted_quantity:string|null
-  previous_system_quantity:string|null;previous_system_unit:string|null;previous_adjusted_quantity:string|null;reused_quantity:string|null
+  current_system_quantity:string;current_system_unit:string;current_adjusted_quantity:string|null;current_adjusted_unit:string|null
+  previous_system_quantity:string|null;previous_system_unit:string|null;previous_adjusted_quantity:string|null;previous_adjusted_unit:string|null;reused_quantity:string|null;reused_unit:string|null
 }
 export interface OrderingAdjustmentReusePreview {
   current_sheet_id:string;previous_sheet_id:string;current_lock_version:number;previous_lock_version:number

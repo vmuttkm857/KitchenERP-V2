@@ -14,3 +14,7 @@ class OrderingAdjustmentReuseError(Exception):
     def __init__(self,code,**details):self.code=code;self.details=details
 class OrderingAdjustmentDeleteForbiddenError(Exception):
     def __init__(self,status):self.status=status
+
+
+class OrderingAdjustmentExportError(Exception):
+    def __init__(self,code,**details):self.code=code;self.details=details

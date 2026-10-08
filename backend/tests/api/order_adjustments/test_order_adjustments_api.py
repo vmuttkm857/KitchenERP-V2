@@ -2,8 +2,11 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from io import BytesIO
+from urllib.parse import unquote
 
 import pytest
+from openpyxl import load_workbook
 from sqlalchemy import event, func, select, text
 from sqlalchemy.exc import OperationalError
 
@@ -11,7 +14,7 @@ from app.domains.audit.models import AuditLog
 from app.db.session import SessionLocal, engine as process_engine
 from app.domains.ingredients.models import Ingredient
 from app.domains.dishes.models import Dish
-from app.domains.menus.models import MenuDay, MenuDish, MenuMealType
+from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType
 from app.domains.order_adjustments.models import OrderingAdjustmentLine, OrderingAdjustmentSheet
 from app.domains.recipes.models import DishIngredient
 from app.domains.requirements.repository import RequirementRepository
@@ -23,6 +26,83 @@ from tests.api.requirements.test_requirements_api import auth, fixture
 
 def create_sheet(client,headers,menu):
     return client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[menu["id"]],"selected_dates":["2026-09-01"]},"notes":"第一版"})
+
+
+def _xlsx_cells(payload):
+    workbook=load_workbook(BytesIO(payload),rich_text=True)
+    return workbook,[str(cell.value or "") for row in workbook.active.iter_rows() for cell in row]
+
+
+def test_saved_adjustment_weekly_excel_uses_exact_source_lines_and_effective_units(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers)
+    db_session.get(Menu,menu["id"]).end_date=date(2026,9,7);db_session.commit()
+    created=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[menu["id"]],"start_date":"2026-09-01","end_date":"2026-09-07"}}).json()
+    same_ingredient=[line for line in created["lines"] if line["source_ingredient_id"]==created["lines"][0]["source_ingredient_id"]]
+    assert len({line["source_menu_dish_id"] for line in same_ingredient})>1
+    first,second=same_ingredient[:2]
+    saved=client.patch(
+        f"/api/v1/order-adjustments/{created['id']}/lines",headers=headers,
+        json={"lock_version":created["lock_version"],"lines":[
+            {"id":first["id"],"adjusted_quantity":"3","adjusted_unit":"kg"},
+            {"id":second["id"],"adjusted_quantity":"1500","adjusted_unit":"g"},
+        ]},
+    )
+    assert saved.status_code==200,saved.text;saved=saved.json()
+    url=f"/api/v1/exports/order-adjustments/{created['id']}/weekly-ingredients.xlsx?menu_id={menu['id']}"
+    draft=client.get(url,headers=headers)
+    assert draft.status_code==200,draft.text
+    assert draft.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    assert "調整後廚房配料表" in unquote(draft.headers["content-disposition"])
+    workbook,cells=_xlsx_cells(draft.content)
+    assert len(workbook.sheetnames)==1
+    assert all(workbook.active.cell(2,column).value for column in range(3,10))
+    assert any("調整後廚房配料表" in value for value in cells)
+    first_cell=next(value for value in cells if first["dish_name_snapshot"] in value)
+    second_cell=next(value for value in cells if second["dish_name_snapshot"] in value)
+    assert f'{first["ingredient_name_snapshot"]}　3 kg' in first_cell
+    assert f'{second["ingredient_name_snapshot"]}　1500 g' in second_cell
+    untouched=next(line for line in saved["lines"] if line["id"] not in {first["id"],second["id"]})
+    untouched_cell=next(value for value in cells if untouched["dish_name_snapshot"] in value)
+    assert untouched["ingredient_name_snapshot"] in untouched_cell
+
+    confirmed=client.post(f"/api/v1/order-adjustments/{created['id']}/confirm",headers=headers,json={"lock_version":saved["lock_version"]})
+    assert confirmed.status_code==200,confirmed.text
+    assert client.get(url,headers=headers).status_code==200
+    assert client.get(url).status_code==401
+    assert client.get(f"/api/v1/exports/order-adjustments/{created['id']}/weekly-ingredients.xlsx?menu_id={uuid.uuid4()}",headers=headers).status_code==422
+
+
+def test_stale_draft_cannot_export_adjusted_weekly_excel(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_sheet(client,headers,menu).json()
+    source=db_session.get(MenuDish,created["lines"][0]["source_menu_dish_id"]);source.diner_count+=1;db_session.commit()
+    response=client.get(f"/api/v1/exports/order-adjustments/{created['id']}/weekly-ingredients.xlsx?menu_id={menu['id']}",headers=headers)
+    assert response.status_code==409 and response.json()["detail"]["code"]=="ADJUSTMENT_STALE"
+
+
+def test_adjusted_weekly_excel_exports_each_menu_without_mixing_source_lines(client,db_session):
+    headers=auth(client,db_session);menu_a,_,dishes,*_=fixture(client,headers)
+    menu_b=client.post("/api/v1/menus",headers=headers,json={"name":"第二份調整菜單","start_date":"2026-09-01","end_date":"2026-09-01"}).json()
+    meal_b=client.post(f"/api/v1/menus/{menu_b['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
+    assert client.put(
+        f"/api/v1/menus/{menu_b['id']}/editor",headers=headers,
+        json={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":meal_b["id"],"dishes":[{"dish_id":dishes[1]["id"],"diner_count":7,"sort_order":1}]}]},
+    ).status_code==200
+    created=client.post(
+        "/api/v1/order-adjustments",headers=headers,
+        json={"criteria":{"menu_ids":[menu_a["id"],menu_b["id"]],"selected_dates":["2026-09-01"]}},
+    )
+    assert created.status_code==201,created.text;created=created.json()
+
+    response_a=client.get(f"/api/v1/exports/order-adjustments/{created['id']}/weekly-ingredients.xlsx?menu_id={menu_a['id']}",headers=headers)
+    response_b=client.get(f"/api/v1/exports/order-adjustments/{created['id']}/weekly-ingredients.xlsx?menu_id={menu_b['id']}",headers=headers)
+    assert response_a.status_code==200,response_a.text
+    assert response_b.status_code==200,response_b.text
+    _,cells_a=_xlsx_cells(response_a.content);_,cells_b=_xlsx_cells(response_b.content)
+    assert any(menu_a["name"] in value for value in cells_a)
+    assert any(menu_b["name"] in value for value in cells_b)
+    assert any(dishes[0]["name"] in value for value in cells_a)
+    assert not any(dishes[0]["name"] in value for value in cells_b)
+    assert any(dishes[1]["name"] in value for value in cells_b)
 
 
 def test_reuse_preview_and_apply_are_authoritative_versioned_and_audited(client,db_session):
@@ -142,6 +222,82 @@ def test_batch_edit_is_independent_supports_zero_null_and_locking(client,db_sess
     restored=client.patch(f"/api/v1/order-adjustments/{created['id']}/lines",headers=headers,json={"lock_version":3,"lines":[{"id":selected[0]["id"],"adjusted_quantity":None}]}).json()
     line=next(line for line in restored["lines"] if line["id"]==selected[0]["id"]);assert line["adjusted_quantity"] is None and line["effective_quantity"]==line["system_quantity"]
     assert client.patch(f"/api/v1/order-adjustments/{created['id']}/lines",headers=headers,json={"lock_version":4,"lines":[{"id":selected[0]["id"],"adjusted_quantity":"-1"}]}).status_code==422
+
+
+@pytest.mark.parametrize(
+    ("source_unit","conversion","target_unit","factor"),
+    [("g","g_to_kg","kg",Decimal("0.001")),("斤","jin_to_g","g",Decimal("600")),("斤","g_and_jin_to_kg","kg",Decimal("0.6"))],
+)
+def test_batch_unit_conversion_is_exact_persisted_idempotent_and_audited(client,db_session,source_unit,conversion,target_unit,factor):
+    headers=auth(client,db_session);menu,_,_,ingredients,_=fixture(client,headers)
+    ingredient=db_session.get(Ingredient,ingredients[0]["id"]);ingredient.unit=source_unit;db_session.commit()
+    created=create_sheet(client,headers,menu).json();targets=[line for line in created["lines"] if line["source_ingredient_id"]==ingredients[0]["id"]]
+    untouched=next(line for line in created["lines"] if line["source_ingredient_id"]!=ingredients[0]["id"])
+    target_model=db_session.get(OrderingAdjustmentLine,targets[0]["id"]);target_model.review_required=True;db_session.commit()
+    response=client.post(f"/api/v1/order-adjustments/{created['id']}/convert-units",headers=headers,json={"lock_version":created["lock_version"],"conversion":conversion})
+    assert response.status_code==200,response.text;converted=response.json();by_id={line["id"]:line for line in converted["lines"]}
+    for line in targets:
+        assert Decimal(by_id[line["id"]]["effective_quantity"])==(Decimal(line["system_quantity"])*factor).quantize(Decimal("0.000001"))
+        assert by_id[line["id"]]["effective_unit"]==target_unit and by_id[line["id"]]["adjusted_unit"]==target_unit
+    assert by_id[targets[0]["id"]]["review_required"] is True
+    assert by_id[untouched["id"]]["effective_quantity"]==untouched["effective_quantity"] and by_id[untouched["id"]]["effective_unit"]==untouched["effective_unit"]
+    reopened=client.get(f"/api/v1/order-adjustments/{created['id']}",headers=headers).json()
+    assert next(line for line in reopened["lines"] if line["id"]==targets[0]["id"])["effective_unit"]==target_unit
+    repeated=client.post(f"/api/v1/order-adjustments/{created['id']}/convert-units",headers=headers,json={"lock_version":converted["lock_version"],"conversion":conversion})
+    assert repeated.status_code==200 and repeated.json()["lock_version"]==converted["lock_version"]
+    assert db_session.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action=="ordering_adjustment_units_convert"))==1
+
+
+def test_mixed_weight_conversion_updates_only_current_sheet_and_rolls_back_on_failure(client,db_session,monkeypatch):
+    headers=auth(client,db_session);menu,_,_,ingredients,_=fixture(client,headers)
+    db_session.get(Ingredient,ingredients[0]["id"]).unit="g";db_session.get(Ingredient,ingredients[1]["id"]).unit="斤";db_session.commit()
+    created=create_sheet(client,headers,menu).json();g_count=sum(line["effective_unit"]=="g" for line in created["lines"]);jin_count=sum(line["effective_unit"]=="斤" for line in created["lines"])
+    other=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[menu["id"]],"selected_dates":["2026-09-02"]}}).json()
+    assert g_count and jin_count
+    converted=client.post(f"/api/v1/order-adjustments/{created['id']}/convert-units",headers=headers,json={"lock_version":1,"conversion":"g_and_jin_to_kg"}).json()
+    assert sum(line["effective_unit"]=="kg" for line in converted["lines"])==g_count+jin_count
+    assert all(line["effective_unit"]=="L" for line in converted["lines"] if line["system_unit"]=="L")
+    unaffected=client.get(f"/api/v1/order-adjustments/{other['id']}",headers=headers).json()
+    assert all(line["adjusted_quantity"] is None and line["effective_unit"]==line["system_unit"] for line in unaffected["lines"])
+    target=next(line for line in converted["lines"] if line["system_unit"]=="g")
+    prepared=client.patch(f"/api/v1/order-adjustments/{created['id']}/lines",headers=headers,json={"lock_version":converted["lock_version"],"lines":[{"id":target["id"],"adjusted_quantity":"2","adjusted_unit":"斤"}]}).json()
+    before={line["id"]:(line["adjusted_quantity"],line["adjusted_unit"]) for line in prepared["lines"]}
+    from app.domains.audit.service import AuditLogService
+    def fail_audit(*args,**kwargs):raise RuntimeError("injected")
+    monkeypatch.setattr(AuditLogService,"record",fail_audit)
+    failed=client.post(f"/api/v1/order-adjustments/{created['id']}/convert-units",headers=headers,json={"lock_version":prepared["lock_version"],"conversion":"jin_to_g"})
+    assert failed.status_code==400
+    monkeypatch.undo();db_session.expire_all()
+    current=client.get(f"/api/v1/order-adjustments/{created['id']}",headers=headers).json()
+    assert {line["id"]:(line["adjusted_quantity"],line["adjusted_unit"]) for line in current["lines"]}==before
+
+
+def test_adjusted_unit_flows_to_requirements_confirmation_and_reuse(client,db_session):
+    headers=auth(client,db_session);menu,_,dishes,ingredients,_=fixture(client,headers);created=create_sheet(client,headers,menu).json()
+    target=next(line for line in created["lines"] if line["source_ingredient_id"]==ingredients[0]["id"])
+    theoretical=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu["id"]],"selected_dates":["2026-09-01"]}).json()
+    theoretical_chicken=Decimal(next(row for row in theoretical["rows"] if row["ingredient_code"]=="REQ-I1")["requirement_quantity"])
+    saved=client.patch(f"/api/v1/order-adjustments/{created['id']}/lines",headers=headers,json={"lock_version":1,"lines":[{"id":target["id"],"adjusted_quantity":"2000","adjusted_unit":"g"}]})
+    assert saved.status_code==200,saved.text;saved=saved.json();line=next(item for item in saved["lines"] if item["id"]==target["id"])
+    assert line["effective_quantity"]=="2000.000000" and line["effective_unit"]=="g"
+    requirements=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu["id"]],"selected_dates":["2026-09-01"],"ordering_adjustment_sheet_ids":[created["id"]]})
+    assert requirements.status_code==200,requirements.text
+    adjusted_chicken=Decimal(next(row for row in requirements.json()["rows"] if row["ingredient_code"]=="REQ-I1")["requirement_quantity"])
+    assert adjusted_chicken==theoretical_chicken-Decimal(target["system_quantity"])+Decimal("2")
+    confirmed=client.post(f"/api/v1/order-adjustments/{created['id']}/confirm",headers=headers,json={"lock_version":saved["lock_version"]})
+    assert confirmed.status_code==200,confirmed.text
+    snapshot_item=db_session.get(RequirementSnapshotItem,target["snapshot_item_id"])
+    assert snapshot_item.adjusted_quantity is not None
+
+    current_menu=client.post("/api/v1/menus",headers=headers,json={"name":"單位沿用菜單","start_date":"2026-09-08","end_date":"2026-09-08"}).json()
+    meal=client.post(f"/api/v1/menus/{current_menu['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
+    client.put(f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]}]})
+    current=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[current_menu["id"]],"selected_dates":["2026-09-08"]}}).json();payload={"previous_sheet_id":created["id"],"current_lock_version":current["lock_version"],"previous_lock_version":confirmed.json()["lock_version"],"menu_pairs":[{"previous_menu_id":menu["id"],"current_menu_id":current_menu["id"]}]}
+    preview=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=payload).json();reusable=next(item for item in preview["lines"] if item["previous_line_id"]==target["id"])
+    applied=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse",headers=headers,json={**payload,"selected_current_line_ids":[reusable["current_line_id"]]})
+    assert applied.status_code==200,applied.text
+    reused=next(item for item in applied.json()["lines"] if item["id"]==reusable["current_line_id"])
+    assert reused["adjusted_quantity"]=="2000.000000" and reused["adjusted_unit"]=="g"
 
 
 def test_confirm_aggregates_per_source_line_without_mutating_baseline(client,db_session):

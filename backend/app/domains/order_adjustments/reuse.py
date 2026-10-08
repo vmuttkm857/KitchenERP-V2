@@ -56,6 +56,7 @@ def build_reuse_preview(previous_lines, current_lines, previous_menus, current_m
         reasons = []
         previous = None
         reused_quantity = None
+        reused_unit = None
         if not matches:
             reasons.append("NO_MATCHING_OCCURRENCE")
         elif len(matches) > 1:
@@ -69,11 +70,18 @@ def build_reuse_preview(previous_lines, current_lines, previous_menus, current_m
                 reasons.append("INGREDIENT_CHANGED")
             else:
                 converted_system = convert_quantity(previous.system_quantity, previous.system_unit, current.system_unit)
-                converted_adjusted = convert_quantity(previous.adjusted_quantity, previous.system_unit, current.system_unit)
+                explicit_adjusted_unit = getattr(previous, "adjusted_unit", None)
+                previous_adjusted_unit = explicit_adjusted_unit or previous.system_unit
+                converted_adjusted = convert_quantity(previous.adjusted_quantity, previous_adjusted_unit, current.system_unit)
                 if not converted_system.convertible or converted_system.quantity is None or not converted_adjusted.convertible or converted_adjusted.quantity is None:
                     reasons.append("UNIT_INCOMPATIBLE")
                 else:
-                    reused_quantity = quantize_quantity(converted_adjusted.quantity)
+                    if explicit_adjusted_unit is None:
+                        reused_quantity = quantize_quantity(converted_adjusted.quantity)
+                        reused_unit = current.system_unit
+                    else:
+                        reused_quantity = quantize_quantity(previous.adjusted_quantity)
+                        reused_unit = explicit_adjusted_unit
                     if previous.source_supplier_id != current.source_supplier_id:
                         status = "reference_only"
                         reasons.append("SUPPLIER_CHANGED")
@@ -99,9 +107,12 @@ def build_reuse_preview(previous_lines, current_lines, previous_menus, current_m
             "current_system_quantity": current.system_quantity,
             "current_system_unit": current.system_unit,
             "current_adjusted_quantity": current.adjusted_quantity,
+            "current_adjusted_unit": getattr(current,"adjusted_unit",None),
             "previous_system_quantity": previous.system_quantity if previous else None,
             "previous_system_unit": previous.system_unit if previous else None,
             "previous_adjusted_quantity": previous.adjusted_quantity if previous else None,
+            "previous_adjusted_unit": getattr(previous,"adjusted_unit",None) if previous else None,
             "reused_quantity": reused_quantity,
+            "reused_unit": reused_unit,
         })
     return results

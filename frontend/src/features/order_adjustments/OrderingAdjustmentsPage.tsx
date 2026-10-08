@@ -7,11 +7,11 @@ import { dateRangeError,preserveSelected,RequestSequence } from '../../utils/lis
 import type { Menu } from '../menus/types'
 import { useMenuCandidates } from '../menus/useMenuCandidates'
 import type {MenuAggregate} from '../menus/types'
-import { applyOrderingAdjustmentReuse,confirmOrderingAdjustment,createOrderingAdjustment,deleteOrderingAdjustment,getOrderingAdjustment,getOrderingAdjustmentMenuLayout,listOrderingAdjustments,previewOrderingAdjustmentReuse,updateOrderingAdjustmentLines } from './api'
-import { buildAdjustmentUpdates,decimalStringsEqual,dirtyAdjustmentLineIds,editableDecimalString,initialAdjustmentValues,validateAdjustmentQuantity } from './editor'
+import { applyOrderingAdjustmentReuse,confirmOrderingAdjustment,convertOrderingAdjustmentUnits,createOrderingAdjustment,deleteOrderingAdjustment,downloadOrderingAdjustmentWeekly,getOrderingAdjustment,getOrderingAdjustmentMenuLayout,listOrderingAdjustments,previewOrderingAdjustmentReuse,updateOrderingAdjustmentLines } from './api'
+import { buildAdjustmentUpdates,decimalStringsEqual,dirtyAdjustmentLineIds,editableDecimalString,initialAdjustmentUnits,initialAdjustmentValues,validateAdjustmentQuantity } from './editor'
 import { buildAdjustmentMenuMatrix } from './matrix'
 import type {AdjustmentMenuMatrix} from './matrix'
-import type { ExistingAdjustmentDetail,OrderingAdjustmentDetail,OrderingAdjustmentMenuPair,OrderingAdjustmentReusePreview,OrderingAdjustmentStatus,OrderingAdjustmentSummary } from './types'
+import type { ExistingAdjustmentDetail,OrderingAdjustmentDetail,OrderingAdjustmentMenuPair,OrderingAdjustmentReusePreview,OrderingAdjustmentStatus,OrderingAdjustmentSummary,OrderingAdjustmentUnitConversion } from './types'
 import { adjustmentDateRange,adjustmentStatusLabels,formatAdjustmentQuantity,staleReasonLabel } from './view'
 
 const pageSize=25
@@ -85,6 +85,9 @@ function CreateAdjustmentDialog({onClose,onCreated,onOpenExisting}:{onClose:()=>
 type AdjustmentConfirmation='back'|'reload'|null
 type SaveBlock='conflict'|'stale'|null
 
+const unitConversionLabels:Record<OrderingAdjustmentUnitConversion,string>={g_and_jin_to_kg:'g、斤 → kg',g_to_kg:'g → kg',jin_to_g:'斤 → g'}
+const unitConversionSources:Record<OrderingAdjustmentUnitConversion,string[]>={g_and_jin_to_kg:['g','斤'],g_to_kg:['g'],jin_to_g:['斤']}
+
 function AdjustmentConfirmDialog({kind,onCancel,onConfirm}:{kind:Exclude<AdjustmentConfirmation,null>;onCancel:()=>void;onConfirm:()=>void}){
   const reload=kind==='reload'
   return <div className="modal-backdrop"><section className="modal-panel danger-dialog" role="alertdialog" aria-modal="true"><header><div><h2>{reload?'重新載入最新資料？':'離開叫貨調整單？'}</h2><p>{reload?'重新載入會捨棄尚未儲存的修改，確定要繼續嗎？':'尚有未儲存的叫貨量修改，確定要離開嗎？'}</p></div></header><footer><button autoFocus className="secondary" onClick={onCancel}>留在此頁</button><button className="secondary-danger" onClick={onConfirm}>{reload?'捨棄修改並重新載入':'放棄修改並離開'}</button></footer></section></div>
@@ -100,29 +103,32 @@ function ReuseAgainDialog({onCancel,onConfirm}:{onCancel:()=>void;onConfirm:()=>
 
 function OrderingAdjustmentDetailView({detail,onDetailChange,onBack,onReview}:{detail:OrderingAdjustmentDetail;onDetailChange:(value:OrderingAdjustmentDetail)=>void;onBack:()=>void;onReview?:(detail:OrderingAdjustmentDetail)=>void}){
   const [values,setValues]=useState<Record<string,string>>(()=>initialAdjustmentValues(detail.lines))
-  const [saving,setSaving]=useState(false),[reloading,setReloading]=useState(false),[confirming,setConfirming]=useState(false),[completeOpen,setCompleteOpen]=useState(false),[message,setMessage]=useState(''),[saveError,setSaveError]=useState('')
+  const [units,setUnits]=useState<Record<string,string>>(()=>initialAdjustmentUnits(detail.lines))
+  const [saving,setSaving]=useState(false),[reloading,setReloading]=useState(false),[confirming,setConfirming]=useState(false),[converting,setConverting]=useState(false),[unitConversion,setUnitConversion]=useState<OrderingAdjustmentUnitConversion|null>(null),[completeOpen,setCompleteOpen]=useState(false),[message,setMessage]=useState(''),[saveError,setSaveError]=useState('')
   const [saveBlock,setSaveBlock]=useState<SaveBlock>(null),[confirmation,setConfirmation]=useState<AdjustmentConfirmation>(null),[reuseOpen,setReuseOpen]=useState(false),[reuseAgainOpen,setReuseAgainOpen]=useState(false)
+  const [exportOpen,setExportOpen]=useState(false),[exportingMenuId,setExportingMenuId]=useState<string|null>(null)
   const [activeMenuId,setActiveMenuId]=useState(detail.source_menus[0]?.menu_id??''),[layouts,setLayouts]=useState<Record<string,MenuAggregate>>({}),[layoutLoading,setLayoutLoading]=useState(Boolean(detail.source_menus.length)),[layoutError,setLayoutError]=useState('')
   const readOnly=detail.status!=='draft'||detail.stale,saveLocked=saveBlock!==null
   const reviewLineIds=new Set(detail.lines.filter(line=>line.review_required).map(line=>line.id))
-  const dirtyIds=dirtyAdjustmentLineIds(detail.lines,values),dirtySet=new Set(dirtyIds)
+  const dirtyIds=dirtyAdjustmentLineIds(detail.lines,values,units),dirtySet=new Set(dirtyIds)
   const menuDirtyCounts=Object.fromEntries(detail.source_menus.map(menu=>[menu.menu_id,detail.lines.filter(line=>line.source_menu_id===menu.menu_id&&dirtySet.has(line.id)).length]))
   const validationErrors=Object.fromEntries(detail.lines.map(line=>[line.id,validateAdjustmentQuantity(values[line.id]??'')]))
   const hasInvalid=dirtyIds.some(id=>Boolean(validationErrors[id]))
   const clearEditorDirty=useEditorDirty(dirtyIds.length>0)
   const staleReasons=[...new Set([...detail.warnings.map(warning=>warning.code),...detail.lines.flatMap(line=>line.stale_reasons)].map(staleReasonLabel))]
   const matrices=detail.source_menus.map(menu=>buildAdjustmentMenuMatrix(detail.lines,menu,layouts[menu.menu_id],detail.criteria)),activeMatrix=matrices.find(matrix=>matrix.menuId===activeMenuId)??matrices[0]
-  useEffect(()=>{setValues(initialAdjustmentValues(detail.lines));setSaveBlock(null)},[detail])
+  useEffect(()=>{setValues(initialAdjustmentValues(detail.lines));setUnits(initialAdjustmentUnits(detail.lines));setSaveBlock(null)},[detail])
   useEffect(()=>{
     let current=true;setLayoutLoading(Boolean(detail.source_menus.length));setLayoutError('')
     void Promise.all(detail.source_menus.map(async menu=>[menu.menu_id,await getOrderingAdjustmentMenuLayout(menu.menu_id)] as const)).then(results=>{if(current)setLayouts(Object.fromEntries(results))}).catch(()=>{if(current)setLayoutError('部分菜單欄位名稱無法載入，已依調整單保存的原始順序顯示。')}).finally(()=>{if(current)setLayoutLoading(false)})
     return()=>{current=false}
   },[detail.id])
   function change(lineId:string,value:string){setValues(current=>({...current,[lineId]:value}));setMessage('');setSaveError('')}
+  function restore(line:OrderingAdjustmentDetail['lines'][number]){setValues(current=>({...current,[line.id]:editableDecimalString(line.system_quantity)}));setUnits(current=>({...current,[line.id]:line.system_unit}));setMessage('');setSaveError('')}
   async function save(){
     if(readOnly||saveLocked||saving||!dirtyIds.length||hasInvalid)return
     setSaving(true);setMessage('');setSaveError('')
-    try{const updated=await updateOrderingAdjustmentLines(detail.id,{lock_version:detail.lock_version,lines:buildAdjustmentUpdates(detail.lines,values)});clearEditorDirty();onDetailChange(updated);setMessage('草稿已儲存')}
+    try{const updated=await updateOrderingAdjustmentLines(detail.id,{lock_version:detail.lock_version,lines:buildAdjustmentUpdates(detail.lines,values,units)});clearEditorDirty();onDetailChange(updated);setMessage('草稿已儲存')}
     catch(cause){
       const code=apiErrorCode(cause)
       if(code==='LOCK_VERSION_CONFLICT'){setSaveBlock('conflict');setSaveError('這張叫貨調整單已在其他地方被修改，請重新載入最新資料。')}
@@ -135,9 +141,24 @@ function OrderingAdjustmentDetailView({detail,onDetailChange,onBack,onReview}:{d
   function requestBack(){if(dirtyIds.length)setConfirmation('back');else onBack()}
   function requestComplete(){if(dirtyIds.length){setSaveError('目前有尚未儲存的修改，請先儲存後再完成叫貨調整。');return}setCompleteOpen(true)}
   function requestReuse(){if(dirtyIds.length){setSaveError('請先儲存或還原目前修改，再沿用上一張叫貨量。');return}if(detail.reuse_applied_at)setReuseAgainOpen(true);else setReuseOpen(true)}
+  function requestUnitConversion(conversion:OrderingAdjustmentUnitConversion){if(dirtyIds.length){setSaveError('請先儲存或還原目前修改，再進行批次單位換算。');return}setUnitConversion(conversion)}
+  async function applyUnitConversion(){if(!unitConversion||converting)return;setConverting(true);setSaveError('');try{const updated=await convertOrderingAdjustmentUnits(detail.id,detail.lock_version,unitConversion);clearEditorDirty();setUnitConversion(null);onDetailChange(updated);setMessage('批次單位換算已完成')}catch(cause){setUnitConversion(null);setSaveError(orderingActionError(cause,'批次單位換算失敗，資料未變更。'))}finally{setConverting(false)}}
   async function complete(){if(confirming||dirtyIds.length)return;setConfirming(true);setSaveError('');try{const updated=await confirmOrderingAdjustment(detail.id,detail.lock_version);clearEditorDirty();setCompleteOpen(false);onDetailChange(updated);setMessage('叫貨調整已完成確認')}catch(cause){setSaveError(orderingActionError(cause,'完成叫貨調整失敗，請稍後再試。'));setCompleteOpen(false)}finally{setConfirming(false)}}
+  function requestExport(){
+    if(dirtyIds.length){setSaveError('目前有尚未儲存的修改，請先儲存後再下載 Excel。');return}
+    if(detail.source_menus.length===1)void downloadExport(detail.source_menus[0].menu_id)
+    else setExportOpen(true)
+  }
+  async function downloadExport(menuId:string){
+    if(exportingMenuId)return
+    setExportingMenuId(menuId);setSaveError('');setMessage('')
+    try{await downloadOrderingAdjustmentWeekly(detail.id,menuId);setExportOpen(false);setMessage('調整後廚房配料表已下載')}
+    catch(cause){setSaveError(orderingActionError(cause,'Excel 下載失敗，請確認調整單來源資料後再試。'))}
+    finally{setExportingMenuId(null)}
+  }
+  const conversionCount=(conversion:OrderingAdjustmentUnitConversion)=>detail.lines.filter(line=>unitConversionSources[conversion].includes(line.effective_unit)).length
   return <section className={`ordering-adjustment-detail is-${detail.status}${detail.stale?' is-stale':''}`}>
-    <PageHeader title="叫貨調整單" description="可直接編輯的週配料表" actions={<>{detail.status==='draft'&&!detail.stale&&<>{detail.reuse_applied_at?<><span className="ordering-reuse-status">✓ 已沿用上一張叫貨量</span><button className="secondary" onClick={requestReuse}>重新比對</button></>:<button className="secondary" onClick={requestReuse}>沿用上一張叫貨量</button>}<button onClick={requestComplete}>完成叫貨調整</button></>}<button onClick={()=>onReview?.(detail)}>前往食材需求</button><button className="secondary" onClick={requestBack}>← 返回列表</button></>}/>
+    <PageHeader title="叫貨調整單" description="可直接編輯的週配料表" actions={<>{detail.status==='draft'&&!detail.stale&&<>{detail.reuse_applied_at?<><span className="ordering-reuse-status">✓ 已沿用上一張叫貨量</span><button className="secondary" onClick={requestReuse}>重新比對</button></>:<button className="secondary" onClick={requestReuse}>沿用上一張叫貨量</button>}<span className="ordering-unit-actions">{(Object.keys(unitConversionLabels) as OrderingAdjustmentUnitConversion[]).map(conversion=><button className="secondary" disabled={converting||conversionCount(conversion)===0} key={conversion} onClick={()=>requestUnitConversion(conversion)}>{unitConversionLabels[conversion]}</button>)}</span><button onClick={requestComplete}>完成叫貨調整</button></>}<button className="secondary" disabled={detail.status==='cancelled'||detail.stale||Boolean(exportingMenuId)} onClick={requestExport}>{exportingMenuId?'下載中…':'下載 Excel'}</button><button onClick={()=>onReview?.(detail)}>前往食材需求</button><button className="secondary" onClick={requestBack}>← 返回列表</button></>}/>
     <div className="ordering-adjustment-summary"><div><strong>{activeMatrix?.menuName??detail.source_menus.map(menu=>menu.menu_name).join('、')}</strong><span>{activeMatrix?.dates.length?`${formatShortDate(activeMatrix.dates[0])} ～ ${formatShortDate(activeMatrix.dates.at(-1)!)}`:adjustmentDateRange(detail.criteria,detail)}</span><span><AdjustmentStatus status={detail.status}/> · Rev.{detail.revision}</span></div><small>建立：{new Date(detail.created_at).toLocaleString('zh-TW')}　最後更新：{new Date(detail.updated_at).toLocaleString('zh-TW')}</small></div>
     {detail.stale&&<Feedback type="error"><strong>來源資料已變更，此調整單需要重新建立。</strong>{staleReasons.length>0&&<ul>{staleReasons.map(reason=><li key={reason}>{reason}</li>)}</ul>}</Feedback>}
     {saveError&&<Feedback type="error">{saveError}{saveBlock&&<button type="button" className="secondary ordering-reload-action" disabled={reloading} onClick={requestReload}>{reloading?'重新載入中…':'重新載入'}</button>}</Feedback>}
@@ -147,13 +168,25 @@ function OrderingAdjustmentDetailView({detail,onDetailChange,onBack,onReview}:{d
     {!detail.stale&&detail.status==='cancelled'&&<Feedback type="info">此調整單已取消，目前僅供查看。</Feedback>}
     {detail.source_menus.length>1&&<div className="ordering-adjustment-tabs" role="tablist" aria-label="菜單"><>{matrices.map(matrix=><button role="tab" aria-selected={matrix.menuId===activeMenuId} className={matrix.menuId===activeMenuId?'active':''} key={matrix.menuId} onClick={()=>setActiveMenuId(matrix.menuId)}>{matrix.menuName}{menuDirtyCounts[matrix.menuId]?` · ${menuDirtyCounts[matrix.menuId]}`:''}</button>)}</></div>}
     {layoutError&&<Feedback type="info">{layoutError}</Feedback>}
-    {layoutLoading?<LoadingState label="菜單欄位載入中…"/>:!activeMatrix||!activeMatrix.meals.length?<EmptyState title="這張調整單沒有食材明細"/>:<AdjustmentWeeklyMatrix matrix={activeMatrix} values={values} dirtySet={dirtySet} reviewLineIds={reviewLineIds} validationErrors={validationErrors} readOnly={readOnly} saving={saving} saveLocked={saveLocked} onChange={change}/>}
+    {layoutLoading?<LoadingState label="菜單欄位載入中…"/>:!activeMatrix||!activeMatrix.meals.length?<EmptyState title="這張調整單沒有食材明細"/>:<AdjustmentWeeklyMatrix matrix={activeMatrix} values={values} units={units} dirtySet={dirtySet} reviewLineIds={reviewLineIds} validationErrors={validationErrors} readOnly={readOnly} saving={saving} saveLocked={saveLocked} onChange={change} onRestore={restore}/>}
     {!readOnly&&<div className="ordering-adjustment-savebar"><strong>{dirtyIds.length?`尚有 ${dirtyIds.length} 筆修改未儲存`:'目前沒有未儲存的修改'}</strong><button disabled={saving||saveLocked||!dirtyIds.length||hasInvalid} onClick={()=>void save()}>{saving?'儲存中…':'儲存草稿'}</button></div>}
     {confirmation&&<AdjustmentConfirmDialog kind={confirmation} onCancel={()=>setConfirmation(null)} onConfirm={()=>{const action=confirmation;setConfirmation(null);if(action==='back'){clearEditorDirty();onBack()}else void reload()}}/>}
     {completeOpen&&<CompleteAdjustmentDialog busy={confirming} onCancel={()=>setCompleteOpen(false)} onConfirm={()=>void complete()}/>}
     {reuseAgainOpen&&<ReuseAgainDialog onCancel={()=>setReuseAgainOpen(false)} onConfirm={()=>{setReuseAgainOpen(false);setReuseOpen(true)}}/>}
     {reuseOpen&&<ReuseAdjustmentDialog current={detail} onClose={()=>setReuseOpen(false)} onApplied={updated=>{clearEditorDirty();setReuseOpen(false);onDetailChange(updated);setMessage('已沿用上一張叫貨量')}}/>}
+    {unitConversion&&<UnitConversionDialog conversion={unitConversion} gCount={detail.lines.filter(line=>line.effective_unit==='g').length} jinCount={detail.lines.filter(line=>line.effective_unit==='斤').length} busy={converting} onCancel={()=>setUnitConversion(null)} onConfirm={()=>void applyUnitConversion()}/>}
+    {exportOpen&&<AdjustmentExportDialog menus={detail.source_menus} busy={Boolean(exportingMenuId)} onCancel={()=>setExportOpen(false)} onDownload={menuId=>void downloadExport(menuId)}/>}
   </section>
+}
+
+function AdjustmentExportDialog({menus,busy,onCancel,onDownload}:{menus:OrderingAdjustmentDetail['source_menus'];busy:boolean;onCancel:()=>void;onDownload:(menuId:string)=>void}){
+  const [menuId,setMenuId]=useState(menus[0]?.menu_id??'')
+  return <div className="modal-backdrop"><section className="modal-panel" role="dialog" aria-modal="true"><header><div><h2>下載調整後廚房配料表</h2><p>這張調整單包含多份菜單，請選擇要匯出的菜單。</p></div></header><label>菜單<select value={menuId} onChange={event=>setMenuId(event.target.value)}>{menus.map(menu=><option value={menu.menu_id} key={menu.menu_id}>{menu.menu_name}（{menu.start_date}～{menu.end_date}）</option>)}</select></label><footer><button className="secondary" disabled={busy} onClick={onCancel}>取消</button><button disabled={busy||!menuId} onClick={()=>onDownload(menuId)}>{busy?'下載中…':'下載 Excel'}</button></footer></section></div>
+}
+
+function UnitConversionDialog({conversion,gCount,jinCount,busy,onCancel,onConfirm}:{conversion:OrderingAdjustmentUnitConversion;gCount:number;jinCount:number;busy:boolean;onCancel:()=>void;onConfirm:()=>void}){
+  const parts=conversion==='g_and_jin_to_kg'?[`${gCount} 筆 g`,`${jinCount} 筆斤`]:conversion==='g_to_kg'?[`${gCount} 筆 g`]:[`${jinCount} 筆斤`]
+  return <div className="modal-backdrop"><section className="modal-panel" role="alertdialog" aria-modal="true"><header><div><h2>批次換算叫貨單位？</h2><p>將目前這張叫貨調整單中的 {parts.join(' 與 ')} 換算為 {conversion==='jin_to_g'?'g':'kg'}。數量會同步精確換算，其他單位不受影響。</p></div></header><footer><button className="secondary" disabled={busy} onClick={onCancel}>取消</button><button disabled={busy} onClick={onConfirm}>{busy?'換算中…':'確認換算'}</button></footer></section></div>
 }
 
 function ReuseAdjustmentDialog({current,onClose,onApplied}:{current:OrderingAdjustmentDetail;onClose:()=>void;onApplied:(value:OrderingAdjustmentDetail)=>void}){
@@ -178,19 +211,19 @@ function ReuseAdjustmentDialog({current,onClose,onApplied}:{current:OrderingAdju
 }
 
 function reuseLineText(line:OrderingAdjustmentReusePreview['lines'][number]){
-  if(line.status==='safe_to_reuse')return `上次 ${formatAdjustmentQuantity(line.previous_system_quantity!)} → ${formatAdjustmentQuantity(line.previous_adjusted_quantity!)} ${line.previous_system_unit}；本次理論量相同`
-  if(line.reason_codes.includes('SYSTEM_QUANTITY_CHANGED'))return `上次 ${formatAdjustmentQuantity(line.previous_system_quantity!)} → ${formatAdjustmentQuantity(line.previous_adjusted_quantity!)} ${line.previous_system_unit}；本次 ${formatAdjustmentQuantity(line.current_system_quantity)} ${line.current_system_unit}，請人工確認`
+  if(line.status==='safe_to_reuse')return `上次 ${formatAdjustmentQuantity(line.previous_system_quantity!)} ${line.previous_system_unit} → ${formatAdjustmentQuantity(line.previous_adjusted_quantity!)} ${line.previous_adjusted_unit??line.previous_system_unit}；本次理論量相同`
+  if(line.reason_codes.includes('SYSTEM_QUANTITY_CHANGED'))return `上次 ${formatAdjustmentQuantity(line.previous_system_quantity!)} ${line.previous_system_unit} → ${formatAdjustmentQuantity(line.previous_adjusted_quantity!)} ${line.previous_adjusted_unit??line.previous_system_unit}；本次 ${formatAdjustmentQuantity(line.current_system_quantity)} ${line.current_system_unit}，請人工確認`
   if(line.reason_codes.includes('CURRENT_ALREADY_ADJUSTED'))return '本次已有人工調整，不會覆蓋'
   if(line.status==='ambiguous')return '找到多筆可能來源，無法自動沿用'
   return '新菜、已更換菜色或配方食材已改變，需本次重新處理'
 }
 
-function AdjustmentWeeklyMatrix({matrix,values,dirtySet,reviewLineIds,validationErrors,readOnly,saving,saveLocked,onChange}:{matrix:AdjustmentMenuMatrix;values:Record<string,string>;dirtySet:Set<string>;reviewLineIds:Set<string>;validationErrors:Record<string,string|null>;readOnly:boolean;saving:boolean;saveLocked:boolean;onChange:(lineId:string,value:string)=>void}){
+function AdjustmentWeeklyMatrix({matrix,values,units,dirtySet,reviewLineIds,validationErrors,readOnly,saving,saveLocked,onChange,onRestore}:{matrix:AdjustmentMenuMatrix;values:Record<string,string>;units:Record<string,string>;dirtySet:Set<string>;reviewLineIds:Set<string>;validationErrors:Record<string,string|null>;readOnly:boolean;saving:boolean;saveLocked:boolean;onChange:(lineId:string,value:string)=>void;onRestore:(line:OrderingAdjustmentDetail['lines'][number])=>void}){
   return <div className="ordering-adjustment-matrix"><table><thead><tr><th className="matrix-meal-heading">餐別</th><th className="matrix-column-heading">菜單欄位</th>{matrix.dates.map(date=><th key={date}>{formatDate(date)}</th>)}</tr></thead><tbody>{matrix.meals.flatMap(meal=>meal.rows.map((row,rowIndex)=><tr key={`${meal.id}:${rowIndex}`}>{rowIndex===0&&<th className="matrix-meal-cell" rowSpan={meal.rows.length}>{meal.name}</th>}<th className="matrix-column-cell">{row.label}</th>{matrix.dates.map(date=><td key={date}><div className="ordering-adjustment-cell">{(row.cells[date]??[]).map(dish=>{const dishNeedsReview=dish.lines.some(line=>reviewLineIds.has(line.id));return <article className={`ordering-adjustment-cell-dish${dishNeedsReview?' needs-review':''}`} key={dish.id}><header><strong>{dish.name}</strong><span>{dish.dinerCount} 人</span>{dishNeedsReview&&<b className="ordering-review-badge">需確認</b>}</header>{dish.lines.map(line=>{
-    const persistedAdjusted=line.adjusted_quantity!==null&&!decimalStringsEqual(line.adjusted_quantity,line.system_quantity),dirty=dirtySet.has(line.id),error=dirty?validationErrors[line.id]:null
-    const actual=values[line.id]??editableDecimalString(line.effective_quantity),showRestore=!decimalStringsEqual(actual,line.system_quantity)||dirty
+    const persistedAdjusted=line.adjusted_quantity!==null,dirty=dirtySet.has(line.id),error=dirty?validationErrors[line.id]:null
+    const actual=values[line.id]??editableDecimalString(line.effective_quantity),actualUnit=units[line.id]??line.effective_unit,showRestore=!decimalStringsEqual(actual,line.system_quantity)||actualUnit!==line.system_unit||dirty
     const needsReview=reviewLineIds.has(line.id)
-    return <div className={`ordering-adjustment-cell-line${dirty?' is-dirty':''}${needsReview?' needs-review':''}`} key={line.id}><strong>{line.ingredient_name_snapshot}</strong><div className="ordering-adjustment-cell-quantity"><span>{formatAdjustmentQuantity(line.system_quantity)}</span><span aria-hidden="true">→</span>{readOnly?<b>{formatAdjustmentQuantity(line.effective_quantity)}</b>:<input type="text" inputMode="decimal" aria-label={`${dish.name} - ${line.ingredient_name_snapshot} 實際叫貨量`} disabled={saving||saveLocked} value={actual} onChange={event=>onChange(line.id,event.target.value)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault()}}/>}<span>{line.system_unit}</span></div><div className="ordering-adjustment-cell-state">{needsReview&&<small className="ordering-review-badge">需確認</small>}{persistedAdjusted&&<small className="persisted">人工調整</small>}{dirty&&<small className="dirty">已修改</small>}{!readOnly&&showRestore&&<button type="button" className="text-button" disabled={saving||saveLocked} onClick={()=>onChange(line.id,editableDecimalString(line.system_quantity))}>恢復</button>}</div>{error&&<small className="error">{error}</small>}</div>
+    return <div className={`ordering-adjustment-cell-line${dirty?' is-dirty':''}${needsReview?' needs-review':''}`} key={line.id}><strong>{line.ingredient_name_snapshot}</strong><div className="ordering-adjustment-cell-quantity"><span>{formatAdjustmentQuantity(line.system_quantity)} {line.system_unit}</span><span aria-hidden="true">→</span>{readOnly?<b>{formatAdjustmentQuantity(line.effective_quantity)}</b>:<input type="text" inputMode="decimal" aria-label={`${dish.name} - ${line.ingredient_name_snapshot} 實際叫貨量`} disabled={saving||saveLocked} value={actual} onChange={event=>onChange(line.id,event.target.value)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault()}}/>}<span>{actualUnit}</span></div><div className="ordering-adjustment-cell-state">{needsReview&&<small className="ordering-review-badge">需確認</small>}{persistedAdjusted&&<small className="persisted">人工調整</small>}{dirty&&<small className="dirty">已修改</small>}{!readOnly&&showRestore&&<button type="button" className="text-button" disabled={saving||saveLocked} onClick={()=>onRestore(line)}>恢復</button>}</div>{error&&<small className="error">{error}</small>}</div>
   })}</article>})}</div></td>)}</tr>))}</tbody></table></div>
 }
 

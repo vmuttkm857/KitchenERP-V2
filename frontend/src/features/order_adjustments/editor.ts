@@ -31,14 +31,19 @@ export function initialAdjustmentValues(lines:OrderingAdjustmentLine[]){
   return Object.fromEntries(lines.map(line=>[line.id,editableDecimalString(line.adjusted_quantity??line.system_quantity)]))
 }
 
-export function dirtyAdjustmentLineIds(lines:OrderingAdjustmentLine[],values:Record<string,string>){
-  return lines.filter(line=>!decimalStringsEqual(values[line.id]??'',line.adjusted_quantity??line.system_quantity)).map(line=>line.id)
+export function initialAdjustmentUnits(lines:OrderingAdjustmentLine[]){
+  return Object.fromEntries(lines.map(line=>[line.id,line.adjusted_unit??line.system_unit]))
 }
 
-export function buildAdjustmentUpdates(lines:OrderingAdjustmentLine[],values:Record<string,string>):OrderingAdjustmentLineUpdate[]{
-  const dirty=new Set(dirtyAdjustmentLineIds(lines,values))
-  return lines.filter(line=>dirty.has(line.id)).map(line=>({
-    id:line.id,
-    adjusted_quantity:decimalStringsEqual(values[line.id]??'',line.system_quantity)?null:(values[line.id]??'').trim(),
-  }))
+export function dirtyAdjustmentLineIds(lines:OrderingAdjustmentLine[],values:Record<string,string>,units=initialAdjustmentUnits(lines)){
+  return lines.filter(line=>!decimalStringsEqual(values[line.id]??'',line.adjusted_quantity??line.system_quantity)||(units[line.id]??line.system_unit)!==(line.adjusted_unit??line.system_unit)).map(line=>line.id)
+}
+
+export function buildAdjustmentUpdates(lines:OrderingAdjustmentLine[],values:Record<string,string>,units=initialAdjustmentUnits(lines)):OrderingAdjustmentLineUpdate[]{
+  const dirty=new Set(dirtyAdjustmentLineIds(lines,values,units))
+  return lines.filter(line=>dirty.has(line.id)).map(line=>{
+    const quantity=(values[line.id]??'').trim(),unit=units[line.id]??line.system_unit
+    const restored=decimalStringsEqual(quantity,line.system_quantity)&&unit===line.system_unit
+    return {id:line.id,adjusted_quantity:restored?null:quantity,adjusted_unit:restored?null:unit}
+  })
 }

@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from app.domains.requirements.schemas import RequirementCriteria
 from app.shared.schemas import PaginationMeta
@@ -17,6 +17,7 @@ class OrderingAdjustmentCreate(BaseModel):
 class OrderingAdjustmentLineUpdate(BaseModel):
     id: uuid.UUID
     adjusted_quantity: Decimal | None = None
+    adjusted_unit: str | None = None
 
     @field_validator("adjusted_quantity")
     @classmethod
@@ -24,6 +25,18 @@ class OrderingAdjustmentLineUpdate(BaseModel):
         if value is not None and (not value.is_finite() or value < 0):
             raise ValueError("adjusted_quantity must be a finite non-negative number")
         return value
+
+    @model_validator(mode="after")
+    def valid_pair(self):
+        if self.adjusted_quantity is None and self.adjusted_unit is not None:
+            raise ValueError("adjusted_unit requires adjusted_quantity")
+        if (
+            self.adjusted_quantity is not None
+            and "adjusted_unit" in self.model_fields_set
+            and self.adjusted_unit is None
+        ):
+            raise ValueError("adjusted_unit cannot be null when adjusted_quantity is provided")
+        return self
 
 
 class OrderingAdjustmentBatchUpdate(BaseModel):
@@ -39,6 +52,11 @@ class OrderingAdjustmentBatchUpdate(BaseModel):
 
 class OrderingAdjustmentAction(BaseModel):
     lock_version: int = Field(ge=1)
+
+
+class OrderingAdjustmentUnitConversion(BaseModel):
+    lock_version: int = Field(ge=1)
+    conversion: Literal["g_and_jin_to_kg", "g_to_kg", "jin_to_g"]
 
 
 class OrderingAdjustmentMenuPair(BaseModel):
@@ -75,9 +93,9 @@ class OrderingAdjustmentReuseLine(BaseModel):
     reason_codes:list[str]
     current_line_id:uuid.UUID;previous_line_id:uuid.UUID|None;current_menu_id:uuid.UUID
     requirement_date:date;meal_name:str;dish_name:str;ingredient_name:str
-    current_system_quantity:Decimal;current_system_unit:str;current_adjusted_quantity:Decimal|None
-    previous_system_quantity:Decimal|None;previous_system_unit:str|None;previous_adjusted_quantity:Decimal|None
-    reused_quantity:Decimal|None
+    current_system_quantity:Decimal;current_system_unit:str;current_adjusted_quantity:Decimal|None;current_adjusted_unit:str|None
+    previous_system_quantity:Decimal|None;previous_system_unit:str|None;previous_adjusted_quantity:Decimal|None;previous_adjusted_unit:str|None
+    reused_quantity:Decimal|None;reused_unit:str|None
 
     @field_serializer("current_system_quantity","current_adjusted_quantity","previous_system_quantity","previous_adjusted_quantity","reused_quantity")
     def reuse_decimal_string(self,value):return None if value is None else format(value,"f")
@@ -100,7 +118,7 @@ class OrderingAdjustmentLinePublic(BaseModel):
     source_dish_ingredient_id:uuid.UUID; dish_ingredient_sort_order_snapshot:int; source_ingredient_id:uuid.UUID; ingredient_code_snapshot:str; ingredient_name_snapshot:str
     source_supplier_id:uuid.UUID|None; supplier_name_snapshot:str|None
     quantity_per_person_snapshot:Decimal; loss_rate_snapshot:Decimal; recipe_unit_snapshot:str
-    system_quantity:Decimal; system_unit:str; adjusted_quantity:Decimal|None; effective_quantity:Decimal
+    system_quantity:Decimal; system_unit:str; adjusted_quantity:Decimal|None; adjusted_unit:str|None; effective_quantity:Decimal; effective_unit:str
     modified:bool; review_required:bool; stale:bool; stale_reasons:list[str]
 
     @field_serializer("quantity_per_person_snapshot","loss_rate_snapshot","system_quantity","adjusted_quantity","effective_quantity")

@@ -28,10 +28,11 @@ def _clean(value: Decimal) -> str:
     return format(value.quantize(Decimal("0.001")).normalize(), "f")
 
 
-def display_ingredient(line: dict) -> tuple[str, str]:
+def display_ingredient(line: dict, preserve_unit: bool = False) -> tuple[str, str]:
     quantity, unit = line.get("required_quantity"), line.get("required_unit")
     if quantity is None or not unit: return "不可計算", unit or "-"
     quantity = Decimal(str(quantity)); normalized = normalize_unit(unit)
+    if preserve_unit: return _clean(quantity), normalized
     target = "kg" if normalized in {"g", "kg", "斤"} else ("L" if normalized in {"ml", "L"} else normalized)
     converted = convert_quantity(quantity, normalized, target)
     return (_clean(converted.quantity), target) if converted.convertible and converted.quantity is not None else (_clean(quantity), unit)
@@ -61,15 +62,15 @@ def simple_page_plan(result: dict) -> list[dict]:
     return plans
 
 
-def _dish_lines(dish: dict) -> list[str]:
+def _dish_lines(dish: dict, preserve_units: bool = False) -> list[str]:
     lines = [f'{dish["dish_name"]}　{dish["diner_count"]}人']
     for ingredient in dish["ingredients"]:
-        quantity, unit = display_ingredient(ingredient); lines.append(f'　• {ingredient["ingredient_name"] or "食材資料缺失"}　{quantity} {unit}')
+        quantity, unit = display_ingredient(ingredient, preserve_units); lines.append(f'　• {ingredient["ingredient_name"] or "食材資料缺失"}　{quantity} {unit}')
     if _warning(dish): lines.append(WARNING_TEXT)
     return lines
 
 
-def _dish_rich_text(dish: dict) -> CellRichText:
+def _dish_rich_text(dish: dict, preserve_units: bool = False) -> CellRichText:
     heading = InlineFont(sz=13, b=True, color=INK.lstrip("#"))
     servings = InlineFont(sz=10.5, b=False, color=INK.lstrip("#"))
     detail = InlineFont(sz=9.5, b=False, color=INK.lstrip("#"))
@@ -77,19 +78,20 @@ def _dish_rich_text(dish: dict) -> CellRichText:
         TextBlock(heading, str(dish["dish_name"])),
         TextBlock(servings, f'　{dish["diner_count"]}人'),
     )
-    for line in _dish_lines(dish)[1:]:
+    for line in _dish_lines(dish, preserve_units)[1:]:
         value.append(TextBlock(detail, f"\n{line}"))
     return value
 
 
-def _excel_line_count(dish: dict) -> int:
+def _excel_line_count(dish: dict, preserve_units: bool = False) -> int:
     heading = f'{dish["dish_name"]}　{dish["diner_count"]}人'
     heading_lines = max(1, (len(heading) + 14) // 15)
-    return heading_lines + len(_dish_lines(dish)) - 1
+    return heading_lines + len(_dish_lines(dish, preserve_units)) - 1
 
 
 def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
     workbook = Workbook(); del workbook["Sheet"]
+    preserve_units = bool(result.get("preserve_ingredient_units"))
     plans=simple_page_plan(result)
     for index, plan in enumerate(plans, 1):
         sheet = workbook.create_sheet("週配料表" if len(plans) == 1 else f"週配料表-{index}")
@@ -97,7 +99,7 @@ def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
         sheet.page_margins.left = sheet.page_margins.right = .15; sheet.page_margins.top = sheet.page_margins.bottom = .2
         sheet.column_dimensions["A"].width = 11; sheet.column_dimensions["B"].width = 13
         for col in "CDEFGHI": sheet.column_dimensions[col].width = 22
-        sheet.merge_cells("A1:I1"); sheet["A1"] = safe_cell_text(f'{result["menu"]["menu_name"]} 週配料表'); sheet["A1"].font = Font(size=16, bold=True, color="244B32"); sheet["A1"].alignment = Alignment(horizontal="center")
+        sheet.merge_cells("A1:I1"); sheet["A1"] = safe_cell_text(result.get("report_title",f'{result["menu"]["menu_name"]} 週配料表')); sheet["A1"].font = Font(size=16, bold=True, color="244B32"); sheet["A1"].alignment = Alignment(horizontal="center")
         headers = ["餐別","菜單欄位"] + [f'{day.month}/{day.day}（{WEEKDAYS[day.weekday()]}）' for day in plan["dates"]] + [""]*(7-len(plan["dates"]))
         for col, value in enumerate(headers, 1):
             cell = sheet.cell(2, col, value); cell.fill = PatternFill("solid", fgColor="356B48"); cell.font = Font(bold=True, color="FFFFFF"); cell.alignment = Alignment(horizontal="center"); cell.border = Border(left=THIN,right=THIN,top=THIN,bottom=THIN)
@@ -114,7 +116,7 @@ def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
                     dishes=plan["slots"].get((plan["dates"][day_i],meal["id"]),[]) if day_i<len(plan["dates"]) else []
                     dish=dishes[offset] if offset<len(dishes) else None
                     if dish is not None:
-                        max_lines=max(max_lines,_excel_line_count(dish));sheet.cell(row,day_i+3).value=_dish_rich_text(dish)
+                        max_lines=max(max_lines,_excel_line_count(dish,preserve_units));sheet.cell(row,day_i+3).value=_dish_rich_text(dish,preserve_units)
                     else:sheet.cell(row,day_i+3,"")
                 for col in range(1,10):
                     cell=sheet.cell(row,col);cell.font=Font(size=base_size+(2 if col==1 else 0),bold=col<=2,color="244B32" if col<=2 else INK.lstrip("#"))

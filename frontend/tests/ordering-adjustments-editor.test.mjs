@@ -1,18 +1,19 @@
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import test from 'node:test'
-import {buildAdjustmentUpdates,decimalStringsEqual,dirtyAdjustmentLineIds,initialAdjustmentValues,normalizeDecimalString,validateAdjustmentQuantity} from '../src/features/order_adjustments/editor.ts'
+import {buildAdjustmentUpdates,decimalStringsEqual,dirtyAdjustmentLineIds,initialAdjustmentUnits,initialAdjustmentValues,normalizeDecimalString,validateAdjustmentQuantity} from '../src/features/order_adjustments/editor.ts'
 
 const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
 const page=read('../src/features/order_adjustments/OrderingAdjustmentsPage.tsx')
 const api=read('../src/features/order_adjustments/api.ts')
 const css=read('../src/styles/global.css')
-const line=(id,dish,system,adjusted=null)=>({id,source_menu_dish_id:dish,system_quantity:system,adjusted_quantity:adjusted})
+const line=(id,dish,system,adjusted=null,systemUnit='g',adjustedUnit=null)=>({id,source_menu_dish_id:dish,system_quantity:system,system_unit:systemUnit,adjusted_quantity:adjusted,adjusted_unit:adjustedUnit,effective_unit:adjustedUnit??systemUnit})
 
 test('initial values prefer persisted adjustment and otherwise use system quantity without PATCH',()=>{
   const lines=[line('a','dish-a','1.710000','2.000000'),line('b','dish-b','2.350000')]
   assert.deepEqual(initialAdjustmentValues(lines),{a:'2',b:'2.35'})
   assert.doesNotMatch(initialAdjustmentValues.toString(),/updateOrderingAdjustmentLines|apiRequest/)
+  assert.deepEqual(initialAdjustmentUnits([line('a','dish-a','1710','1.71','g','kg'),line('b','dish-b','2350')]),{a:'kg',b:'g'})
 })
 
 test('same ingredient source lines remain independent by line id and dish',()=>{
@@ -49,10 +50,19 @@ test('quantity validation accepts zero and six decimals but rejects unsafe input
 test('batch payload sends only dirty lines and reset-to-system becomes null',()=>{
   const lines=[line('a','dish-a','1.710000','2'),line('b','dish-b','2.35'),line('c','dish-c','4.28','5')]
   assert.deepEqual(buildAdjustmentUpdates(lines,{a:'1.710000',b:'3',c:'5.000000'}),[
-    {id:'a',adjusted_quantity:null},{id:'b',adjusted_quantity:'3'},
+    {id:'a',adjusted_quantity:null,adjusted_unit:null},{id:'b',adjusted_quantity:'3',adjusted_unit:'g'},
   ])
   assert.match(api,/method:'PATCH'/)
   assert.match(page,/lock_version:detail\.lock_version/)
+})
+
+test('unit-aware editor preserves converted units and restores quantity plus unit together',()=>{
+  const lines=[line('a','dish-a','2475','2.475','g','kg'),line('b','dish-b','10','6','斤','kg')]
+  const values=initialAdjustmentValues(lines),units=initialAdjustmentUnits(lines)
+  values.a='3'
+  assert.deepEqual(buildAdjustmentUpdates(lines,values,units),[{id:'a',adjusted_quantity:'3',adjusted_unit:'kg'}])
+  values.a='2475';units.a='g'
+  assert.deepEqual(buildAdjustmentUpdates(lines,values,units),[{id:'a',adjusted_quantity:null,adjusted_unit:null}])
 })
 
 test('editor exposes dirty persisted and accessible input states without automatic save',()=>{

@@ -8,11 +8,13 @@ from app.domains.order_adjustments.exceptions import (
     OrderingAdjustmentAlreadyConfirmedError, OrderingAdjustmentExistingDraftError,
     OrderingAdjustmentInvariantError, OrderingAdjustmentLineNotFoundError,
     OrderingAdjustmentDeleteForbiddenError, OrderingAdjustmentNotFoundError, OrderingAdjustmentSnapshotLockedError,
+    OrderingAdjustmentExportError,
     OrderingAdjustmentReuseError,
     OrderingAdjustmentStaleError, OrderingAdjustmentStateError,
     OrderingAdjustmentVersionConflictError,
 )
 from app.domains.order_adjustments.models import OrderingAdjustmentLine, OrderingAdjustmentSheet
+from app.domains.order_adjustments.export import build_adjusted_weekly_result
 from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
 from app.domains.order_adjustments.reuse import build_reuse_preview
 from app.domains.requirements.repository import RequirementRepository
@@ -20,9 +22,10 @@ from app.domains.requirements.exceptions import RequirementMenuNotFoundError
 from app.domains.requirements.exceptions import RequirementAdjustmentError
 from app.domains.requirements.schemas import RequirementCriteria
 from app.domains.requirements.service import RequirementService
+from app.domains.menus.service import MenuService
 from app.domains.snapshots.fingerprint import hash_payload, normalize, snapshot_fingerprint
 from app.domains.snapshots.service import SnapshotService
-from app.shared.domain.quantities import calculate_required_quantity, convert_quantity, quantize_quantity
+from app.shared.domain.quantities import calculate_required_quantity, convert_quantity, normalize_unit, quantize_quantity
 
 
 def _source_plan(rows):
@@ -166,7 +169,7 @@ class OrderingAdjustmentService:
                     raise RequirementAdjustmentError("ADJUSTMENT_DUPLICATE_OVERRIDE",source_line_key=line.source_line_key,sheet_ids=[str(overrides[line.source_line_key]["sheet_id"]),str(sheet.id)])
                 overrides[line.source_line_key]={
                     "quantity":line.adjusted_quantity if line.adjusted_quantity is not None else line.system_quantity,
-                    "unit":line.system_unit,"sheet_id":sheet.id,
+                    "unit":line.adjusted_unit if line.adjusted_quantity is not None else line.system_unit,"sheet_id":sheet.id,
                 }
                 if sheet.status=="confirmed":
                     frozen_keys.add(line.source_line_key);frozen.append(self._frozen_source_row(line,snapshot_items[line.snapshot_item_id]))
@@ -225,9 +228,30 @@ class OrderingAdjustmentService:
         data["lines"]=[]
         for line in lines:
             value={column.name:getattr(line,column.name) for column in line.__table__.columns}
-            value.update(effective_quantity=line.adjusted_quantity if line.adjusted_quantity is not None else line.system_quantity,modified=line.adjusted_quantity is not None,stale=bool(line_state[line.id]),stale_reasons=line_state[line.id])
+            value.update(
+                effective_quantity=line.adjusted_quantity if line.adjusted_quantity is not None else line.system_quantity,
+                effective_unit=line.adjusted_unit if line.adjusted_quantity is not None else line.system_unit,
+                modified=line.adjusted_quantity is not None,stale=bool(line_state[line.id]),stale_reasons=line_state[line.id],
+            )
             data["lines"].append(value)
         return data
+
+    def adjusted_weekly_result(self,sheet_id,menu_id):
+        sheet,lines=self._loaded(sheet_id)
+        if sheet.status not in {"draft","confirmed"}:
+            raise OrderingAdjustmentExportError("ADJUSTMENT_EXPORT_STATUS_INVALID",status=sheet.status)
+        snapshot=self.repository.snapshot(sheet.baseline_snapshot_id)
+        source_menu_ids={str(item["menu_id"]) for item in snapshot.source_menus}
+        if str(menu_id) not in source_menu_ids:
+            raise OrderingAdjustmentExportError("ADJUSTMENT_EXPORT_MENU_MISMATCH",menu_id=str(menu_id))
+        if sheet.status=="draft":
+            _,states,warnings,_=self._live(sheet,lines)
+            stale=[{"line_id":str(line_id),"reasons":reasons} for line_id,reasons in states.items() if reasons]+warnings
+            if stale:raise OrderingAdjustmentStaleError(stale)
+        selected=[line for line in lines if line.source_menu_id==menu_id]
+        if not selected:raise OrderingAdjustmentExportError("ADJUSTMENT_EXPORT_EMPTY",menu_id=str(menu_id))
+        layout=MenuService(self.session).aggregate(menu_id)
+        return build_adjusted_weekly_result(snapshot,lines,menu_id,layout)
 
     def update_lines(self,sheet_id,updates,lock_version,actor_id):
         try:
@@ -237,12 +261,53 @@ class OrderingAdjustmentService:
             for update in updates:
                 line=by_id.get(update.id)
                 if not line:raise OrderingAdjustmentLineNotFoundError()
-                before.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"review_required":line.review_required})
-                line.adjusted_quantity=None if update.adjusted_quantity is None else quantize_quantity(update.adjusted_quantity)
+                before.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"adjusted_unit":line.adjusted_unit,"review_required":line.review_required})
+                if update.adjusted_quantity is None:
+                    line.adjusted_quantity=None;line.adjusted_unit=None
+                else:
+                    requested_unit=update.adjusted_unit if "adjusted_unit" in update.model_fields_set else (line.adjusted_unit or line.system_unit)
+                    requested_unit=normalize_unit(requested_unit)
+                    if not convert_quantity(update.adjusted_quantity,requested_unit,line.system_unit).convertible:
+                        raise OrderingAdjustmentInvariantError()
+                    line.adjusted_quantity=quantize_quantity(update.adjusted_quantity);line.adjusted_unit=requested_unit
                 line.review_required=False;line.updated_by=actor_id
-                after.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"review_required":line.review_required})
+                after.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"adjusted_unit":line.adjusted_unit,"review_required":line.review_required})
             sheet.lock_version+=1;sheet.updated_by=actor_id
             self.audit.record(actor_id=actor_id,action="ordering_adjustment_lines_update",entity_type="ordering_adjustment_sheet",entity_id=sheet.id,entity_label=f"Revision {sheet.revision}",before_data={"lock_version":lock_version,"lines":before},after_data={"lock_version":sheet.lock_version,"lines":after})
+            self.session.commit()
+        except Exception:self.session.rollback();raise
+        return self.detail(sheet_id)
+
+    def convert_units(self,sheet_id,conversion,lock_version,actor_id):
+        targets={
+            "g_and_jin_to_kg":({"g","斤"},"kg"),
+            "g_to_kg":({"g"},"kg"),
+            "jin_to_g":({"斤"},"g"),
+        }
+        source_units,target_unit=targets[conversion]
+        try:
+            sheet,lines=self._loaded(sheet_id,True);self._assert_mutable(sheet,lock_version)
+            changes=[]
+            for line in lines:
+                source_unit=normalize_unit(line.adjusted_unit if line.adjusted_quantity is not None else line.system_unit)
+                if source_unit not in source_units:continue
+                quantity=line.adjusted_quantity if line.adjusted_quantity is not None else line.system_quantity
+                converted=convert_quantity(quantity,source_unit,target_unit)
+                if not converted.convertible or converted.quantity is None:raise OrderingAdjustmentInvariantError()
+                changes.append((line,quantize_quantity(converted.quantity),source_unit))
+            if not changes:return self.detail(sheet_id)
+            before=[];after=[]
+            for line,quantity,source_unit in changes:
+                before.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"adjusted_unit":line.adjusted_unit,"review_required":line.review_required})
+                line.adjusted_quantity=quantity;line.adjusted_unit=target_unit;line.updated_by=actor_id
+                after.append({"id":line.id,"adjusted_quantity":quantity,"adjusted_unit":target_unit,"source_unit":source_unit,"review_required":line.review_required})
+            sheet.lock_version+=1;sheet.updated_by=actor_id
+            self.audit.record(
+                actor_id=actor_id,action="ordering_adjustment_units_convert",entity_type="ordering_adjustment_sheet",
+                entity_id=sheet.id,entity_label=f"Revision {sheet.revision}",
+                before_data={"lock_version":lock_version,"conversion":conversion,"lines":before},
+                after_data={"lock_version":sheet.lock_version,"conversion":conversion,"lines":after},
+            )
             self.session.commit()
         except Exception:self.session.rollback();raise
         return self.detail(sheet_id)
@@ -299,15 +364,15 @@ class OrderingAdjustmentService:
             current_by_id={line.id:line for line in by_sheet[current.id]};before=[];after=[]
             for line_id in data.selected_current_line_ids:
                 line=current_by_id[line_id];value=safe[line_id]["reused_quantity"]
-                before.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"review_required":line.review_required})
-                line.adjusted_quantity=value;line.updated_by=actor_id
-                after.append({"id":line.id,"adjusted_quantity":value,"review_required":line.review_required,"previous_line_id":safe[line_id]["previous_line_id"]})
+                before.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"adjusted_unit":line.adjusted_unit,"review_required":line.review_required})
+                line.adjusted_quantity=value;line.adjusted_unit=safe[line_id]["reused_unit"];line.updated_by=actor_id
+                after.append({"id":line.id,"adjusted_quantity":value,"adjusted_unit":line.adjusted_unit,"review_required":line.review_required,"previous_line_id":safe[line_id]["previous_line_id"]})
             for line_id,item in review_required.items():
                 line=current_by_id[line_id]
                 if not line.review_required:
-                    before.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"review_required":False})
+                    before.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"adjusted_unit":line.adjusted_unit,"review_required":False})
                     line.review_required=True;line.updated_by=actor_id
-                    after.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"review_required":True,"previous_line_id":item["previous_line_id"]})
+                    after.append({"id":line.id,"adjusted_quantity":line.adjusted_quantity,"adjusted_unit":line.adjusted_unit,"review_required":True,"previous_line_id":item["previous_line_id"]})
             current.last_reuse_source_sheet_id=previous.id;current.reuse_applied_at=datetime.now(UTC);current.reuse_applied_by=actor_id
             current.lock_version+=1;current.updated_by=actor_id
             self.audit.record(actor_id=actor_id,action="ordering_adjustment_reuse",entity_type="ordering_adjustment_sheet",entity_id=current.id,entity_label=f"Revision {current.revision}",before_data={"lock_version":data.current_lock_version,"lines":before},after_data={"lock_version":current.lock_version,"previous_sheet_id":previous.id,"lines":after})

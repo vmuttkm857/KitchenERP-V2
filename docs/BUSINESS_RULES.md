@@ -194,6 +194,13 @@
 - **來源**：`kitchen_work/page.py:build_preparation_excel_bytes`, `paginate_preparation_slot`, `safe_excel_text`。
 - **A/B**：B 有 Excel builder；A 有後續頁首/分頁/顯示格式修正。V2 應以 A 的觀察行為驗收。
 
+### R-KITCHEN-04：叫貨調整後廚房配料表
+- **原始理論配料表**：既有廚房作業週配料表仍遵守 R-KITCHEN-01，依配方、人數與耗損即時計算，不讀人工叫貨量。
+- **調整後配料表**：使用者明確將目前叫貨調整單已儲存的逐菜食材有效數量視為廚房實際配料量；有人工調整時使用 `adjusted_quantity`／`adjusted_unit`，未調整時使用 `system_quantity`／`system_unit`。
+- **來源識別**：每筆配料以 `menu_dish_id:dish_ingredient_id` 對應，不得從食材彙總量反推或平均分配。
+- **範圍**：一次只匯出調整單中的一份菜單；多菜單必須分別下載。草稿與已確認調整單均可匯出已儲存資料，草稿來源 stale 時禁止匯出。
+- **即時性**：下載時即時產生，不保存歷史報表；前端尚未儲存的輸入不會進入匯出。
+
 ## 8. V2 規則設計提醒
 
 1. 金額與量一律 domain Decimal；只在 UI/API/Excel 最後轉字串或明確浮點。

@@ -47,6 +47,7 @@ class OrderingAdjustmentLine(Base):
         CheckConstraint("loss_rate_snapshot >= 0", name="ck_ordering_adjustment_lines_loss_nonnegative"),
         CheckConstraint("system_quantity >= 0", name="ck_ordering_adjustment_lines_system_nonnegative"),
         CheckConstraint("adjusted_quantity IS NULL OR adjusted_quantity >= 0", name="ck_ordering_adjustment_lines_adjusted_nonnegative"),
+        CheckConstraint("(adjusted_quantity IS NULL) = (adjusted_unit IS NULL)", name="ck_ordering_adjustment_lines_adjusted_pair"),
         UniqueConstraint("sheet_id", "source_menu_dish_id", "source_dish_ingredient_id", name="uq_ordering_adjustment_lines_source"),
         UniqueConstraint("sheet_id", "source_line_key", name="uq_ordering_adjustment_lines_key"),
         Index("ix_ordering_adjustment_lines_menu_date", "source_menu_id", "requirement_date"),
@@ -89,6 +90,7 @@ class OrderingAdjustmentLine(Base):
     system_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     system_unit: Mapped[str] = mapped_column(String(30), nullable=False)
     adjusted_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    adjusted_unit: Mapped[str | None] = mapped_column(String(30))
     review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

@@ -1,6 +1,6 @@
-import { apiRequest } from '../../api/client'
+import { apiDownload,apiRequest } from '../../api/client'
 import type {MenuAggregate} from '../menus/types'
-import type { OrderingAdjustmentBatchUpdate,OrderingAdjustmentCreateRequest,OrderingAdjustmentDetail,OrderingAdjustmentList,OrderingAdjustmentReuseApplyRequest,OrderingAdjustmentReusePreview,OrderingAdjustmentReuseRequest,OrderingAdjustmentStatus } from './types'
+import type { OrderingAdjustmentBatchUpdate,OrderingAdjustmentCreateRequest,OrderingAdjustmentDetail,OrderingAdjustmentList,OrderingAdjustmentReuseApplyRequest,OrderingAdjustmentReusePreview,OrderingAdjustmentReuseRequest,OrderingAdjustmentStatus,OrderingAdjustmentUnitConversion } from './types'
 
 export interface OrderingAdjustmentListParams {page:number;pageSize:number;status?:OrderingAdjustmentStatus;startDate?:string;endDate?:string;menuId?:string}
 
@@ -25,6 +25,10 @@ export function updateOrderingAdjustmentLines(sheetId:string,payload:OrderingAdj
   return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/lines`,{method:'PATCH',body:JSON.stringify(payload)})
 }
 
+export function convertOrderingAdjustmentUnits(sheetId:string,lockVersion:number,conversion:OrderingAdjustmentUnitConversion){
+  return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/convert-units`,{method:'POST',body:JSON.stringify({lock_version:lockVersion,conversion})})
+}
+
 export function confirmOrderingAdjustment(sheetId:string,lockVersion:number){
   return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/confirm`,{method:'POST',body:JSON.stringify({lock_version:lockVersion})})
 }
@@ -34,6 +38,7 @@ export function deleteOrderingAdjustment(sheetId:string,lockVersion:number){
 }
 
 export function getOrderingAdjustmentMenuLayout(menuId:string){return apiRequest<MenuAggregate>(`/menus/${menuId}/editor`)}
+export function downloadOrderingAdjustmentWeekly(sheetId:string,menuId:string){return apiDownload(`/exports/order-adjustments/${sheetId}/weekly-ingredients.xlsx?${new URLSearchParams({menu_id:menuId})}`)}
 
 export function previewOrderingAdjustmentReuse(sheetId:string,payload:OrderingAdjustmentReuseRequest){return apiRequest<OrderingAdjustmentReusePreview>(`/order-adjustments/${sheetId}/reuse-preview`,{method:'POST',body:JSON.stringify(payload)})}
 export function applyOrderingAdjustmentReuse(sheetId:string,payload:OrderingAdjustmentReuseApplyRequest){return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/reuse`,{method:'POST',body:JSON.stringify(payload)})}

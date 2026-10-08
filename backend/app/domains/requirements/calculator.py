@@ -38,10 +38,11 @@ def calculate_requirement_rows(source_rows,quantity_overrides=None):
         source_line_key=f'{source["menu_dish_id"]}:{source["recipe_detail_id"]}'
         override=quantity_overrides.get(source_line_key)
         if override is not None:
-            if override["unit"]!=final_unit:
+            adjusted=convert_quantity(override["quantity"],override["unit"],final_unit)
+            if not adjusted.convertible or adjusted.quantity is None:
                 from app.domains.requirements.exceptions import RequirementAdjustmentError
                 raise RequirementAdjustmentError("ADJUSTMENT_UNIT_MISMATCH",source_line_key=source_line_key,expected_unit=final_unit,actual_unit=override["unit"])
-            quantity=override["quantity"]
+            quantity=adjusted.quantity
         row_key=f"{source['ingredient_id']}:{final_unit}"
         if not convertible:
             anomalies.append(anomaly("INCOMPATIBLE_UNIT","error","Recipe unit cannot be safely converted to ingredient base unit",source["recipe_detail_id"],source["ingredient_name"],recipe_unit=source["recipe_unit"],base_unit=source["base_unit"],**source_context))
