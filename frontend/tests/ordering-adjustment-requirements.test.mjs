@@ -36,8 +36,8 @@ test('calculate export and snapshot share the same authoritative criteria',()=>{
 })
 
 test('quantity basis is explicit before calculation and retains adjustment context',()=>{
-  assert.match(requirements,/③ 數量依據/)
-  assert.match(requirements,/④ 計算/)
+  assert.match(requirements,/<legend>數量依據<\/legend>/)
+  assert.match(requirements,/B\. 計算操作/)
   assert.match(requirements,/type="radio" name="quantity-basis" value="theoretical"/)
   assert.match(requirements,/type="radio" name="quantity-basis" value="actual"/)
   assert.match(requirements,/checked=\{quantityBasis==='theoretical'\}/)
@@ -60,10 +60,9 @@ test('sidebar and adjustment navigation choose safe initial quantity basis',()=>
 })
 
 test('mode switch clears stale results but preserves menus dates and adjustment',()=>{
-  const switchBody=requirements.match(/function changeQuantityBasis[\s\S]*?\n  function showCopyMessage/)?.[0]??''
+  const switchBody=requirements.match(/function changeQuantityBasis[\s\S]*?\n  function openPurchaseFlow/)?.[0]??''
   assert.match(switchBody,/setQuantityBasis\(next\)/)
-  assert.match(switchBody,/setCalculatedBasis\(null\)/)
-  assert.match(switchBody,/setResult\(null\)/)
+  assert.match(switchBody,/invalidateResult/)
   assert.match(switchBody,/數量依據已切換，請重新計算需求量/)
   assert.doesNotMatch(switchBody,/setActiveAdjustment|setSelectedMenuMap|setStartDate|setEndDate/)
 })
@@ -73,7 +72,28 @@ test('calculate export and snapshot use the currently selected quantity basis',(
   assert.match(requirements,/const resultCriteria=criteriaForBasis\(calculatedBasis\?\?quantityBasis\)/)
   assert.match(requirements,/本次將依「\{basisLabel\}」計算/)
   assert.match(requirements,/目前數量依據：\{calculatedBasisLabel\}/)
-  assert.match(requirements,/將以目前「\{basisLabel\}」建立固定需求快照/)
+  assert.match(requirements,/將以目前「\{calculatedBasisLabel\}」建立固定需求快照/)
+})
+
+test('prefilled workflow remains editable and condition changes invalidate old results',()=>{
+  assert.match(requirements,/已從叫貨調整單帶入作業條件/)
+  assert.match(requirements,/實際叫貨｜Rev\./)
+  assert.match(requirements,/function invalidateResult/)
+  assert.match(requirements,/setCalculatedBasis\(null\);setResult\(null\)/)
+  assert.match(requirements,/function toggle\(menu:Menu\)[\s\S]*invalidateResult\(\)/)
+  assert.match(requirements,/setStartDate\(e\.target\.value\);invalidateResult\(\)/)
+  assert.match(requirements,/setEndDate\(e\.target\.value\);invalidateResult\(\)/)
+})
+
+test('snapshot is required before the explicit purchase navigation',()=>{
+  assert.match(requirements,/儲存為固定需求快照/)
+  assert.match(requirements,/前往正式採購/)
+  assert.match(requirements,/請先將目前結果儲存為固定需求快照/)
+  assert.match(requirements,/setSavedSnapshotId\(snapshot\.id\)/)
+  assert.match(requirements,/existing_snapshot_id/)
+  assert.match(requirements,/onOpenSnapshot\?\.\(savedSnapshotId\)/)
+  assert.match(app,/setSnapshotId\(id\);setPage\('snapshots'\)/)
+  assert.match(app,/SnapshotsPage initialId=\{snapshotId\}/)
 })
 
 test('completed result has an independent quantity basis summary card',()=>{

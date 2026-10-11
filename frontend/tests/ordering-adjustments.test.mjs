@@ -43,6 +43,24 @@ test('list create duplicate and read-only detail states are represented',()=>{
   assert.match(page,/此調整單已取消，目前僅供查看/)
 })
 
+test('create dialog suggests menu date ranges without removing manual date editing',()=>{
+  assert.match(page,/suggestedStart/)
+  assert.match(page,/suggestedEnd/)
+  assert.match(page,/if\(!datesTouched\)applySuggestedDates/)
+  assert.match(page,/所選菜單日期不完全相同/)
+  assert.match(page,/套用建議範圍/)
+  assert.match(page,/setDatesTouched\(true\)/)
+  assert.match(page,/可依實際作業需要縮短為部分日期/)
+})
+
+test('confirmed list rows expose the requirements shortcut while preserving all actions',()=>{
+  assert.match(page,/item\.status==='confirmed'&&<button onClick=\{\(\)=>onReview\(item\.id\)\}>前往食材需求/)
+  assert.match(page,/await getOrderingAdjustment\(sheetId\)/)
+  assert.match(page,/item\.status==='draft'&&<button className="secondary-danger"/)
+  assert.match(page,/ordering-adjustment-list-menu/)
+  assert.match(page,/ordering-adjustment-list-range/)
+})
+
 test('draft lifecycle exposes explicit confirm and versioned delete actions',()=>{
   assert.match(page,/完成叫貨調整/)
   assert.match(page,/目前有尚未儲存的修改，請先儲存後再完成叫貨調整/)
@@ -171,8 +189,8 @@ test('actionable reference-only rows use explicit red review presentation',()=>{
 
 test('reuse completion is persisted and repeat comparison requires confirmation',()=>{
   for(const field of ['last_reuse_source_sheet_id','reuse_applied_at','reuse_applied_by'])assert.match(types,new RegExp(`${field}:string\\|null`))
-  assert.match(page,/detail\.reuse_applied_at\?<><span className="ordering-reuse-status">✓ 已沿用上一張叫貨量<\/span>/)
-  assert.match(page,/>重新比對<\/button>/)
+  assert.match(page,/detail\.reuse_applied_at&&<span className="ordering-reuse-status">✓ 已沿用上一張叫貨量<\/span>/)
+  assert.match(page,/detail\.reuse_applied_at\?'重新比對':'沿用上一張叫貨量'/)
   assert.match(page,/重新比對上一張叫貨量？/)
   assert.match(page,/繼續重新比對/)
   assert.match(page,/setReuseAgainOpen\(false\);setReuseOpen\(true\)/)

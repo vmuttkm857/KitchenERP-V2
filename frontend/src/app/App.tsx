@@ -75,7 +75,7 @@ function Application(){
   const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>{
     try{const saved=localStorage.getItem(sidebarPreferenceKey);return saved===null?window.matchMedia('(max-width: 1100px)').matches:saved==='true'}catch{return false}
   })
-  const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [productionDish,setProductionDish]=useState<Dish|null>(null);const [dishListState,setDishListState]=useState<DishListState>(initialDishListState);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [menuImportBatchId,setMenuImportBatchId]=useState<string|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null);const [requirementAdjustment,setRequirementAdjustment]=useState<OrderingAdjustmentDetail|null>(null)
+  const [recipeDish,setRecipeDish]=useState<Dish|null>(null);const [productionDish,setProductionDish]=useState<Dish|null>(null);const [dishListState,setDishListState]=useState<DishListState>(initialDishListState);const [editingMenu,setEditingMenu]=useState<Menu|null>(null);const [menuImportBatchId,setMenuImportBatchId]=useState<string|null>(null);const [purchaseId,setPurchaseId]=useState<string|null>(null);const [snapshotId,setSnapshotId]=useState<string|null>(null);const [requirementAdjustment,setRequirementAdjustment]=useState<OrderingAdjustmentDetail|null>(null)
   const [passwordOpen,setPasswordOpen]=useState(false),[passwordBusy,setPasswordBusy]=useState(false),[passwordError,setPasswordError]=useState('')
   useEffect(()=>{try{localStorage.setItem(sidebarPreferenceKey,String(sidebarCollapsed))}catch{/* UI preference remains in memory. */}},[sidebarCollapsed])
   useEffect(()=>{
@@ -86,8 +86,9 @@ function Application(){
   if(isLoading)return <main className="shell"><LoadingState label="系統載入中…"/></main>
   if(!user)return <LoginPage/>
   const groups=user.role==='admin'?[...businessGroups,systemGroup]:businessGroups
-  function navigate(next:Page){requestNavigation(()=>{if(next==='requirements'||next==='order-adjustments')setRequirementAdjustment(null);setPage(next);setNavOpen(false)})}
+  function navigate(next:Page){requestNavigation(()=>{if(next==='requirements'||next==='order-adjustments')setRequirementAdjustment(null);if(next==='snapshots')setSnapshotId(null);setPage(next);setNavOpen(false)})}
   function openAdjustmentRequirements(detail:OrderingAdjustmentDetail){requestNavigation(()=>{setRequirementAdjustment(detail);setPage('requirements');setNavOpen(false)})}
+  function openRequirementSnapshot(id:string){requestNavigation(()=>{setSnapshotId(id);setPage('snapshots');setNavOpen(false)})}
   async function changePassword(current:string,next:string,confirm:string){setPasswordBusy(true);setPasswordError('');try{await apiRequest('/users/me/change-password',{method:'POST',body:JSON.stringify({current_password:current,new_password:next,confirm_password:confirm})});setPasswordOpen(false);await logout()}catch(cause){setPasswordError(cause instanceof ApiError&&cause.status<500?cause.message:'密碼修改失敗，請稍後再試。')}finally{setPasswordBusy(false)}}
   const isActive=(id:NavPage)=>page===id||(id==='dishes'&&(page==='recipe'||page==='production-profile'))||(id==='menus'&&(page==='menu-editor'||page==='menu-import-review'))
   return <div className={`app-layout ${sidebarCollapsed?'sidebar-collapsed':''}`}>
@@ -107,7 +108,7 @@ function Application(){
       {page==='postpartum-conflicts'&&<PostpartumConflictPage/>}
       {page==='postpartum-change-sheet'&&<PostpartumChangeSheetPage onOpenConflicts={()=>navigate('postpartum-conflicts')}/>}
       {page==='postpartum-catering-overview'&&<PostpartumCateringOverviewPage/>}
-      {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage adjustmentContext={requirementAdjustment}/>} {page==='order-adjustments'&&<OrderingAdjustmentsPage initialSheetId={requirementAdjustment?.id} onReview={openAdjustmentRequirements}/>} {page==='snapshots'&&<SnapshotsPage onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
+      {page==='kitchen'&&<KitchenOperationsPage/>}{page==='requirements'&&<RequirementsPage adjustmentContext={requirementAdjustment} onOpenSnapshot={openRequirementSnapshot}/>} {page==='order-adjustments'&&<OrderingAdjustmentsPage initialSheetId={requirementAdjustment?.id} onReview={openAdjustmentRequirements}/>} {page==='snapshots'&&<SnapshotsPage initialId={snapshotId} onPurchase={id=>{setPurchaseId(id);navigate('purchases')}}/>}{page==='purchases'&&<PurchasesPage initialId={purchaseId}/>}
       {page==='users'&&user.role==='admin'&&<UsersPage/>}{page==='audit'&&user.role==='admin'&&<AuditLogsPage/>}
     </main>
     {passwordOpen&&<ChangePasswordDialog busy={passwordBusy} error={passwordError} onClose={()=>setPasswordOpen(false)} onSubmit={changePassword}/>}

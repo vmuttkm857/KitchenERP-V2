@@ -19,6 +19,6 @@ export function PaginationControls({page,pageSize,total,onPage,onPageSize,pageSi
       <button type="button" className="secondary" disabled={disabled||page>=pages} onClick={()=>onPage(page+1)}>下一頁</button>
       <button type="button" className="secondary" disabled={disabled||page>=pages} onClick={()=>onPage(pages)}>最後一頁</button>
     </div>
-    <form className="pagination-jump" onSubmit={submit} noValidate><label>跳至<input aria-label="跳至頁碼" inputMode="numeric" value={target} onChange={event=>{setTarget(event.target.value);setInvalid(false)}}/></label><span>頁</span><button type="submit" className="secondary" disabled={disabled}>前往</button>{invalid&&<small className="error" role="alert">請輸入 1～{pages} 的整數頁碼</small>}</form>
+    <form className="pagination-jump" onSubmit={submit} noValidate><div className="pagination-jump-fields"><label><span>跳至</span><input aria-label="跳至頁碼" inputMode="numeric" value={target} onChange={event=>{setTarget(event.target.value);setInvalid(false)}}/></label><span>頁</span><button type="submit" className="secondary" disabled={disabled}>前往</button></div>{invalid&&<small className="error" role="alert">請輸入 1～{pages} 的整數頁碼</small>}</form>
   </nav>
 }
