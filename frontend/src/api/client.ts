@@ -1,7 +1,14 @@
+import { beginApiObservation,finishApiObservation,markApi401,type ApiObservation } from '../monitoring/performanceMonitor'
+
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '')
 let accessToken: string | null = null
 let refreshPromise: Promise<string | null> | null = null
 let authExpiredHandler: (() => void) | null = null
+
+function safeBeginObservation(path:string,method:string,resourcePath:string){try{return beginApiObservation(path,method,resourcePath)}catch{return null}}
+function safeFinishObservation(observation:ApiObservation|null,values:{status?:number;error?:boolean;requestId?:string|null}){if(!observation)return;try{finishApiObservation(observation,values)}catch{/* Monitoring never changes API outcomes. */}}
+function safeMark401(observation:ApiObservation|null){if(!observation)return;try{markApi401(observation)}catch{/* Monitoring never changes retry behavior. */}}
+function safeRequestId(response:Response|undefined){try{return response?.headers.get('X-Request-Id')??null}catch{return null}}
 
 export function setAccessToken(token: string | null) {
   accessToken = token
@@ -13,60 +20,70 @@ export function setAuthExpiredHandler(handler: (() => void) | null) {
 
 async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise
+  const observation=safeBeginObservation('/auth/refresh','POST',`${apiBaseUrl}/auth/refresh`)
   refreshPromise = fetch(`${apiBaseUrl}/auth/refresh`, {
     method: 'POST',
     credentials: 'include',
     headers: { Accept: 'application/json' },
   })
     .then(async (response) => {
-      if (!response.ok) return null
+      if (!response.ok){safeFinishObservation(observation,{status:response.status,error:true,requestId:safeRequestId(response)});return null}
       const payload = await response.json() as { access_token: string }
       setAccessToken(payload.access_token)
+      safeFinishObservation(observation,{status:response.status,requestId:safeRequestId(response)})
       return payload.access_token
     })
-    .catch(() => null)
+    .catch(() => {safeFinishObservation(observation,{error:true});return null})
     .finally(() => { refreshPromise = null })
   return refreshPromise
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const observation=safeBeginObservation(path,init?.method??'GET',`${apiBaseUrl}${path}`)
+  let response:Response|undefined
+  let finished=false
+  const finish=(error=false)=>{if(finished)return;finished=true;safeFinishObservation(observation,{status:response?.status,error,requestId:safeRequestId(response)})}
   const headers = new Headers(init?.headers)
   headers.set('Accept', 'application/json')
   if (init?.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
 
-  let response = await fetch(`${apiBaseUrl}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers,
-  })
+  try{
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers,
+    })
 
-  if (response.status === 401 && accessToken && !path.startsWith('/auth/')) {
-    const refreshedToken = await refreshAccessToken()
-    if (refreshedToken) {
-      headers.set('Authorization', `Bearer ${refreshedToken}`)
-      response = await fetch(`${apiBaseUrl}${path}`, { ...init, credentials: 'include', headers })
-    } else {
-      setAccessToken(null)
-      authExpiredHandler?.()
+    if (response.status === 401 && accessToken && !path.startsWith('/auth/')) {
+      safeMark401(observation)
+      const refreshedToken = await refreshAccessToken()
+      if (refreshedToken) {
+        headers.set('Authorization', `Bearer ${refreshedToken}`)
+        response = await fetch(`${apiBaseUrl}${path}`, { ...init, credentials: 'include', headers })
+      } else {
+        setAccessToken(null)
+        authExpiredHandler?.()
+      }
     }
-  }
 
-  if (!response.ok) {
-    let message = '系統暫時無法完成要求，請稍後再試。'
-    let detail: unknown = null
-    try {
-      const payload = await response.json() as { detail?: unknown }
-      detail = payload.detail ?? null
-      if (typeof detail === 'string' && response.status < 500) message = detail
-    } catch {
-      // Never expose reverse-proxy HTML or a server traceback to the UI.
+    if (!response.ok) {
+      let message = '系統暫時無法完成要求，請稍後再試。'
+      let detail: unknown = null
+      try {
+        const payload = await response.json() as { detail?: unknown }
+        detail = payload.detail ?? null
+        if (typeof detail === 'string' && response.status < 500) message = detail
+      } catch {
+        // Never expose reverse-proxy HTML or a server traceback to the UI.
+      }
+      throw new ApiError(response.status, message, detail)
     }
-    throw new ApiError(response.status, message, detail)
-  }
 
-  if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+    if (response.status === 204){finish();return undefined as T}
+    const result=await response.json() as T
+    finish();return result
+  }catch(error){finish(true);throw error}
 }
 
 export class ApiError extends Error {
@@ -77,43 +94,52 @@ export class ApiError extends Error {
 }
 
 export async function apiDownload(path: string, init?: RequestInit): Promise<void> {
+  const observation=safeBeginObservation(path,init?.method??'GET',`${apiBaseUrl}${path}`);let response:Response|undefined;let finished=false
+  const finish=(error=false)=>{if(finished)return;finished=true;safeFinishObservation(observation,{status:response?.status,error,requestId:safeRequestId(response)})}
   const headers = new Headers(init?.headers)
   if (init?.body) headers.set('Content-Type', 'application/json')
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-  let response = await fetch(`${apiBaseUrl}${path}`, { ...init, credentials: 'include', headers })
-  if (response.status === 401 && accessToken) {
-    const refreshedToken = await refreshAccessToken()
-    if (refreshedToken) {
-      headers.set('Authorization', `Bearer ${refreshedToken}`)
-      response = await fetch(`${apiBaseUrl}${path}`, { ...init, credentials: 'include', headers })
-    } else {
-      setAccessToken(null)
-      authExpiredHandler?.()
+  try{
+    response = await fetch(`${apiBaseUrl}${path}`, { ...init, credentials: 'include', headers })
+    if (response.status === 401 && accessToken) {
+      safeMark401(observation)
+      const refreshedToken = await refreshAccessToken()
+      if (refreshedToken) {
+        headers.set('Authorization', `Bearer ${refreshedToken}`)
+        response = await fetch(`${apiBaseUrl}${path}`, { ...init, credentials: 'include', headers })
+      } else {
+        setAccessToken(null)
+        authExpiredHandler?.()
+      }
     }
-  }
-  if (!response.ok) throw new Error(`Download failed with status ${response.status}`)
-  const disposition = response.headers.get('Content-Disposition') ?? ''
-  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-  const fallback = disposition.match(/filename="([^"]+)"/i)?.[1]
-  const filename = encoded ? decodeURIComponent(encoded) : fallback ?? 'export'
-  const url = URL.createObjectURL(await response.blob())
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.style.display = 'none'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  // Let the browser consume the object URL before releasing it. Immediate
-  // revocation can cancel the download or turn it into a page navigation.
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    if (!response.ok) throw new Error(`Download failed with status ${response.status}`)
+    const disposition = response.headers.get('Content-Disposition') ?? ''
+    const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+    const fallback = disposition.match(/filename="([^"]+)"/i)?.[1]
+    const filename = encoded ? decodeURIComponent(encoded) : fallback ?? 'export'
+    const url = URL.createObjectURL(await response.blob())
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    // Let the browser consume the object URL before releasing it. Immediate
+    // revocation can cancel the download or turn it into a page navigation.
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);finish()
+  }catch(error){finish(true);throw error}
 }
 
 export async function apiBlobUrl(path:string):Promise<string>{
+  const observation=safeBeginObservation(path,'GET',`${apiBaseUrl}${path}`);let response:Response|undefined;let finished=false
+  const finish=(error=false)=>{if(finished)return;finished=true;safeFinishObservation(observation,{status:response?.status,error,requestId:safeRequestId(response)})}
   const headers=new Headers({Accept:'image/*'})
   if(accessToken)headers.set('Authorization',`Bearer ${accessToken}`)
-  let response=await fetch(`${apiBaseUrl}${path}`,{credentials:'include',headers})
-  if(response.status===401&&accessToken){const refreshed=await refreshAccessToken();if(refreshed){headers.set('Authorization',`Bearer ${refreshed}`);response=await fetch(`${apiBaseUrl}${path}`,{credentials:'include',headers})}else{setAccessToken(null);authExpiredHandler?.()}}
-  if(!response.ok)throw new Error('Image download failed')
-  return URL.createObjectURL(await response.blob())
+  try{
+    response=await fetch(`${apiBaseUrl}${path}`,{credentials:'include',headers})
+    if(response.status===401&&accessToken){safeMark401(observation);const refreshed=await refreshAccessToken();if(refreshed){headers.set('Authorization',`Bearer ${refreshed}`);response=await fetch(`${apiBaseUrl}${path}`,{credentials:'include',headers})}else{setAccessToken(null);authExpiredHandler?.()}}
+    if(!response.ok)throw new Error('Image download failed')
+    const url=URL.createObjectURL(await response.blob());finish();return url
+  }catch(error){finish(true);throw error}
 }

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import { apiRequest, setAccessToken, setAuthExpiredHandler } from '../api/client'
+import { markPageMounted } from '../monitoring/performanceMonitor'
 import type { AuthResponse, User } from '../types/api'
 
 
@@ -40,7 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setAccessToken(null)
         setUser(null)
       })
-      .finally(() => setIsLoading(false))
+      .finally(() => {markPageMounted('spa-startup');setIsLoading(false)})
   }, [applyAuth])
 
   const login = useCallback(async (username: string, password: string) => {
