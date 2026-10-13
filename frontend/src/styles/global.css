@@ -14,6 +14,9 @@
 .diagnostics-table td:nth-child(4){max-width:22rem}
 .diagnostics-table td small{display:block;margin-top:.18rem;color:#657269}
 .diagnostics-table code{overflow-wrap:anywhere}
+.diagnostics-attempts{margin-top:.35rem;padding:.35rem .45rem;border:1px solid #dce5de;border-radius:.4rem;background:#fff}
+.diagnostics-attempts>summary{cursor:pointer;font-weight:700}.diagnostics-attempts>div{display:grid;gap:.12rem;padding:.35rem 0}.diagnostics-attempts>div+div{border-top:1px solid #e4e9e5}
+.diagnostics-attempts span{font-size:.78rem;color:#58675e}.diagnostics-attempts small{font-size:.75rem}
 .diagnostics-table tr.is-slow td{background:#fff8e8}
 .diagnostics-table tr.is-error td{background:#fff0f1;color:#822433}
 @media(max-width:800px){.diagnostics-controls{align-items:flex-start;flex-direction:column}.diagnostics-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
