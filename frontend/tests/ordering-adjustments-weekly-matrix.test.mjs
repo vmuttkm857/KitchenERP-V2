@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs'
 import test from 'node:test'
 import {buildAdjustmentMenuMatrix} from '../src/features/order_adjustments/matrix.ts'
 import {editableDecimalString} from '../src/features/order_adjustments/editor.ts'
+import {mealSectionTone} from '../src/features/menus/mealSectionTone.ts'
 
 const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
 const page=read('../src/features/order_adjustments/OrderingAdjustmentsPage.tsx')
@@ -60,4 +61,22 @@ test('editable and read-only states share the same matrix and only editable mode
   assert.match(css,/\.ordering-adjustment-matrix/)
   assert.match(css,/\.ordering-adjustment-matrix \.matrix-column-cell\{position:sticky/)
   assert.match(css,/\.ordering-adjustment-savebar\{position:sticky/)
+})
+
+test('meal sections reuse the dynamic menu tone palette across the full sticky matrix',()=>{
+  assert.deepEqual(Array.from({length:8},(_,index)=>mealSectionTone(index)),[
+    'menu-meal-tone-0','menu-meal-tone-1','menu-meal-tone-2','menu-meal-tone-3',
+    'menu-meal-tone-4','menu-meal-tone-5','menu-meal-tone-0','menu-meal-tone-1',
+  ])
+  assert.match(page,/matrix\.meals\.flatMap\(\(meal,mealIndex\)/)
+  assert.match(page,/mealSectionTone\(mealIndex\)/)
+  assert.match(page,/ordering-meal-row-start/)
+  assert.match(page,/ordering-meal-row-end/)
+  assert.match(page,/data-meal-id=\{meal\.id\}/)
+  assert.doesNotMatch(page,/meal\.name\s*===/)
+  assert.match(css,/\.ordering-adjustment-matrix \.ordering-meal-row>th,\.ordering-adjustment-matrix \.ordering-meal-row>td\{background-color:var\(--meal-section-tint\)\}/)
+  assert.match(css,/\.ordering-adjustment-matrix \.ordering-meal-row-start>th/)
+  assert.match(css,/\.ordering-adjustment-matrix \.ordering-meal-row-end>th/)
+  assert.match(css,/\.ordering-adjustment-matrix \.ordering-meal-row>\.matrix-meal-cell/)
+  assert.match(css,/\.ordering-adjustment-matrix \.ordering-meal-row>\.matrix-column-cell/)
 })
