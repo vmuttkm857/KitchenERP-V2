@@ -1,6 +1,6 @@
 import { apiDownload,apiRequest } from '../../api/client'
 import type {MenuAggregate} from '../menus/types'
-import type { OrderingAdjustmentBatchUpdate,OrderingAdjustmentCreateRequest,OrderingAdjustmentDetail,OrderingAdjustmentList,OrderingAdjustmentReuseApplyRequest,OrderingAdjustmentReusePreview,OrderingAdjustmentReuseRequest,OrderingAdjustmentStatus,OrderingAdjustmentUnitConversion } from './types'
+import type { OrderingAdjustmentBatchUpdate,OrderingAdjustmentCreateRequest,OrderingAdjustmentDetail,OrderingAdjustmentList,OrderingAdjustmentReuseApplyRequest,OrderingAdjustmentReusePreview,OrderingAdjustmentReuseRequest,OrderingAdjustmentStatus,OrderingAdjustmentSyncApplyRequest,OrderingAdjustmentSyncPreview,OrderingAdjustmentUnitConversion } from './types'
 
 export interface OrderingAdjustmentListParams {page:number;pageSize:number;status?:OrderingAdjustmentStatus;startDate?:string;endDate?:string;menuId?:string}
 
@@ -31,6 +31,18 @@ export function convertOrderingAdjustmentUnits(sheetId:string,lockVersion:number
 
 export function confirmOrderingAdjustment(sheetId:string,lockVersion:number){
   return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/confirm`,{method:'POST',body:JSON.stringify({lock_version:lockVersion})})
+}
+
+export function reopenOrderingAdjustment(sheetId:string,lockVersion:number){
+  return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/reopen`,{method:'POST',body:JSON.stringify({lock_version:lockVersion})})
+}
+
+export function previewOrderingAdjustmentSync(sheetId:string,lockVersion:number){
+  return apiRequest<OrderingAdjustmentSyncPreview>(`/order-adjustments/${sheetId}/sync-preview`,{method:'POST',body:JSON.stringify({lock_version:lockVersion})})
+}
+
+export function applyOrderingAdjustmentSync(sheetId:string,payload:OrderingAdjustmentSyncApplyRequest){
+  return apiRequest<OrderingAdjustmentDetail>(`/order-adjustments/${sheetId}/sync`,{method:'POST',body:JSON.stringify(payload)})
 }
 
 export function deleteOrderingAdjustment(sheetId:string,lockVersion:number){

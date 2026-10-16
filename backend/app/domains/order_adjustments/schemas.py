@@ -54,6 +54,51 @@ class OrderingAdjustmentAction(BaseModel):
     lock_version: int = Field(ge=1)
 
 
+class OrderingAdjustmentSyncChange(BaseModel):
+    source_line_key: str | None = None
+    change_types: list[str] = Field(default_factory=list)
+    previous: dict[str, Any] | None = None
+    current: dict[str, Any] | None = None
+    preserves_adjustment: bool
+    requires_confirmation: bool
+
+
+class OrderingAdjustmentSyncPreview(BaseModel):
+    sheet_id: uuid.UUID
+    status: Literal["draft", "confirmed"]
+    lock_version: int
+    saved_source_fingerprint: str
+    preview_source_fingerprint: str
+    changed: bool
+    summary: dict[str, int]
+    added_dishes: list[dict[str, Any]]
+    removed_dishes: list[dict[str, Any]]
+    possible_dish_replacements: list[OrderingAdjustmentSyncChange]
+    added_ingredients: list[OrderingAdjustmentSyncChange]
+    removed_ingredients: list[OrderingAdjustmentSyncChange]
+    line_changes: list[OrderingAdjustmentSyncChange]
+    unit_conflicts: list[OrderingAdjustmentSyncChange]
+
+
+class OrderingAdjustmentSyncApplyRequest(BaseModel):
+    lock_version: int = Field(ge=1)
+    expected_source_fingerprint: str = Field(min_length=64, max_length=64)
+    accepted_removed_source_line_keys: list[str] = Field(default_factory=list)
+    reset_adjustment_line_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @field_validator("accepted_removed_source_line_keys")
+    @classmethod
+    def unique_removed_lines(cls,value):
+        if len(set(value))!=len(value):raise ValueError("removed source line keys must be unique")
+        return value
+
+    @field_validator("reset_adjustment_line_ids")
+    @classmethod
+    def unique_reset_lines(cls,value):
+        if len(set(value))!=len(value):raise ValueError("reset adjustment line ids must be unique")
+        return value
+
+
 class OrderingAdjustmentUnitConversion(BaseModel):
     lock_version: int = Field(ge=1)
     conversion: Literal["g_and_jin_to_kg", "g_to_kg", "jin_to_g"]

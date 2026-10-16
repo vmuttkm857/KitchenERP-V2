@@ -16,6 +16,8 @@ from app.domains.ingredients.models import Ingredient
 from app.domains.dishes.models import Dish
 from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType
 from app.domains.order_adjustments.models import OrderingAdjustmentLine, OrderingAdjustmentSheet
+from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
+from app.domains.purchases.models import PurchaseBatch
 from app.domains.recipes.models import DishIngredient
 from app.domains.requirements.repository import RequirementRepository
 from app.domains.requirements.schemas import RequirementCriteria
@@ -579,6 +581,101 @@ def test_concurrent_patch_and_confirm_same_version_only_one_succeeds(client,db_s
     with ThreadPoolExecutor(max_workers=2) as executor:
         first=executor.submit(patch);second=executor.submit(confirm);statuses=[first.result(),second.result()]
     assert sorted(statuses)==[200,409]
+
+
+def test_reopen_preserves_lines_adjustments_and_baseline_and_is_audited(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_sheet(client,headers,menu).json()
+    target=created["lines"][0]
+    saved=client.patch(
+        f"/api/v1/order-adjustments/{created['id']}/lines",headers=headers,
+        json={"lock_version":created["lock_version"],"lines":[{"id":target["id"],"adjusted_quantity":"2.5","adjusted_unit":"kg"}]},
+    ).json()
+    confirmed=client.post(f"/api/v1/order-adjustments/{created['id']}/confirm",headers=headers,json={"lock_version":saved["lock_version"]}).json()
+    line_state={line["id"]:(line["adjusted_quantity"],line["adjusted_unit"]) for line in confirmed["lines"]}
+    baseline_id=confirmed["baseline_snapshot_id"]
+    baseline_state={item.id:(item.requirement_quantity,item.adjusted_quantity) for item in db_session.scalars(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==baseline_id))}
+
+    response=client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]})
+    assert response.status_code==200,response.text
+    reopened=response.json()
+    assert reopened["id"]==created["id"] and reopened["status"]=="draft"
+    assert reopened["lock_version"]==confirmed["lock_version"]+1
+    assert reopened["confirmed_at"] is None and reopened["confirmed_by"] is None
+    assert reopened["baseline_snapshot_id"]==baseline_id
+    assert {line["id"]:(line["adjusted_quantity"],line["adjusted_unit"]) for line in reopened["lines"]}==line_state
+    db_session.expire_all()
+    assert {item.id:(item.requirement_quantity,item.adjusted_quantity) for item in db_session.scalars(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==baseline_id))}==baseline_state
+    audit=db_session.scalar(select(AuditLog).where(AuditLog.action=="ordering_adjustment_reopen"))
+    assert audit is not None and audit.before_data["status"]=="confirmed" and audit.after_data["status"]=="draft"
+    repeated=client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]})
+    assert repeated.status_code==409 and repeated.json()["detail"]["code"]=="INVALID_ADJUSTMENT_STATUS"
+
+    changed=client.patch(
+        f"/api/v1/order-adjustments/{created['id']}/lines",headers=headers,
+        json={"lock_version":reopened["lock_version"],"lines":[{"id":target["id"],"adjusted_quantity":"3","adjusted_unit":"kg"}]},
+    )
+    assert changed.status_code==200,changed.text
+    reconfirmed=client.post(f"/api/v1/order-adjustments/{created['id']}/confirm",headers=headers,json={"lock_version":changed.json()["lock_version"]})
+    assert reconfirmed.status_code==200 and reconfirmed.json()["status"]=="confirmed"
+
+
+def test_reopen_is_status_version_stale_draft_and_purchase_guarded(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_sheet(client,headers,menu).json()
+    assert client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":created["lock_version"]}).json()["detail"]["code"]=="INVALID_ADJUSTMENT_STATUS"
+    confirmed=client.post(f"/api/v1/order-adjustments/{created['id']}/confirm",headers=headers,json={"lock_version":created["lock_version"]}).json()
+    stale_version=client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]-1})
+    assert stale_version.status_code==409 and stale_version.json()["detail"]["code"]=="LOCK_VERSION_CONFLICT"
+
+    source=db_session.get(MenuDish,confirmed["lines"][0]["source_menu_dish_id"]);source.diner_count+=1;db_session.commit()
+    stale=client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]})
+    assert stale.status_code==200 and stale.json()["status"]=="draft" and stale.json()["stale"] is True
+    db_session.expire_all();assert db_session.get(OrderingAdjustmentSheet,uuid.UUID(created["id"])).status=="draft"
+    source.diner_count-=1;db_session.commit()
+    confirmed=client.post(f"/api/v1/order-adjustments/{created['id']}/confirm",headers=headers,json={"lock_version":stale.json()["lock_version"]}).json()
+
+    purchase=client.post("/api/v1/purchases",headers=headers,json={"snapshot_id":confirmed["baseline_snapshot_id"]})
+    assert purchase.status_code==201,purchase.text
+    locked=client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]})
+    assert locked.status_code==409 and locked.json()["detail"]["code"]=="SNAPSHOT_LOCKED"
+    assert db_session.scalar(select(func.count()).select_from(PurchaseBatch))==1
+
+    cancelled=client.post(
+        "/api/v1/order-adjustments",headers=headers,
+        json={"criteria":{"menu_ids":[menu["id"]],"selected_dates":["2026-09-02"]}},
+    ).json()
+    cancelled=client.post(f"/api/v1/order-adjustments/{cancelled['id']}/cancel",headers=headers,json={"lock_version":cancelled["lock_version"]}).json()
+    rejected=client.post(f"/api/v1/order-adjustments/{cancelled['id']}/reopen",headers=headers,json={"lock_version":cancelled["lock_version"]})
+    assert rejected.status_code==409 and rejected.json()["detail"]["code"]=="INVALID_ADJUSTMENT_STATUS"
+
+
+def test_reopen_rejects_existing_active_draft_and_rolls_back_audit_failure(client,db_session,monkeypatch):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_sheet(client,headers,menu).json()
+    confirmed=client.post(f"/api/v1/order-adjustments/{created['id']}/confirm",headers=headers,json={"lock_version":created["lock_version"]}).json()
+    existing_id=uuid.uuid4()
+    monkeypatch.setattr(OrderingAdjustmentRepository,"sheet_for_source",lambda self,*args,**kwargs:type("Draft",(),{"id":existing_id})())
+    conflict=client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]})
+    assert conflict.status_code==409 and conflict.json()["detail"]=={"code":"ADJUSTMENT_DRAFT_EXISTS","existing_sheet_id":str(existing_id)}
+    db_session.expire_all();assert db_session.get(OrderingAdjustmentSheet,uuid.UUID(created["id"])).status=="confirmed"
+
+    monkeypatch.undo()
+    from app.domains.audit.service import AuditLogService
+    monkeypatch.setattr(AuditLogService,"record",lambda *args,**kwargs: (_ for _ in ()).throw(RuntimeError("audit failed")))
+    failed=client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]})
+    assert failed.status_code==400
+    db_session.expire_all();sheet=db_session.get(OrderingAdjustmentSheet,uuid.UUID(created["id"]))
+    assert sheet.status=="confirmed" and sheet.lock_version==confirmed["lock_version"] and sheet.confirmed_at is not None
+
+
+def test_purchase_and_reopen_serialize_on_adjustment_row(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_sheet(client,headers,menu).json()
+    confirmed=client.post(f"/api/v1/order-adjustments/{created['id']}/confirm",headers=headers,json={"lock_version":created["lock_version"]}).json()
+    def purchase():return client.post("/api/v1/purchases",headers=headers,json={"snapshot_id":confirmed["baseline_snapshot_id"]})
+    def reopen():return client.post(f"/api/v1/order-adjustments/{created['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]})
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first=executor.submit(purchase);second=executor.submit(reopen);responses=[first.result(),second.result()]
+    assert sum(response.status_code<300 for response in responses)==1
+    db_session.expire_all();sheet=db_session.get(OrderingAdjustmentSheet,uuid.UUID(created["id"]));purchase_count=db_session.scalar(select(func.count()).select_from(PurchaseBatch))
+    assert (sheet.status,purchase_count) in {("draft",0),("confirmed",1)}
 
 
 def test_concurrent_duplicate_create_has_one_active_draft(client,db_session):

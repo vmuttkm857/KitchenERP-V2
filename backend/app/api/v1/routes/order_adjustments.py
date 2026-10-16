@@ -12,10 +12,10 @@ from app.domains.order_adjustments.exceptions import (
     OrderingAdjustmentInvariantError, OrderingAdjustmentLineNotFoundError,
     OrderingAdjustmentNotFoundError, OrderingAdjustmentSnapshotLockedError,
     OrderingAdjustmentReuseError,
-    OrderingAdjustmentStaleError, OrderingAdjustmentStateError,
+    OrderingAdjustmentStaleError, OrderingAdjustmentStateError, OrderingAdjustmentSyncError, OrderingAdjustmentSyncRequiredError,
     OrderingAdjustmentVersionConflictError,
 )
-from app.domains.order_adjustments.schemas import OrderingAdjustmentAction, OrderingAdjustmentBatchUpdate, OrderingAdjustmentCreate, OrderingAdjustmentDetail, OrderingAdjustmentList, OrderingAdjustmentReuseApplyRequest, OrderingAdjustmentReusePreview, OrderingAdjustmentReusePreviewRequest, OrderingAdjustmentSummary, OrderingAdjustmentUnitConversion
+from app.domains.order_adjustments.schemas import OrderingAdjustmentAction, OrderingAdjustmentBatchUpdate, OrderingAdjustmentCreate, OrderingAdjustmentDetail, OrderingAdjustmentList, OrderingAdjustmentReuseApplyRequest, OrderingAdjustmentReusePreview, OrderingAdjustmentReusePreviewRequest, OrderingAdjustmentSummary, OrderingAdjustmentSyncApplyRequest, OrderingAdjustmentSyncPreview, OrderingAdjustmentUnitConversion
 from app.domains.order_adjustments.service import OrderingAdjustmentService
 from app.domains.snapshots.exceptions import DuplicateSnapshotError, EmptySnapshotError
 from app.domains.users.models import User
@@ -35,6 +35,8 @@ def mapped(exc):
         code="CONFIRMED_DELETE_FORBIDDEN" if exc.status=="confirmed" else "CANCELLED_DELETE_FORBIDDEN"
         return HTTPException(409,detail={"code":code})
     if isinstance(exc,OrderingAdjustmentStaleError):return HTTPException(409,detail={"code":"ADJUSTMENT_STALE","reasons":exc.reasons})
+    if isinstance(exc,OrderingAdjustmentSyncRequiredError):return HTTPException(409,detail={"code":"ADJUSTMENT_SYNC_REQUIRED","reasons":exc.reasons})
+    if isinstance(exc,OrderingAdjustmentSyncError):return HTTPException(409,detail={"code":exc.code,**exc.details})
     if isinstance(exc,OrderingAdjustmentExistingDraftError):return HTTPException(409,detail={"code":"ADJUSTMENT_DRAFT_EXISTS","existing_sheet_id":str(exc.sheet_id)})
     if isinstance(exc,OrderingAdjustmentAlreadyConfirmedError):return HTTPException(409,detail={"code":"ADJUSTMENT_ALREADY_CONFIRMED","existing_sheet_id":str(exc.sheet_id)})
     if isinstance(exc,OrderingAdjustmentReuseError):return HTTPException(409,detail={"code":exc.code,**exc.details})
@@ -81,6 +83,18 @@ def reuse_preview(sheet_id:uuid.UUID,data:OrderingAdjustmentReusePreviewRequest,
     except Exception as exc:raise mapped(exc) from exc
 
 
+@router.post("/{sheet_id}/sync-preview",response_model=OrderingAdjustmentSyncPreview)
+def sync_preview(sheet_id:uuid.UUID,data:OrderingAdjustmentAction,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return OrderingAdjustmentSyncPreview.model_validate(OrderingAdjustmentService(session).sync_preview(sheet_id,data.lock_version))
+    except Exception as exc:raise mapped(exc) from exc
+
+
+@router.post("/{sheet_id}/sync",response_model=OrderingAdjustmentDetail)
+def sync(sheet_id:uuid.UUID,data:OrderingAdjustmentSyncApplyRequest,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return OrderingAdjustmentDetail.model_validate(OrderingAdjustmentService(session).sync(sheet_id,data,user.id))
+    except Exception as exc:raise mapped(exc) from exc
+
+
 @router.post("/{sheet_id}/reuse",response_model=OrderingAdjustmentDetail)
 def reuse(sheet_id:uuid.UUID,data:OrderingAdjustmentReuseApplyRequest,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
     try:return OrderingAdjustmentDetail.model_validate(OrderingAdjustmentService(session).reuse(sheet_id,data,user.id))
@@ -90,6 +104,12 @@ def reuse(sheet_id:uuid.UUID,data:OrderingAdjustmentReuseApplyRequest,user:Annot
 @router.post("/{sheet_id}/confirm",response_model=OrderingAdjustmentDetail)
 def confirm(sheet_id:uuid.UUID,data:OrderingAdjustmentAction,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
     try:return OrderingAdjustmentDetail.model_validate(OrderingAdjustmentService(session).confirm(sheet_id,data.lock_version,user.id))
+    except Exception as exc:raise mapped(exc) from exc
+
+
+@router.post("/{sheet_id}/reopen",response_model=OrderingAdjustmentDetail)
+def reopen(sheet_id:uuid.UUID,data:OrderingAdjustmentAction,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return OrderingAdjustmentDetail.model_validate(OrderingAdjustmentService(session).reopen(sheet_id,data.lock_version,user.id))
     except Exception as exc:raise mapped(exc) from exc
 
 

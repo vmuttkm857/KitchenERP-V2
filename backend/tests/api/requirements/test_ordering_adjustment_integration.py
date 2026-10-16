@@ -104,6 +104,29 @@ def test_adjusted_requirements_flow_into_excel_and_standard_snapshot(client,db_s
     assert Decimal(item["requirement_quantity"])==expected
 
 
+def test_reopened_adjustment_uses_latest_saved_values_and_preserves_standard_snapshot(client,db_session):
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);sheet=create_sheet(client,headers,menu).json()
+    line=next(value for value in sheet["lines"] if value["ingredient_code_snapshot"]=="REQ-I1")
+    saved=client.patch(f"/api/v1/order-adjustments/{sheet['id']}/lines",headers=headers,json={"lock_version":sheet["lock_version"],"lines":[{"id":line["id"],"adjusted_quantity":"2"}]}).json()
+    confirmed=client.post(f"/api/v1/order-adjustments/{sheet['id']}/confirm",headers=headers,json={"lock_version":saved["lock_version"]}).json()
+    criteria=_criteria(menu,sheet["id"],selected_dates=["2026-09-01"])
+    snapshot_a=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":criteria}).json()
+    snapshot_a_values={item["id"]:item["requirement_quantity"] for item in snapshot_a["items"]}
+
+    reopened=client.post(f"/api/v1/order-adjustments/{sheet['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]}).json()
+    saved_again=client.patch(f"/api/v1/order-adjustments/{sheet['id']}/lines",headers=headers,json={"lock_version":reopened["lock_version"],"lines":[{"id":line["id"],"adjusted_quantity":"4"}]}).json()
+    latest=client.post("/api/v1/requirements/calculate",headers=headers,json=criteria)
+    assert latest.status_code==200,latest.text
+    expected=sum((Decimal(value["adjusted_quantity"] if value["adjusted_quantity"] is not None else value["system_quantity"]) for value in saved_again["lines"] if value["ingredient_code_snapshot"]=="REQ-I1"),Decimal("0"))
+    assert Decimal(_row(latest.json(),"REQ-I1")["requirement_quantity"])==expected
+
+    snapshot_b=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":criteria})
+    assert snapshot_b.status_code==201,snapshot_b.text
+    assert snapshot_b.json()["id"]!=snapshot_a["id"]
+    current_a=client.get(f"/api/v1/requirement-snapshots/{snapshot_a['id']}",headers=headers).json()
+    assert {item["id"]:item["requirement_quantity"] for item in current_a["items"]}==snapshot_a_values
+
+
 def test_adjustment_creation_ignores_nested_adjustment_context_for_theoretical_baseline(client,db_session):
     headers=auth(client,db_session);menu,*_=fixture(client,headers);first=create_sheet(client,headers,menu).json()
     client.post(f"/api/v1/order-adjustments/{first['id']}/cancel",headers=headers,json={"lock_version":1})

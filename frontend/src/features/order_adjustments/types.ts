@@ -110,3 +110,60 @@ export interface OrderingAdjustmentReusePreview {
 }
 export interface OrderingAdjustmentReuseRequest {previous_sheet_id:string;current_lock_version:number;previous_lock_version:number;menu_pairs:OrderingAdjustmentMenuPair[]}
 export interface OrderingAdjustmentReuseApplyRequest extends OrderingAdjustmentReuseRequest {selected_current_line_ids:string[]}
+
+export interface OrderingAdjustmentSyncSnapshot {
+  line_id?:string
+  source_line_key?:string
+  source_menu_id?:string
+  menu_name?:string
+  requirement_date?:string
+  source_meal_type_id?:string
+  meal_name?:string
+  source_menu_dish_id?:string
+  source_dish_id?:string
+  dish_name?:string
+  diner_count?:number
+  source_dish_ingredient_id?:string
+  source_ingredient_id?:string
+  ingredient_name?:string
+  system_quantity?:string
+  system_unit?:string
+  adjusted_quantity?:string|null
+  adjusted_unit?:string|null
+  effective_quantity?:string
+  effective_unit?:string
+  [key:string]:unknown
+}
+
+export interface OrderingAdjustmentSyncChange {
+  source_line_key:string|null
+  change_types:string[]
+  previous:OrderingAdjustmentSyncSnapshot|null
+  current:OrderingAdjustmentSyncSnapshot|null
+  preserves_adjustment:boolean
+  requires_confirmation:boolean
+}
+
+export interface OrderingAdjustmentSyncPreview {
+  sheet_id:string
+  status:'draft'|'confirmed'
+  lock_version:number
+  saved_source_fingerprint:string
+  preview_source_fingerprint:string
+  changed:boolean
+  summary:Record<string,number>
+  added_dishes:OrderingAdjustmentSyncSnapshot[]
+  removed_dishes:OrderingAdjustmentSyncSnapshot[]
+  possible_dish_replacements:OrderingAdjustmentSyncChange[]
+  added_ingredients:OrderingAdjustmentSyncChange[]
+  removed_ingredients:OrderingAdjustmentSyncChange[]
+  line_changes:OrderingAdjustmentSyncChange[]
+  unit_conflicts:OrderingAdjustmentSyncChange[]
+}
+
+export interface OrderingAdjustmentSyncApplyRequest {
+  lock_version:number
+  expected_source_fingerprint:string
+  accepted_removed_source_line_keys:string[]
+  reset_adjustment_line_ids:string[]
+}

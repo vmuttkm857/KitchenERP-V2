@@ -13,12 +13,16 @@ from app.domains.audit.service import AuditLogService, audit_snapshot
 class PurchaseService:
     def __init__(self,session):self.session=session;self.repository=PurchaseRepository(session);self.audit=AuditLogService(session)
     def create(self,snapshot_id,actor_id,notes=None):
+        # Adjustment-backed purchase creation and reopen both lock this row
+        # first. The loser must re-check the now-authoritative state.
+        adjustment=self.repository.adjustment_for_snapshot(snapshot_id,True)
         existing=self.repository.batch_for_snapshot(snapshot_id)
         if existing:raise DuplicatePurchaseError(existing.id)
         snapshot_row=self.repository.snapshot(snapshot_id)
         if not snapshot_row:raise PurchaseNotFoundError()
         snapshot,adjustment_status=snapshot_row
-        if adjustment_status is not None and adjustment_status!="confirmed":raise SnapshotNotReadyError([{"code":"ORDERING_ADJUSTMENT_NOT_CONFIRMED","message":"Ordering adjustment sheet must be confirmed before purchase"}])
+        if adjustment is not None and adjustment.status!="confirmed":raise SnapshotNotReadyError([{"code":"ORDERING_ADJUSTMENT_NOT_CONFIRMED","message":"Ordering adjustment sheet must be confirmed before purchase"}])
+        if adjustment is None and adjustment_status is not None and adjustment_status!="confirmed":raise SnapshotNotReadyError([{"code":"ORDERING_ADJUSTMENT_NOT_CONFIRMED","message":"Ordering adjustment sheet must be confirmed before purchase"}])
         items=self.repository.snapshot_items(snapshot_id);issues=SnapshotService(self.session).readiness(items)
         if issues:raise SnapshotNotReadyError(issues)
         batch_id=uuid.uuid4();number=f"PO-{datetime.now(UTC):%Y%m%d}-{batch_id.hex[:8].upper()}"

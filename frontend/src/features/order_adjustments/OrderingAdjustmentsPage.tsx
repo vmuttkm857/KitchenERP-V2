@@ -1,4 +1,5 @@
 import { FormEvent,useCallback,useEffect,useRef,useState } from 'react'
+import type {Dispatch,ReactNode,SetStateAction} from 'react'
 import { ApiError } from '../../api/client'
 import { useEditorDirty } from '../../app/NavigationBlocker'
 import { EmptyState,Feedback,LoadingState,PageHeader,TableFrame } from '../../components/ui/Page'
@@ -9,11 +10,11 @@ import {mealSectionTone} from '../menus/mealSectionTone'
 import type { Menu } from '../menus/types'
 import { useMenuCandidates } from '../menus/useMenuCandidates'
 import type {MenuAggregate} from '../menus/types'
-import { applyOrderingAdjustmentReuse,confirmOrderingAdjustment,convertOrderingAdjustmentUnits,createOrderingAdjustment,deleteOrderingAdjustment,downloadOrderingAdjustmentWeekly,getOrderingAdjustment,getOrderingAdjustmentMenuLayout,listOrderingAdjustments,previewOrderingAdjustmentReuse,updateOrderingAdjustmentLines } from './api'
+import { applyOrderingAdjustmentReuse,applyOrderingAdjustmentSync,confirmOrderingAdjustment,convertOrderingAdjustmentUnits,createOrderingAdjustment,deleteOrderingAdjustment,downloadOrderingAdjustmentWeekly,getOrderingAdjustment,getOrderingAdjustmentMenuLayout,listOrderingAdjustments,previewOrderingAdjustmentReuse,previewOrderingAdjustmentSync,reopenOrderingAdjustment,updateOrderingAdjustmentLines } from './api'
 import { buildAdjustmentUpdates,decimalStringsEqual,dirtyAdjustmentLineIds,editableDecimalString,initialAdjustmentUnits,initialAdjustmentValues,validateAdjustmentQuantity } from './editor'
 import { buildAdjustmentMenuMatrix } from './matrix'
 import type {AdjustmentMenuMatrix} from './matrix'
-import type { ExistingAdjustmentDetail,OrderingAdjustmentDetail,OrderingAdjustmentMenuPair,OrderingAdjustmentReusePreview,OrderingAdjustmentStatus,OrderingAdjustmentSummary,OrderingAdjustmentUnitConversion } from './types'
+import type { ExistingAdjustmentDetail,OrderingAdjustmentDetail,OrderingAdjustmentMenuPair,OrderingAdjustmentReusePreview,OrderingAdjustmentStatus,OrderingAdjustmentSummary,OrderingAdjustmentSyncChange,OrderingAdjustmentSyncPreview,OrderingAdjustmentSyncSnapshot,OrderingAdjustmentUnitConversion } from './types'
 import { adjustmentDateRange,adjustmentStatusLabels,formatAdjustmentQuantity,staleReasonLabel } from './view'
 
 const pageSize=25
@@ -106,6 +107,10 @@ function CompleteAdjustmentDialog({busy,onCancel,onConfirm}:{busy:boolean;onCanc
   return <div className="modal-backdrop"><section className="modal-panel" role="alertdialog" aria-modal="true"><header><div><h2>完成叫貨調整？</h2><p>確認後，這張叫貨調整單將標記為「已確認」，並鎖定目前的叫貨調整數量。</p><p>已確認的調整單可以作為之後沿用叫貨量的歷史來源。</p><p><strong>已確認不代表已建立正式採購單。</strong></p></div></header><footer><button className="secondary" disabled={busy} onClick={onCancel}>取消</button><button disabled={busy} onClick={onConfirm}>{busy?'確認中…':'確認完成'}</button></footer></section></div>
 }
 
+function ReopenAdjustmentDialog({busy,onCancel,onConfirm}:{busy:boolean;onCancel:()=>void;onConfirm:()=>void}){
+  return <div className="modal-backdrop"><section className="modal-panel" role="alertdialog" aria-modal="true"><header><div><h2>解除叫貨調整鎖定？</h2><p>解除後可繼續編輯並再次完成確認。原有人工叫貨數量與單位會完整保留。</p></div></header><footer><button className="secondary" disabled={busy} onClick={onCancel}>取消</button><button disabled={busy} onClick={onConfirm}>{busy?'解除鎖定中…':'確認解除鎖定'}</button></footer></section></div>
+}
+
 function ReuseAgainDialog({onCancel,onConfirm}:{onCancel:()=>void;onConfirm:()=>void}){
   return <div className="modal-backdrop"><section className="modal-panel" role="alertdialog" aria-modal="true"><header><div><h2>重新比對上一張叫貨量？</h2><p>此叫貨調整單已沿用過上一張叫貨量。重新比對會依目前菜單重新分析可沿用項目，但不會覆蓋已人工調整或已確認的叫貨量。</p></div></header><footer><button autoFocus className="secondary" onClick={onCancel}>取消</button><button className="secondary" onClick={onConfirm}>繼續重新比對</button></footer></section></div>
 }
@@ -113,9 +118,11 @@ function ReuseAgainDialog({onCancel,onConfirm}:{onCancel:()=>void;onConfirm:()=>
 function OrderingAdjustmentDetailView({detail,onDetailChange,onBack,onReview}:{detail:OrderingAdjustmentDetail;onDetailChange:(value:OrderingAdjustmentDetail)=>void;onBack:()=>void;onReview?:(detail:OrderingAdjustmentDetail)=>void}){
   const [values,setValues]=useState<Record<string,string>>(()=>initialAdjustmentValues(detail.lines))
   const [units,setUnits]=useState<Record<string,string>>(()=>initialAdjustmentUnits(detail.lines))
-  const [saving,setSaving]=useState(false),[reloading,setReloading]=useState(false),[confirming,setConfirming]=useState(false),[converting,setConverting]=useState(false),[unitConversion,setUnitConversion]=useState<OrderingAdjustmentUnitConversion|null>(null),[completeOpen,setCompleteOpen]=useState(false),[message,setMessage]=useState(''),[saveError,setSaveError]=useState('')
+  const [saving,setSaving]=useState(false),[reloading,setReloading]=useState(false),[confirming,setConfirming]=useState(false),[reopening,setReopening]=useState(false),[converting,setConverting]=useState(false),[unitConversion,setUnitConversion]=useState<OrderingAdjustmentUnitConversion|null>(null),[completeOpen,setCompleteOpen]=useState(false),[reopenOpen,setReopenOpen]=useState(false),[message,setMessage]=useState(''),[saveError,setSaveError]=useState('')
   const [saveBlock,setSaveBlock]=useState<SaveBlock>(null),[confirmation,setConfirmation]=useState<AdjustmentConfirmation>(null),[reuseOpen,setReuseOpen]=useState(false),[reuseAgainOpen,setReuseAgainOpen]=useState(false)
   const [exportOpen,setExportOpen]=useState(false),[exportingMenuId,setExportingMenuId]=useState<string|null>(null)
+  const [syncDirtyOpen,setSyncDirtyOpen]=useState(false),[syncPreviewing,setSyncPreviewing]=useState(false),[syncApplying,setSyncApplying]=useState(false),[syncPreview,setSyncPreview]=useState<OrderingAdjustmentSyncPreview|null>(null)
+  const syncPreviewingRef=useRef(false),syncApplyingRef=useRef(false)
   const [activeMenuId,setActiveMenuId]=useState(detail.source_menus[0]?.menu_id??''),[layouts,setLayouts]=useState<Record<string,MenuAggregate>>({}),[layoutLoading,setLayoutLoading]=useState(Boolean(detail.source_menus.length)),[layoutError,setLayoutError]=useState('')
   const readOnly=detail.status!=='draft'||detail.stale,saveLocked=saveBlock!==null
   const reviewLineIds=new Set(detail.lines.filter(line=>line.review_required).map(line=>line.id))
@@ -153,6 +160,48 @@ function OrderingAdjustmentDetailView({detail,onDetailChange,onBack,onReview}:{d
   function requestUnitConversion(conversion:OrderingAdjustmentUnitConversion){if(dirtyIds.length){setSaveError('請先儲存或還原目前修改，再進行批次單位換算。');return}setUnitConversion(conversion)}
   async function applyUnitConversion(){if(!unitConversion||converting)return;setConverting(true);setSaveError('');try{const updated=await convertOrderingAdjustmentUnits(detail.id,detail.lock_version,unitConversion);clearEditorDirty();setUnitConversion(null);onDetailChange(updated);setMessage('批次單位換算已完成')}catch(cause){setUnitConversion(null);setSaveError(orderingActionError(cause,'批次單位換算失敗，資料未變更。'))}finally{setConverting(false)}}
   async function complete(){if(confirming||dirtyIds.length)return;setConfirming(true);setSaveError('');try{const updated=await confirmOrderingAdjustment(detail.id,detail.lock_version);clearEditorDirty();setCompleteOpen(false);onDetailChange(updated);setMessage('叫貨調整已完成確認')}catch(cause){setSaveError(orderingActionError(cause,'完成叫貨調整失敗，請稍後再試。'));setCompleteOpen(false)}finally{setConfirming(false)}}
+  async function reopen(){if(reopening||detail.status!=='confirmed')return;setReopening(true);setSaveError('');setMessage('');try{const updated=await reopenOrderingAdjustment(detail.id,detail.lock_version);clearEditorDirty();setReopenOpen(false);onDetailChange(updated);setMessage('已解除鎖定，可繼續修改叫貨量')}catch(cause){setSaveError(orderingActionError(cause,'解除鎖定失敗，資料未變更。'));setReopenOpen(false)}finally{setReopening(false)}}
+  async function loadSyncPreview(current:OrderingAdjustmentDetail){
+    if(syncPreviewingRef.current||current.status!=='draft')return
+    syncPreviewingRef.current=true
+    setSyncPreviewing(true);setSaveError('');setMessage('')
+    try{setSyncPreview(await previewOrderingAdjustmentSync(current.id,current.lock_version))}
+    catch(cause){setSaveError(orderingActionError(cause,'同步差異載入失敗，工作表資料未變更。'))}
+    finally{syncPreviewingRef.current=false;setSyncPreviewing(false)}
+  }
+  function requestSync(){
+    if(detail.status!=='draft'||syncPreviewing)return
+    if(dirtyIds.length){setSyncDirtyOpen(true);return}
+    void loadSyncPreview(detail)
+  }
+  async function discardAndPreviewSync(){
+    if(reloading||syncPreviewing)return
+    setReloading(true);setSaveError('')
+    try{const updated=await getOrderingAdjustment(detail.id);clearEditorDirty();onDetailChange(updated);setSyncDirtyOpen(false);await loadSyncPreview(updated)}
+    catch{setSaveError('重新載入失敗，尚未儲存的修改仍保留在畫面上。')}
+    finally{setReloading(false)}
+  }
+  async function saveAndPreviewSync(){
+    if(detail.stale||saving||syncPreviewing||hasInvalid||!dirtyIds.length)return
+    setSaving(true);setSaveError('')
+    try{const updated=await updateOrderingAdjustmentLines(detail.id,{lock_version:detail.lock_version,lines:buildAdjustmentUpdates(detail.lines,values,units)});clearEditorDirty();onDetailChange(updated);setSyncDirtyOpen(false);await loadSyncPreview(updated)}
+    catch(cause){setSaveError(orderingActionError(cause,'儲存失敗，修改仍保留在畫面上。'))}
+    finally{setSaving(false)}
+  }
+  async function applySync(acceptedRemoved:string[],resetLineIds:string[]){
+    if(!syncPreview||syncApplyingRef.current)return
+    syncApplyingRef.current=true
+    setSyncApplying(true);setSaveError('');setMessage('')
+    try{
+      const updated=await applyOrderingAdjustmentSync(detail.id,{lock_version:syncPreview.lock_version,expected_source_fingerprint:syncPreview.preview_source_fingerprint,accepted_removed_source_line_keys:acceptedRemoved,reset_adjustment_line_ids:resetLineIds})
+      const added=syncPreview.summary.added_ingredients??0,removed=syncPreview.summary.removed_ingredients??0
+      clearEditorDirty();setSyncPreview(null);onDetailChange(updated);setMessage(`同步完成：新增 ${added} 項、移除 ${removed} 項食材明細`)
+    }catch(cause){
+      const code=apiErrorCode(cause)
+      setSaveError(orderingActionError(cause,'同步套用失敗，原有人工叫貨量仍完整保留。'))
+      if(code==='SYNC_SOURCE_CHANGED'||code==='LOCK_VERSION_CONFLICT')setSyncPreview(null)
+    }finally{syncApplyingRef.current=false;setSyncApplying(false)}
+  }
   function requestExport(){
     if(dirtyIds.length){setSaveError('目前有尚未儲存的修改，請先儲存後再下載 Excel。');return}
     if(detail.source_menus.length===1)void downloadExport(detail.source_menus[0].menu_id)
@@ -171,15 +220,16 @@ function OrderingAdjustmentDetailView({detail,onDetailChange,onBack,onReview}:{d
     <WorkflowGuide active="adjustment"/>
     <div className="ordering-adjustment-summary"><div><strong>{activeMatrix?.menuName??detail.source_menus.map(menu=>menu.menu_name).join('、')}</strong><span>{activeMatrix?.dates.length?`${formatShortDate(activeMatrix.dates[0])} ～ ${formatShortDate(activeMatrix.dates.at(-1)!)}`:adjustmentDateRange(detail.criteria,detail)}</span><span><AdjustmentStatus status={detail.status}/> · Rev.{detail.revision}</span></div><small>建立：{new Date(detail.created_at).toLocaleString('zh-TW')}　最後更新：{new Date(detail.updated_at).toLocaleString('zh-TW')}</small></div>
     <div className="ordering-adjustment-actionbar" aria-label="叫貨調整操作">
+      {detail.status==='draft'&&<div className={`ordering-action-group ordering-sync-action${detail.stale?' is-required':''}`}><small>{detail.stale?'來源已變更':'菜單與食譜'}</small><div><button className={detail.stale?'':'secondary'} disabled={syncPreviewing||syncApplying} onClick={requestSync}>{syncPreviewing?'檢查差異中…':'同步最新菜單與食譜'}</button></div></div>}
       {detail.status==='draft'&&!detail.stale&&<div className="ordering-action-group"><small>歷史叫貨量</small><div>{detail.reuse_applied_at&&<span className="ordering-reuse-status">✓ 已沿用上一張叫貨量</span>}<button className="secondary" onClick={requestReuse}>{detail.reuse_applied_at?'重新比對':'沿用上一張叫貨量'}</button></div></div>}
       {detail.status==='draft'&&!detail.stale&&<div className="ordering-action-group"><small>批次單位換算</small><div>{(Object.keys(unitConversionLabels) as OrderingAdjustmentUnitConversion[]).map(conversion=><button className="secondary" disabled={converting||conversionCount(conversion)===0} key={conversion} onClick={()=>requestUnitConversion(conversion)}>{unitConversionLabels[conversion]}</button>)}</div></div>}
-      <div className="ordering-action-group"><small>匯出與下一步</small><div><button className="secondary" disabled={detail.status==='cancelled'||detail.stale||Boolean(exportingMenuId)} onClick={requestExport}>{exportingMenuId?'下載中…':'下載 Excel'}</button>{detail.status==='draft'&&!detail.stale&&<button onClick={requestComplete}>完成叫貨調整</button>}<button className={detail.status==='confirmed'?'':'secondary'} disabled={detail.status==='cancelled'||detail.stale} onClick={()=>onReview?.(detail)}>前往食材需求</button></div></div>
+      <div className="ordering-action-group"><small>匯出與下一步</small><div><button className="secondary" disabled={detail.status==='cancelled'||detail.stale||Boolean(exportingMenuId)} onClick={requestExport}>{exportingMenuId?'下載中…':'下載 Excel'}</button>{detail.status==='draft'&&!detail.stale&&<button onClick={requestComplete}>完成叫貨調整</button>}{detail.status==='confirmed'&&<button className="secondary" disabled={reopening} onClick={()=>setReopenOpen(true)}>{reopening?'解除鎖定中…':'解除鎖定'}</button>}<button className={detail.status==='confirmed'?'':'secondary'} disabled={detail.status==='cancelled'||detail.stale} onClick={()=>onReview?.(detail)}>前往食材需求</button></div></div>
     </div>
-    {detail.stale&&<Feedback type="error"><strong>來源資料已變更，此調整單需要重新建立。</strong>{staleReasons.length>0&&<ul>{staleReasons.map(reason=><li key={reason}>{reason}</li>)}</ul>}</Feedback>}
+    {detail.stale&&<Feedback type="error"><strong>來源資料已變更，請同步最新菜單與食譜後再繼續編輯。</strong>{staleReasons.length>0&&<ul>{staleReasons.map(reason=><li key={reason}>{reason}</li>)}</ul>}</Feedback>}
     {saveError&&<Feedback type="error">{saveError}{saveBlock&&<button type="button" className="secondary ordering-reload-action" disabled={reloading} onClick={requestReload}>{reloading?'重新載入中…':'重新載入'}</button>}</Feedback>}
     {message&&<Feedback type="success">{message}</Feedback>}
     {reviewLineIds.size>0&&<div className="ordering-review-banner" role="status"><strong>{reviewLineIds.size} 項叫貨量需要確認</strong><span>請檢查紅色標示的菜色與食材，完成調整並儲存。</span></div>}
-    {!detail.stale&&detail.status==='confirmed'&&<Feedback type="info">此叫貨調整已完成確認，數量已鎖定。</Feedback>}
+    {!detail.stale&&detail.status==='confirmed'&&<Feedback type="info">此叫貨調整已完成確認，數量已鎖定。如需同步最新菜單與食譜，請先解除鎖定。</Feedback>}
     {!detail.stale&&detail.status==='cancelled'&&<Feedback type="info">此調整單已取消，目前僅供查看。</Feedback>}
     {detail.source_menus.length>1&&<div className="ordering-adjustment-tabs" role="tablist" aria-label="菜單"><>{matrices.map(matrix=><button role="tab" aria-selected={matrix.menuId===activeMenuId} className={matrix.menuId===activeMenuId?'active':''} key={matrix.menuId} onClick={()=>setActiveMenuId(matrix.menuId)}>{matrix.menuName}{menuDirtyCounts[matrix.menuId]?` · ${menuDirtyCounts[matrix.menuId]}`:''}</button>)}</></div>}
     {layoutError&&<Feedback type="info">{layoutError}</Feedback>}
@@ -187,12 +237,50 @@ function OrderingAdjustmentDetailView({detail,onDetailChange,onBack,onReview}:{d
     {!readOnly&&<div className="ordering-adjustment-savebar"><strong>{dirtyIds.length?`尚有 ${dirtyIds.length} 筆修改未儲存`:'目前沒有未儲存的修改'}</strong><button disabled={saving||saveLocked||!dirtyIds.length||hasInvalid} onClick={()=>void save()}>{saving?'儲存中…':'儲存草稿'}</button></div>}
     {confirmation&&<AdjustmentConfirmDialog kind={confirmation} onCancel={()=>setConfirmation(null)} onConfirm={()=>{const action=confirmation;setConfirmation(null);if(action==='back'){clearEditorDirty();onBack()}else void reload()}}/>}
     {completeOpen&&<CompleteAdjustmentDialog busy={confirming} onCancel={()=>setCompleteOpen(false)} onConfirm={()=>void complete()}/>}
+    {reopenOpen&&<ReopenAdjustmentDialog busy={reopening} onCancel={()=>setReopenOpen(false)} onConfirm={()=>void reopen()}/>}
+    {syncDirtyOpen&&<SyncDirtyDialog stale={detail.stale} invalid={hasInvalid} busy={saving||reloading||syncPreviewing} onCancel={()=>setSyncDirtyOpen(false)} onDiscard={()=>void discardAndPreviewSync()} onSave={()=>void saveAndPreviewSync()}/>}
+    {syncPreview&&<SyncAdjustmentDialog preview={syncPreview} busy={syncApplying} onCancel={()=>setSyncPreview(null)} onApply={(removed,resets)=>void applySync(removed,resets)}/>}
     {reuseAgainOpen&&<ReuseAgainDialog onCancel={()=>setReuseAgainOpen(false)} onConfirm={()=>{setReuseAgainOpen(false);setReuseOpen(true)}}/>}
     {reuseOpen&&<ReuseAdjustmentDialog current={detail} onClose={()=>setReuseOpen(false)} onApplied={updated=>{clearEditorDirty();setReuseOpen(false);onDetailChange(updated);setMessage('已沿用上一張叫貨量')}}/>}
     {unitConversion&&<UnitConversionDialog conversion={unitConversion} gCount={detail.lines.filter(line=>line.effective_unit==='g').length} jinCount={detail.lines.filter(line=>line.effective_unit==='斤').length} busy={converting} onCancel={()=>setUnitConversion(null)} onConfirm={()=>void applyUnitConversion()}/>}
     {exportOpen&&<AdjustmentExportDialog menus={detail.source_menus} busy={Boolean(exportingMenuId)} onCancel={()=>setExportOpen(false)} onDownload={menuId=>void downloadExport(menuId)}/>}
   </section>
 }
+
+function SyncDirtyDialog({stale,invalid,busy,onCancel,onDiscard,onSave}:{stale:boolean;invalid:boolean;busy:boolean;onCancel:()=>void;onDiscard:()=>void;onSave:()=>void}){
+  return <div className="modal-backdrop"><section className="modal-panel" role="alertdialog" aria-modal="true" aria-labelledby="sync-dirty-title"><header><div><h2 id="sync-dirty-title">先處理尚未儲存的修改</h2><p>{stale?'來源已變更，舊來源上的未儲存輸入不能安全儲存。請捨棄畫面修改並重新載入，再檢查同步差異。':'可先儲存目前修改再檢查同步差異，或捨棄尚未儲存的輸入並重新載入。'}</p></div></header>{invalid&&!stale&&<Feedback type="error">目前有格式不正確的數量，請返回修正，或捨棄修改後繼續。</Feedback>}<footer><button className="secondary" disabled={busy} onClick={onCancel}>返回工作表</button><button className="secondary-danger" disabled={busy} onClick={onDiscard}>{busy?'處理中…':'捨棄修改並預覽'}</button>{!stale&&<button disabled={busy||invalid} onClick={onSave}>{busy?'處理中…':'儲存後預覽'}</button>}</footer></section></div>
+}
+
+function SyncAdjustmentDialog({preview,busy,onCancel,onApply}:{preview:OrderingAdjustmentSyncPreview;busy:boolean;onCancel:()=>void;onApply:(removed:string[],resets:string[])=>void}){
+  const requiredRemoved=preview.removed_ingredients.map(change=>change.source_line_key??change.previous?.source_line_key).filter((value):value is string=>Boolean(value))
+  const requiredResets=preview.unit_conflicts.map(change=>change.previous?.line_id).filter((value):value is string=>Boolean(value))
+  const [acceptedRemoved,setAcceptedRemoved]=useState<Set<string>>(new Set())
+  const [resetLines,setResetLines]=useState<Set<string>>(new Set())
+  const removalsReady=requiredRemoved.every(key=>acceptedRemoved.has(key)),unitsReady=requiredResets.every(id=>resetLines.has(id))
+  const applyReady=preview.changed&&removalsReady&&unitsReady&&!busy
+  return <div className="modal-backdrop"><section className="modal-panel wide ordering-sync-dialog" role="dialog" aria-modal="true" aria-labelledby="sync-preview-title"><header><div><h2 id="sync-preview-title">同步最新菜單與食譜</h2><p>請確認來源差異。未變動明細的人工叫貨量會保留；舊菜的人工量不會轉移到新菜。</p></div></header>
+    <div className="ordering-sync-summary" aria-label="同步差異摘要"><span><b>{preview.summary.added_dishes??0}</b> 新增菜色</span><span><b>{preview.summary.removed_dishes??0}</b> 移除菜色</span><span><b>{preview.summary.added_ingredients??0}</b> 新增食材</span><span><b>{preview.summary.removed_ingredients??0}</b> 移除食材</span><span><b>{preview.summary.changed_lines??0}</b> 來源內容變更</span><span><b>{preview.summary.unit_conflicts??0}</b> 單位需處理</span></div>
+    {!preview.changed&&<Feedback type="success">目前工作表已與最新菜單及食譜一致，沒有需要套用的變更。</Feedback>}
+    <div className="ordering-sync-sections">
+      {preview.possible_dish_replacements.length>0&&<SyncSection title="可能的菜色替換" tone="notice"><p>這是來源配置變更提示，不代表舊菜色的人工數量會轉移至新菜色。</p>{preview.possible_dish_replacements.map((change,index)=><div className="ordering-sync-change" key={`replacement-${index}`}><strong>{syncDishName(change.previous)} → {syncDishName(change.current)}</strong><small>{syncPosition(change.previous)} → {syncPosition(change.current)}</small></div>)}</SyncSection>}
+      {preview.added_dishes.length>0&&<SyncSection title="新增菜色"><div className="ordering-sync-grid">{preview.added_dishes.map(dish=><div className="ordering-sync-change" key={`added-dish-${String(dish.source_menu_dish_id)}-${String(dish.source_dish_id)}`}><strong>{syncDishName(dish)}</strong><small>{syncPosition(dish)} · {dish.diner_count??0} 人</small></div>)}</div></SyncSection>}
+      {preview.removed_dishes.length>0&&<SyncSection title="移除菜色" tone="warning"><div className="ordering-sync-grid">{preview.removed_dishes.map(dish=><div className="ordering-sync-change" key={`removed-dish-${String(dish.source_menu_dish_id)}-${String(dish.source_dish_id)}`}><strong>{syncDishName(dish)}</strong><small>{syncPosition(dish)}</small></div>)}</div></SyncSection>}
+      {preview.added_ingredients.length>0&&<SyncSection title="新增食材"><div className="ordering-sync-grid">{preview.added_ingredients.map((change,index)=><div className="ordering-sync-change" key={change.source_line_key??`added-${index}`}><strong>{syncLineTitle(change.current)}</strong><small>最新參考量：{syncQuantity(change.current,'system')}；人工量尚未設定</small></div>)}</div></SyncSection>}
+      {preview.removed_ingredients.length>0&&<SyncSection title="移除食材（逐筆確認）" tone="warning"><p>確認後，這些來源明細不再進入食材需求；原人工量不會轉移至其他菜色。</p>{preview.removed_ingredients.map((change,index)=>{const key=change.source_line_key??change.previous?.source_line_key??'';return <label className="ordering-sync-confirm" key={key||`removed-${index}`}><input type="checkbox" checked={Boolean(key)&&acceptedRemoved.has(key)} disabled={busy||!key} onChange={()=>toggleSet(setAcceptedRemoved,key)}/><span><strong>{syncLineTitle(change.previous)}</strong><small>原人工叫貨：{syncQuantity(change.previous,'effective')}。同步後該來源明細將移除。</small></span></label>})}</SyncSection>}
+      {preview.line_changes.length>0&&<SyncSection title="保留明細的來源變更"><div className="ordering-sync-grid">{preview.line_changes.map((change,index)=><div className="ordering-sync-change" key={change.source_line_key??`changed-${index}`}><strong>{syncLineTitle(change.current??change.previous)}</strong><small>{change.change_types.map(syncChangeLabel).join('、')}；{change.preserves_adjustment?'原人工叫貨量會保留':'需重新確認人工叫貨量'}</small></div>)}</div></SyncSection>}
+      {preview.unit_conflicts.length>0&&<SyncSection title="單位衝突（逐筆處理）" tone="warning"><p>以下人工單位無法安全換算成新來源單位。勾選後會重設該筆人工量，改用新的系統參考量。</p>{preview.unit_conflicts.map((change,index)=>{const id=change.previous?.line_id??'';return <label className="ordering-sync-confirm" key={id||`unit-${index}`}><input type="checkbox" checked={Boolean(id)&&resetLines.has(id)} disabled={busy||!id} onChange={()=>toggleSet(setResetLines,id)}/><span><strong>{syncLineTitle(change.current??change.previous)}</strong><small>原人工叫貨：{syncQuantity(change.previous,'effective')}；新來源單位：{change.current?.system_unit??'—'}</small><b>重設此筆人工數量</b></span></label>})}</SyncSection>}
+    </div>
+    <footer><span className="ordering-sync-readiness" role="status">{!removalsReady?`尚有 ${requiredRemoved.filter(key=>!acceptedRemoved.has(key)).length} 筆移除未確認`:!unitsReady?`尚有 ${requiredResets.filter(id=>!resetLines.has(id)).length} 筆單位衝突未處理`:preview.changed?'已完成必要確認':'沒有需要套用的變更'}</span><button className="secondary" disabled={busy} onClick={onCancel}>取消</button><button disabled={!applyReady} onClick={()=>onApply([...acceptedRemoved],[...resetLines])}>{busy?'同步中…':'確認套用同步'}</button></footer>
+  </section></div>
+}
+
+function SyncSection({title,tone='',children}:{title:string;tone?:'notice'|'warning'|'';children:ReactNode}){return <section className={`ordering-sync-section${tone?` is-${tone}`:''}`}><h3>{title}</h3>{children}</section>}
+function toggleSet(setter:Dispatch<SetStateAction<Set<string>>>,value:string){if(!value)return;setter(current=>{const next=new Set(current);if(next.has(value))next.delete(value);else next.add(value);return next})}
+function syncDishName(snapshot:OrderingAdjustmentSyncSnapshot|null){return snapshot?.dish_name?.trim()||'未命名菜色'}
+function syncPosition(snapshot:OrderingAdjustmentSyncSnapshot|null){return [snapshot?.requirement_date,snapshot?.meal_name].filter(Boolean).join(' ')||'位置未提供'}
+function syncLineTitle(snapshot:OrderingAdjustmentSyncSnapshot|null){return `${syncDishName(snapshot)}／${snapshot?.ingredient_name?.trim()||'未命名食材'}`}
+function syncQuantity(snapshot:OrderingAdjustmentSyncSnapshot|null,kind:'system'|'effective'){const quantity=kind==='effective'?(snapshot?.effective_quantity??snapshot?.adjusted_quantity??snapshot?.system_quantity):snapshot?.system_quantity;const unit=kind==='effective'?(snapshot?.effective_unit??snapshot?.adjusted_unit??snapshot?.system_unit):snapshot?.system_unit;return quantity&&unit?`${formatAdjustmentQuantity(String(quantity))} ${unit}`:'—'}
+function syncChangeLabel(value:string){return ({dish_name_changed:'菜名更新',ingredient_name_changed:'食材名稱更新',menu_position_changed:'日期／餐別／位置更新',diner_count_changed:'用餐人數更新',reference_quantity_changed:'食譜參考量更新',unit_changed:'參考單位更新',source_metadata_changed:'供應商或來源資料更新',unit_conflict:'人工單位無法安全換算'} as Record<string,string>)[value]??value}
 
 function AdjustmentExportDialog({menus,busy,onCancel,onDownload}:{menus:OrderingAdjustmentDetail['source_menus'];busy:boolean;onCancel:()=>void;onDownload:(menuId:string)=>void}){
   const [menuId,setMenuId]=useState(menus[0]?.menu_id??'')
@@ -252,9 +340,15 @@ function orderingActionError(error:unknown,fallback:string){
   const code=apiErrorCode(error)
   if(code==='LOCK_VERSION_CONFLICT')return '資料已被更新，請重新載入後再試。'
   if(code==='ADJUSTMENT_STALE')return '來源菜單或配方已變更，這張調整單無法完成確認。'
+  if(code==='ADJUSTMENT_SYNC_REQUIRED')return '原始菜單或食譜已變更，目前需要先完成菜單同步功能才能解除鎖定。'
+  if(code==='SYNC_SOURCE_CHANGED')return '來源已再次變更，請重新預覽後再套用。'
+  if(code==='SYNC_REMOVALS_NOT_ACCEPTED')return '尚未確認全部移除項目，請重新檢查差異。'
+  if(code==='SYNC_UNIT_CONFLICT')return '仍有單位衝突未處理，請明確選擇需要重設的項目。'
+  if(code==='ADJUSTMENT_DRAFT_EXISTS')return '已有相同來源的草稿，請先處理該草稿。'
+  if(code==='INVALID_ADJUSTMENT_STATUS')return '目前調整單狀態不允許同步。'
   if(code==='CONFIRMED_DELETE_FORBIDDEN')return '已確認的叫貨調整單不能刪除。'
   if(code==='CANCELLED_DELETE_FORBIDDEN')return '已取消的叫貨調整單不能刪除。'
-  if(code==='SNAPSHOT_LOCKED')return '這張調整單已被正式流程使用，不能刪除。'
+  if(code==='SNAPSHOT_LOCKED')return '這張調整單已被正式採購使用，不能解除鎖定或刪除。'
   if(error instanceof ApiError&&error.status===404)return '找不到這張叫貨調整單。'
   return fallback
 }

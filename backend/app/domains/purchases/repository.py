@@ -9,6 +9,10 @@ class PurchaseRepository:
     def add(self,value):self.session.add(value)
     def batch_for_snapshot(self,snapshot_id):return self.session.scalar(select(PurchaseBatch).where(PurchaseBatch.source_snapshot_id==snapshot_id))
     def batch(self,batch_id):return self.session.get(PurchaseBatch,batch_id)
+    def adjustment_for_snapshot(self,snapshot_id,for_update=False):
+        statement=select(OrderingAdjustmentSheet).where(OrderingAdjustmentSheet.baseline_snapshot_id==snapshot_id)
+        if for_update:statement=statement.with_for_update()
+        return self.session.scalar(statement)
     def snapshot(self,snapshot_id):
         return self.session.execute(select(RequirementSnapshot,OrderingAdjustmentSheet.status).outerjoin(OrderingAdjustmentSheet,OrderingAdjustmentSheet.baseline_snapshot_id==RequirementSnapshot.id).where(RequirementSnapshot.id==snapshot_id)).first()
     def snapshot_items(self,snapshot_id):return list(self.session.scalars(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id).order_by(RequirementSnapshotItem.supplier_name_snapshot,RequirementSnapshotItem.ingredient_code_snapshot)))

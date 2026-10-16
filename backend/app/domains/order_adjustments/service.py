@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import UTC, datetime
 from decimal import Decimal
+import uuid
 
 from app.domains.audit.service import AuditLogService
 from app.domains.order_adjustments.aggregation import aggregate_effective_quantities
@@ -10,20 +11,22 @@ from app.domains.order_adjustments.exceptions import (
     OrderingAdjustmentDeleteForbiddenError, OrderingAdjustmentNotFoundError, OrderingAdjustmentSnapshotLockedError,
     OrderingAdjustmentExportError,
     OrderingAdjustmentReuseError,
-    OrderingAdjustmentStaleError, OrderingAdjustmentStateError,
+    OrderingAdjustmentStaleError, OrderingAdjustmentStateError, OrderingAdjustmentSyncError, OrderingAdjustmentSyncRequiredError,
     OrderingAdjustmentVersionConflictError,
 )
 from app.domains.order_adjustments.models import OrderingAdjustmentLine, OrderingAdjustmentSheet
 from app.domains.order_adjustments.export import build_adjusted_weekly_result
 from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
 from app.domains.order_adjustments.reuse import build_reuse_preview
+from app.domains.order_adjustments.sync_preview import build_sync_preview, classify_sync_lines
 from app.domains.requirements.repository import RequirementRepository
 from app.domains.requirements.exceptions import RequirementMenuNotFoundError
 from app.domains.requirements.exceptions import RequirementAdjustmentError
 from app.domains.requirements.schemas import RequirementCriteria
 from app.domains.requirements.service import RequirementService
 from app.domains.menus.service import MenuService
-from app.domains.snapshots.fingerprint import hash_payload, normalize, snapshot_fingerprint
+from app.domains.snapshots.fingerprint import content_fingerprint, hash_payload, normalize, snapshot_fingerprint
+from app.domains.snapshots.models import RequirementSnapshotItem
 from app.domains.snapshots.service import SnapshotService
 from app.shared.domain.quantities import calculate_required_quantity, convert_quantity, normalize_unit, quantize_quantity
 
@@ -236,6 +239,106 @@ class OrderingAdjustmentService:
             data["lines"].append(value)
         return data
 
+    def sync_preview(self,sheet_id,lock_version):
+        sheet,lines=self._loaded(sheet_id)
+        if sheet.status not in {"draft","confirmed"}:raise OrderingAdjustmentStateError()
+        if sheet.lock_version!=lock_version:raise OrderingAdjustmentVersionConflictError()
+        snapshot=self.repository.snapshot(sheet.baseline_snapshot_id)
+        criteria=RequirementCriteria.model_validate(snapshot.criteria)
+        source=RequirementRepository(self.session).source_rows(criteria)
+        plans=_source_plan(source);fingerprint=_source_fingerprint(criteria,plans)
+        return build_sync_preview(sheet,lines,source,plans,fingerprint)
+
+    @staticmethod
+    def _update_line_from_plan(line,plan,actor_id):
+        for key,value in plan.items():
+            if key not in {"row_key","_theoretical_quantity"}:setattr(line,key,value)
+        line.updated_by=actor_id
+
+    def _reconcile_baseline(self,snapshot,items,result,actor_id):
+        existing={item.row_key:item for item in items};current={}
+        for row in result["rows"]:
+            related=[a for a in result["anomalies"] if str(a.get("related_entity_id"))==str(row["ingredient_id"]) or str(a.get("context",{}).get("ingredient_id"))==str(row["ingredient_id"])]
+            item=existing.get(row["row_key"])
+            if item is None:
+                item=RequirementSnapshotItem(snapshot_id=snapshot.id,row_key=row["row_key"],adjusted_quantity=None,created_at=datetime.now(UTC),updated_by=actor_id)
+                self.repository.add(item)
+            values={
+                "ingredient_id":row["ingredient_id"],"ingredient_code_snapshot":row["ingredient_code"],"ingredient_name_snapshot":row["ingredient_name"],
+                "supplier_id":row["supplier_id"],"supplier_code_snapshot":row.get("supplier_code"),"supplier_name_snapshot":row["supplier_name"],
+                "requirement_quantity":row["requirement_quantity"],"requirement_unit":row["requirement_unit"],
+                "suggested_purchase_quantity":row["suggested_purchase_quantity"],"suggested_purchase_unit_snapshot":row["suggested_purchase_unit"],
+                "purchase_unit_snapshot":row["suggested_purchase_unit"],"configured_purchase_unit_snapshot":row["configured_purchase_unit"],
+                "package_size_snapshot":row["package_size"],"minimum_order_quantity_snapshot":row["minimum_order_quantity"],
+                "unit_price_snapshot":row["current_price"],"estimated_cost_snapshot":row["estimated_cost"],"needs_review":row["needs_review"],
+                "total_diner_count":row["total_diner_count"],"source_count":row["source_count"],
+                "anomaly_snapshot":normalize(related),"source_summary":normalize(row["schedules"]),"updated_by":actor_id,
+            }
+            for key,value in values.items():setattr(item,key,value)
+            current[row["row_key"]]=item
+        self.session.flush()
+        obsolete=[item for key,item in existing.items() if key not in current]
+        content_hash=content_fingerprint(result)
+        snapshot.content_fingerprint=content_hash
+        snapshot.fingerprint=hash_payload({"criteria":snapshot.criteria_fingerprint,"content":content_hash,"revision":snapshot.revision,"kind":snapshot.snapshot_kind})
+        snapshot.source_menus=normalize(result["source_menus"]);snapshot.anomaly_snapshot=normalize(result["anomalies"])
+        snapshot.anomaly_summary=result["anomaly_summary"];snapshot.known_estimated_cost=result["known_estimated_cost"]
+        snapshot.total_estimated_cost=result["total_estimated_cost"]
+        return current,obsolete
+
+    def sync(self,sheet_id,data,actor_id):
+        try:
+            sheet,lines=self._loaded(sheet_id,True)
+            self._assert_mutable(sheet,data.lock_version)
+            self.repository.lock_creation_key(sheet.criteria_fingerprint)
+            snapshot=self.repository.snapshot_for_update(sheet.baseline_snapshot_id)
+            owner=self.repository.sheet_for_snapshot(sheet.baseline_snapshot_id)
+            if snapshot is None or snapshot.snapshot_kind!="ordering_adjustment" or owner is None or owner.id!=sheet.id:
+                raise OrderingAdjustmentInvariantError()
+            criteria=RequirementCriteria.model_validate(snapshot.criteria)
+            requirements=RequirementRepository(self.session)
+            source=requirements.locked_source_rows(criteria)
+            plans=_source_plan(source);fingerprint=_source_fingerprint(criteria,plans)
+            if fingerprint!=data.expected_source_fingerprint:
+                raise OrderingAdjustmentSyncError("SYNC_SOURCE_CHANGED",current_source_fingerprint=fingerprint)
+            preview=build_sync_preview(sheet,lines,source,plans,fingerprint)
+            removed={item["previous"]["source_line_key"] for item in preview["removed_ingredients"]}
+            accepted=set(data.accepted_removed_source_line_keys)
+            if accepted!=removed:
+                raise OrderingAdjustmentSyncError("SYNC_REMOVALS_NOT_ACCEPTED",required_source_line_keys=sorted(removed))
+            conflict_ids={uuid.UUID(item["previous"]["line_id"]) for item in preview["unit_conflicts"]}
+            resets=set(data.reset_adjustment_line_ids)
+            if resets!=conflict_ids:
+                raise OrderingAdjustmentSyncError("SYNC_UNIT_CONFLICT",required_reset_adjustment_line_ids=[str(value) for value in sorted(conflict_ids,key=str)])
+            if not preview["changed"]:
+                self.session.rollback();return self.detail(sheet_id)
+            existing=self.repository.sheet_for_source(sheet.criteria_fingerprint,fingerprint,{"draft"})
+            if existing and existing.id!=sheet.id:raise OrderingAdjustmentExistingDraftError(existing.id)
+            menus=requirements.menus(criteria.menu_ids)
+            if len(menus)!=len(criteria.menu_ids):raise RequirementMenuNotFoundError()
+            result=RequirementService(self.session).calculate_from_source(criteria,menus,source)
+            items=self.repository.snapshot_items(sheet.baseline_snapshot_id,True)
+            item_by_key,obsolete_items=self._reconcile_baseline(snapshot,items,result,actor_id)
+            classified=classify_sync_lines(lines,plans);saved=classified["saved_by_key"];live=classified["live_by_key"]
+            before={"lock_version":sheet.lock_version,"source_fingerprint":sheet.source_fingerprint,"line_count":len(lines),"removed_source_line_keys":sorted(classified["removed_keys"])}
+            for key in sorted(classified["retained_keys"]):
+                line=saved[key];plan=live[key]
+                self._update_line_from_plan(line,plan,actor_id);line.snapshot_item_id=item_by_key[plan["row_key"]].id
+                if line.id in resets:
+                    line.adjusted_quantity=None;line.adjusted_unit=None;line.review_required=True
+            for key in sorted(classified["removed_keys"]):self.repository.delete(saved[key])
+            self.session.flush()
+            for key in sorted(classified["added_keys"]):
+                plan=live[key];values={name:value for name,value in plan.items() if name not in {"row_key","_theoretical_quantity"}}
+                self.repository.add(OrderingAdjustmentLine(sheet_id=sheet.id,snapshot_item_id=item_by_key[plan["row_key"]].id,adjusted_quantity=None,adjusted_unit=None,review_required=True,created_by=actor_id,updated_by=actor_id,**values))
+            self.session.flush()
+            for item in obsolete_items:self.repository.delete(item)
+            sheet.source_fingerprint=fingerprint;sheet.updated_by=actor_id;sheet.lock_version+=1
+            self.audit.record(actor_id=actor_id,action="ordering_adjustment_sync",entity_type="ordering_adjustment_sheet",entity_id=sheet.id,entity_label=f"Revision {sheet.revision}",before_data=before,after_data={"lock_version":sheet.lock_version,"source_fingerprint":fingerprint,"line_count":len(plans),"added_count":len(classified["added_keys"]),"removed_count":len(classified["removed_keys"]),"reset_count":len(resets)})
+            self.session.commit()
+        except Exception:self.session.rollback();raise
+        return self.detail(sheet_id)
+
     def adjusted_weekly_result(self,sheet_id,menu_id):
         sheet,lines=self._loaded(sheet_id)
         if sheet.status not in {"draft","confirmed"}:
@@ -257,6 +360,7 @@ class OrderingAdjustmentService:
         try:
             sheet,lines=self._loaded(sheet_id,True)
             self._assert_mutable(sheet,lock_version)
+            self._assert_source_current(sheet,lines,lock_source=True)
             by_id={line.id:line for line in lines};before=[];after=[]
             for update in updates:
                 line=by_id.get(update.id)
@@ -287,6 +391,7 @@ class OrderingAdjustmentService:
         source_units,target_unit=targets[conversion]
         try:
             sheet,lines=self._loaded(sheet_id,True);self._assert_mutable(sheet,lock_version)
+            self._assert_source_current(sheet,lines,lock_source=True)
             changes=[]
             for line in lines:
                 source_unit=normalize_unit(line.adjusted_unit if line.adjusted_quantity is not None else line.system_unit)
@@ -396,6 +501,24 @@ class OrderingAdjustmentService:
         except Exception:self.session.rollback();raise
         return self.detail(sheet_id)
 
+    def reopen(self,sheet_id,lock_version,actor_id):
+        try:
+            sheet,lines=self._loaded(sheet_id,True)
+            if sheet.status!="confirmed":raise OrderingAdjustmentStateError()
+            if sheet.lock_version!=lock_version:raise OrderingAdjustmentVersionConflictError()
+            # Keep the adjustment row as the first lock so purchase creation and
+            # reopen serialize on the same resource in a consistent order.
+            self.repository.lock_creation_key(sheet.criteria_fingerprint)
+            if self.repository.purchase(sheet.baseline_snapshot_id):raise OrderingAdjustmentSnapshotLockedError()
+            existing=self.repository.sheet_for_source(sheet.criteria_fingerprint,sheet.source_fingerprint,{"draft"})
+            if existing:raise OrderingAdjustmentExistingDraftError(existing.id)
+            before={"status":sheet.status,"lock_version":sheet.lock_version,"confirmed_at":sheet.confirmed_at,"confirmed_by":sheet.confirmed_by}
+            sheet.status="draft";sheet.confirmed_at=None;sheet.confirmed_by=None;sheet.updated_by=actor_id;sheet.lock_version+=1
+            self.audit.record(actor_id=actor_id,action="ordering_adjustment_reopen",entity_type="ordering_adjustment_sheet",entity_id=sheet.id,entity_label=f"Revision {sheet.revision}",before_data=before,after_data={"status":"draft","lock_version":sheet.lock_version,"baseline_snapshot_id":sheet.baseline_snapshot_id})
+            self.session.commit()
+        except Exception:self.session.rollback();raise
+        return self.detail(sheet_id)
+
     def cancel(self,sheet_id,lock_version,actor_id):
         try:
             sheet,_=self._loaded(sheet_id,True);self._assert_mutable(sheet,lock_version)
@@ -426,6 +549,11 @@ class OrderingAdjustmentService:
         if sheet.status!="draft":raise OrderingAdjustmentStateError()
         if sheet.lock_version!=lock_version:raise OrderingAdjustmentVersionConflictError()
         if self.repository.purchase(sheet.baseline_snapshot_id):raise OrderingAdjustmentSnapshotLockedError()
+
+    def _assert_source_current(self,sheet,lines,*,lock_source=False):
+        _,states,warnings,_=self._live(sheet,lines,lock_source=lock_source)
+        stale=[{"line_id":str(line_id),"reasons":reasons} for line_id,reasons in states.items() if reasons]+warnings
+        if stale:raise OrderingAdjustmentStaleError(stale)
 
     def list(self,page,page_size,status=None,menu_id=None,start_date=None,end_date=None):
         rows,total=self.repository.listing(page,page_size,status,menu_id,start_date,end_date)

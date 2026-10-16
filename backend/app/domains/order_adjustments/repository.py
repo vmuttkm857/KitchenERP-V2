@@ -9,6 +9,7 @@ from app.domains.users.models import User
 class OrderingAdjustmentRepository:
     def __init__(self,session): self.session=session
     def add(self,value): self.session.add(value)
+    def delete(self,value): self.session.delete(value)
     def sheet(self,sheet_id,for_update=False):
         statement=select(OrderingAdjustmentSheet).where(OrderingAdjustmentSheet.id==sheet_id)
         if for_update: statement=statement.with_for_update()
@@ -21,8 +22,10 @@ class OrderingAdjustmentRepository:
         statement=select(OrderingAdjustmentLine).where(OrderingAdjustmentLine.sheet_id.in_(sheet_ids)).order_by(OrderingAdjustmentLine.sheet_id,OrderingAdjustmentLine.source_line_key)
         if for_update:statement=statement.with_for_update()
         return list(self.session.scalars(statement))
-    def sheet_for_snapshot(self,snapshot_id):
-        return self.session.scalar(select(OrderingAdjustmentSheet).where(OrderingAdjustmentSheet.baseline_snapshot_id==snapshot_id))
+    def sheet_for_snapshot(self,snapshot_id,for_update=False):
+        statement=select(OrderingAdjustmentSheet).where(OrderingAdjustmentSheet.baseline_snapshot_id==snapshot_id)
+        if for_update:statement=statement.with_for_update()
+        return self.session.scalar(statement)
     def lock_creation_key(self,criteria_fingerprint):
         value=int(criteria_fingerprint[:16],16)
         if value>=2**63:value-=2**64

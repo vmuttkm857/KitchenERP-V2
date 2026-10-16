@@ -78,6 +78,67 @@ test('draft lifecycle exposes explicit confirm and versioned delete actions',()=
   assert.match(api,/method:'DELETE'/)
 })
 
+test('confirmed adjustment can be explicitly reopened without changing draft editing rules',()=>{
+  assert.match(page,/detail\.status==='confirmed'&&<button className="secondary" disabled=\{reopening\}/)
+  assert.match(page,/解除叫貨調整鎖定？/)
+  assert.match(page,/原有人工叫貨數量與單位會完整保留/)
+  assert.match(page,/reopenOrderingAdjustment\(detail\.id,detail\.lock_version\)/)
+  assert.match(page,/已解除鎖定，可繼續修改叫貨量/)
+  assert.match(page,/detail\.status!=='draft'\|\|detail\.stale/)
+  assert.match(api,/`\/order-adjustments\/\$\{sheetId\}\/reopen`/)
+  assert.match(page,/ADJUSTMENT_SYNC_REQUIRED/)
+  assert.match(page,/原始菜單或食譜已變更，目前需要先完成菜單同步功能才能解除鎖定/)
+})
+
+test('draft adjustments expose explicit menu and recipe sync preview and apply APIs',()=>{
+  assert.match(page,/detail\.status==='draft'&&<div className=\{`ordering-action-group ordering-sync-action/)
+  assert.match(page,/同步最新菜單與食譜/)
+  assert.match(page,/previewOrderingAdjustmentSync\(current\.id,current\.lock_version\)/)
+  assert.match(page,/applyOrderingAdjustmentSync\(detail\.id,\{lock_version:syncPreview\.lock_version,expected_source_fingerprint:syncPreview\.preview_source_fingerprint/)
+  assert.match(api,/`\/order-adjustments\/\$\{sheetId\}\/sync-preview`/)
+  assert.match(api,/`\/order-adjustments\/\$\{sheetId\}\/sync`/)
+  assert.match(types,/accepted_removed_source_line_keys:string\[\]/)
+  assert.match(types,/reset_adjustment_line_ids:string\[\]/)
+})
+
+test('sync preview protects removed quantities and does not transfer old dish adjustments',()=>{
+  assert.match(page,/舊菜的人工量不會轉移到新菜/)
+  assert.match(page,/這是來源配置變更提示，不代表舊菜色的人工數量會轉移至新菜色/)
+  assert.match(page,/原人工叫貨：\{syncQuantity\(change\.previous,'effective'\)\}/)
+  assert.match(page,/同步後該來源明細將移除/)
+  assert.match(page,/人工量尚未設定/)
+  assert.match(page,/requiredRemoved\.every\(key=>acceptedRemoved\.has\(key\)\)/)
+  assert.match(page,/disabled=\{!applyReady\}/)
+  assert.match(page,/accepted_removed_source_line_keys:acceptedRemoved/)
+})
+
+test('sync unit conflicts require an explicit reset decision',()=>{
+  assert.match(page,/單位衝突（逐筆處理）/)
+  assert.match(page,/無法安全換算成新來源單位/)
+  assert.match(page,/重設此筆人工數量/)
+  assert.match(page,/requiredResets\.every\(id=>resetLines\.has\(id\)\)/)
+  assert.match(page,/reset_adjustment_line_ids:resetLineIds/)
+  assert.match(page,/checked=\{Boolean\(id\)&&resetLines\.has\(id\)\}/)
+})
+
+test('sync protects unsaved edits and stale drafts from unsafe saves',()=>{
+  assert.match(page,/if\(dirtyIds\.length\)\{setSyncDirtyOpen\(true\);return\}/)
+  assert.match(page,/儲存後預覽/)
+  assert.match(page,/捨棄修改並預覽/)
+  assert.match(page,/來源已變更，舊來源上的未儲存輸入不能安全儲存/)
+  assert.match(page,/\{!stale&&<button disabled=\{busy\|\|invalid\}/)
+  assert.match(page,/clearEditorDirty\(\);onDetailChange\(updated\);setSyncDirtyOpen\(false\);await loadSyncPreview\(updated\)/)
+})
+
+test('sync errors preserve editor data and identify recovery actions',()=>{
+  for(const code of ['SYNC_SOURCE_CHANGED','SYNC_REMOVALS_NOT_ACCEPTED','SYNC_UNIT_CONFLICT','ADJUSTMENT_DRAFT_EXISTS','LOCK_VERSION_CONFLICT','SNAPSHOT_LOCKED','INVALID_ADJUSTMENT_STATUS'])assert.match(page,new RegExp(code))
+  assert.match(page,/同步套用失敗，原有人工叫貨量仍完整保留/)
+  assert.match(page,/if\(code==='SYNC_SOURCE_CHANGED'\|\|code==='LOCK_VERSION_CONFLICT'\)setSyncPreview\(null\)/)
+  assert.match(page,/if\(syncPreviewingRef\.current\|\|current\.status!=='draft'\)return/)
+  assert.match(page,/if\(!syncPreview\|\|syncApplyingRef\.current\)return/)
+  assert.match(page,/syncApplyingRef\.current=true/)
+})
+
 test('lifecycle status, errors and actions stay explicit',()=>{
   for(const label of ['草稿','已確認','已失效','已取消'])assert.match(page,new RegExp(label))
   for(const code of ['LOCK_VERSION_CONFLICT','ADJUSTMENT_STALE','CONFIRMED_DELETE_FORBIDDEN','CANCELLED_DELETE_FORBIDDEN','SNAPSHOT_LOCKED'])assert.match(page,new RegExp(code))
@@ -140,7 +201,7 @@ test('status date range stale reasons and responsive presentation are available'
   assert.deepEqual(adjustmentStatusLabels,{draft:'草稿',confirmed:'已確認',cancelled:'已取消'})
   assert.equal(adjustmentDateRange({menu_ids:['m'],start_date:'2026-09-01',end_date:'2026-09-07'}),'2026-09-01～2026-09-07')
   assert.equal(staleReasonLabel('NEW_SOURCE_LINE'),'目前來源新增了食材項目')
-  assert.match(page,/來源資料已變更，此調整單需要重新建立/)
+  assert.match(page,/來源資料已變更，請同步最新菜單與食譜後再繼續編輯/)
   assert.match(css,/\.ordering-adjustment-status\.is-draft/)
   assert.match(css,/\.ordering-adjustment-matrix/)
   assert.match(css,/position:sticky/)

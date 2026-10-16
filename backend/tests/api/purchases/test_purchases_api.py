@@ -101,4 +101,6 @@ def test_creation_query_count_does_not_scale_per_item(client,db_session):
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.post("/api/v1/purchases",headers=headers,json={"snapshot_id":snapshot["id"]})
     finally:event.remove(process_engine,"before_cursor_execute",record)
-    assert response.status_code==201 and len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=7
+    # One fixed query locks a linked adjustment sheet before purchase creation;
+    # the count remains constant regardless of snapshot item count.
+    assert response.status_code==201 and len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=8

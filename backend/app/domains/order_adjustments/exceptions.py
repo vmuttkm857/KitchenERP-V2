@@ -3,6 +3,10 @@ class OrderingAdjustmentStateError(Exception): pass
 class OrderingAdjustmentVersionConflictError(Exception): pass
 class OrderingAdjustmentStaleError(Exception):
     def __init__(self, reasons=None): self.reasons = reasons or []
+class OrderingAdjustmentSyncRequiredError(Exception):
+    def __init__(self, reasons=None): self.reasons = reasons or []
+class OrderingAdjustmentSyncError(Exception):
+    def __init__(self,code,**details):self.code=code;self.details=details
 class OrderingAdjustmentInvariantError(Exception): pass
 class OrderingAdjustmentLineNotFoundError(Exception): pass
 class OrderingAdjustmentSnapshotLockedError(Exception): pass
