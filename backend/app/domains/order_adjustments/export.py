@@ -94,4 +94,5 @@ def build_adjusted_weekly_result(snapshot, lines, menu_id, layout):
         "meal_type_columns": columns,
         "report_title": f'{menu["menu_name"]} 調整後廚房配料表',
         "preserve_ingredient_units": True,
+        "show_diner_counts": False,
     }

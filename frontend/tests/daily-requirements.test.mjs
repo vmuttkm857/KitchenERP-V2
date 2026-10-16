@@ -8,6 +8,7 @@ import { snapshotDailyRows,snapshotPurchaseAction } from '../src/features/snapsh
 
 const row=(changes={})=>({requirement_date:'2026-10-05',menu_id:'menu-1',menu_name:'菜單甲',supplier_id:'supplier-1',supplier_code:'S1',supplier_name:'供應商甲',ingredient_id:'ingredient-1',ingredient_code:'I1',ingredient_name:'高麗菜',quantity:'30.000000',unit:'kg',...changes})
 const requirementsPage=readFileSync(new URL('../src/features/requirements/RequirementsPage.tsx',import.meta.url),'utf8')
+const snapshotsPage=readFileSync(new URL('../src/features/snapshots/SnapshotsPage.tsx',import.meta.url),'utf8')
 const globalCss=readFileSync(new URL('../src/styles/global.css',import.meta.url),'utf8')
 
 test('date view keeps same-day menus separate',()=>{
@@ -61,6 +62,13 @@ test('daily and supplier detail tables use menu tones while aggregate totals rem
   assert.doesNotMatch(requirementsPage,/function RequirementTable[^]*requirement-menu-tone-/)
   for(let index=0;index<requirementMenuToneCount;index++)assert.match(globalCss,new RegExp(`requirement-menu-tone-${index}`))
   assert.match(globalCss,/requirement-menu-group-start/)
+})
+
+test('snapshot single supplier reuses requirement menu tones without coloring other snapshot views',()=>{
+  assert.match(snapshotsPage,/view==='supplier'&&<SnapshotDailyTable rows=\{filterSupplierRows\(snapshotDailyRows\(detail\.items\),supplierKey\)\} toneRows=\{snapshotDailyRows\(detail\.items\)\}/)
+  assert.match(snapshotsPage,/requirementMenuToneMap\(toneRows\)/)
+  assert.match(snapshotsPage,/startsRequirementMenuGroup\(row,rows\[index-1\]\)/)
+  assert.match(snapshotsPage,/view==='daily'&&<SnapshotDailyTable rows=\{sortDailyRows\(snapshotDailyRows\(detail\.items\),'daily'\)\} showSupplier\/>/)
 })
 
 test('supplier options are unique, include missing supplier, and filtering is exact',()=>{

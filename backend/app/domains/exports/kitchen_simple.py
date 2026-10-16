@@ -70,14 +70,12 @@ def _dish_lines(dish: dict, preserve_units: bool = False) -> list[str]:
     return lines
 
 
-def _dish_rich_text(dish: dict, preserve_units: bool = False) -> CellRichText:
+def _dish_rich_text(dish: dict, preserve_units: bool = False, show_diner_count: bool = True) -> CellRichText:
     heading = InlineFont(sz=13, b=True, color=INK.lstrip("#"))
     servings = InlineFont(sz=10.5, b=False, color=INK.lstrip("#"))
     detail = InlineFont(sz=9.5, b=False, color=INK.lstrip("#"))
-    value = CellRichText(
-        TextBlock(heading, str(dish["dish_name"])),
-        TextBlock(servings, f'　{dish["diner_count"]}人'),
-    )
+    value = CellRichText(TextBlock(heading, str(dish["dish_name"])))
+    if show_diner_count: value.append(TextBlock(servings, f'　{dish["diner_count"]}人'))
     for line in _dish_lines(dish, preserve_units)[1:]:
         value.append(TextBlock(detail, f"\n{line}"))
     return value
@@ -92,6 +90,7 @@ def _excel_line_count(dish: dict, preserve_units: bool = False) -> int:
 def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
     workbook = Workbook(); del workbook["Sheet"]
     preserve_units = bool(result.get("preserve_ingredient_units"))
+    show_diner_count = result.get("show_diner_counts", True) is not False
     plans=simple_page_plan(result)
     for index, plan in enumerate(plans, 1):
         sheet = workbook.create_sheet("週配料表" if len(plans) == 1 else f"週配料表-{index}")
@@ -116,7 +115,7 @@ def kitchen_simple_workbook(result: dict, variant: str = "single") -> bytes:
                     dishes=plan["slots"].get((plan["dates"][day_i],meal["id"]),[]) if day_i<len(plan["dates"]) else []
                     dish=dishes[offset] if offset<len(dishes) else None
                     if dish is not None:
-                        max_lines=max(max_lines,_excel_line_count(dish,preserve_units));sheet.cell(row,day_i+3).value=_dish_rich_text(dish,preserve_units)
+                        max_lines=max(max_lines,_excel_line_count(dish,preserve_units));sheet.cell(row,day_i+3).value=_dish_rich_text(dish,preserve_units,show_diner_count)
                     else:sheet.cell(row,day_i+3,"")
                 for col in range(1,10):
                     cell=sheet.cell(row,col);cell.font=Font(size=base_size+(2 if col==1 else 0),bold=col<=2,color="244B32" if col<=2 else INK.lstrip("#"))

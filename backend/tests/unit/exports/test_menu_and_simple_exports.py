@@ -184,6 +184,27 @@ def test_kitchen_simple_excel_uses_rich_text_hierarchy_without_changing_content(
     assert ingredient.font.sz==9.5 and ingredient.font.b is False
 
 
+@pytest.mark.parametrize("diner_count",[15,25,400])
+def test_kitchen_simple_excel_can_hide_diner_count_without_changing_ingredients(diner_count):
+    result=kitchen_result();dish=result["days"][0]["meals"][0]["dishes"][0]
+    dish["diner_count"]=diner_count;result["show_diner_counts"]=False
+    cell=load_workbook(BytesIO(kitchen_simple_workbook(result))).active["C3"].value
+    assert cell.startswith("香菇雞\n") and f"{diner_count}人" not in cell
+    assert "雞腿　12 kg" in cell and "米酒　1.5 L" in cell
+
+
+def test_hiding_diner_counts_preserves_weekly_excel_layout_and_styles():
+    visible=kitchen_result();hidden=deepcopy(visible);hidden["show_diner_counts"]=False
+    visible_sheet=load_workbook(BytesIO(kitchen_simple_workbook(visible))).active
+    hidden_sheet=load_workbook(BytesIO(kitchen_simple_workbook(hidden))).active
+    assert (hidden_sheet.max_row,hidden_sheet.max_column)==(visible_sheet.max_row,visible_sheet.max_column)
+    assert list(hidden_sheet.merged_cells.ranges)==list(visible_sheet.merged_cells.ranges)
+    assert {key:value.height for key,value in hidden_sheet.row_dimensions.items()}=={key:value.height for key,value in visible_sheet.row_dimensions.items()}
+    assert {key:value.width for key,value in hidden_sheet.column_dimensions.items()}=={key:value.width for key,value in visible_sheet.column_dimensions.items()}
+    assert [[cell.style_id for cell in row] for row in hidden_sheet.iter_rows()]==[[cell.style_id for cell in row] for row in visible_sheet.iter_rows()]
+    assert hidden_sheet.print_area==visible_sheet.print_area
+
+
 def test_kitchen_simple_pdf_uses_dish_serving_and_ingredient_font_hierarchy(monkeypatch):
     dish=kitchen_result()["days"][0]["meals"][0]["dishes"][0]
     image=kitchen_simple_module.page_image("landscape");draw=ImageDraw.Draw(image);calls=[]

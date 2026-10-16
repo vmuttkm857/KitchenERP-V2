@@ -61,6 +61,8 @@ def test_saved_adjustment_weekly_excel_uses_exact_source_lines_and_effective_uni
     assert any("調整後廚房配料表" in value for value in cells)
     first_cell=next(value for value in cells if first["dish_name_snapshot"] in value)
     second_cell=next(value for value in cells if second["dish_name_snapshot"] in value)
+    assert f'{first["diner_count_snapshot"]}人' not in first_cell
+    assert f'{second["diner_count_snapshot"]}人' not in second_cell
     assert f'{first["ingredient_name_snapshot"]}　3 kg' in first_cell
     assert f'{second["ingredient_name_snapshot"]}　1500 g' in second_cell
     untouched=next(line for line in saved["lines"] if line["id"] not in {first["id"],second["id"]})
