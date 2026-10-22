@@ -46,7 +46,7 @@ export function dailyRowsTsv(rows:DailyRequirementRow[],mode:'daily'|'supplier',
 }
 export function supplierOptions(rows:DailyRequirementRow[]):SupplierOption[]{const options=new Map<string,string>();for(const row of rows)options.set(supplierKey(row),supplierLabel(row));return [...options.entries()].map(([key,label])=>({key,label})).sort((a,b)=>a.label.localeCompare(b.label,'zh-TW')||a.key.localeCompare(b.key))}
 export function filterSupplierRows(rows:DailyRequirementRow[],key:string){return sortDailyRows(rows.filter(row=>supplierKey(row)===key),'daily')}
-export function supplierRowsTsv(rows:DailyRequirementRow[],key:string,weightUnitMode:WeightUnitMode='original'){return buildTsv(['使用日期','菜單','食材編號','食材','需求量','單位'],filterSupplierRows(rows,key).map(row=>{const display=requirementQuantityPresentation(row.quantity,row.unit,weightUnitMode);return [row.requirement_date,row.menu_name,row.ingredient_code,row.ingredient_name,plainClipboardDecimal(display.quantity),display.unit]}))}
+export function supplierRowsTsv(rows:DailyRequirementRow[],key:string,weightUnitMode:WeightUnitMode='original',convertJin=false){return buildTsv(['使用日期','菜單','食材編號','食材','需求量','單位'],filterSupplierRows(rows,key).map(row=>{const display=requirementQuantityPresentation(row.quantity,row.unit,weightUnitMode,convertJin);return [row.requirement_date,row.menu_name,row.ingredient_code,row.ingredient_name,plainClipboardDecimal(display.quantity),display.unit]}))}
 
 function supplierKey(row:DailyRequirementRow){return row.supplier_id??'unassigned'}
 function supplierLabel(row:DailyRequirementRow){return row.supplier_name??'未指定供應商'}
@@ -77,20 +77,21 @@ export function groupDailyBySupplier(rows:DailyRequirementRow[]):PrimaryDailyGro
 }
 export type WeightUnitMode='original'|'kg'
 
-function divideDecimalByThousand(value:string){
+function scaleDecimal(value:string,numerator:bigint,extraScale:number){
   const normalized=value.trim()
   const match=/^([+-]?)(\d+)(?:\.(\d+))?$/.exec(normalized)
   if(!match)return normalized
   const [,sign,whole,fraction='']=match
-  const coefficient=BigInt(`${sign}${whole}${fraction}`)
-  const scale=fraction.length+3
+  const coefficient=BigInt(`${sign}${whole}${fraction}`)*numerator
+  const scale=fraction.length+extraScale
   const negative=coefficient<0n
   const digits=(negative?-coefficient:coefficient).toString().padStart(scale+1,'0')
   const result=`${digits.slice(0,-scale)}.${digits.slice(-scale)}`
   return plainClipboardDecimal(`${negative?'-':''}${result}`)
 }
 
-export function requirementQuantityPresentation(quantity:string,unit:string|null|undefined,mode:WeightUnitMode){
-  if(mode==='kg'&&unit==='g')return {quantity:divideDecimalByThousand(quantity),unit:'kg'}
+export function requirementQuantityPresentation(quantity:string,unit:string|null|undefined,mode:WeightUnitMode,convertJin=false){
+  if(mode==='kg'&&unit==='g')return {quantity:scaleDecimal(quantity,1n,3),unit:'kg'}
+  if(mode==='kg'&&convertJin&&unit==='斤')return {quantity:scaleDecimal(quantity,6n,1),unit:'kg'}
   return {quantity,unit:unit??''}
 }

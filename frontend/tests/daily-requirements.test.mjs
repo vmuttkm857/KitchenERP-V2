@@ -68,7 +68,7 @@ test('snapshot single supplier reuses requirement menu tones without coloring ot
   assert.match(snapshotsPage,/view==='supplier'&&<SnapshotDailyTable rows=\{filterSupplierRows\(snapshotDailyRows\(detail\.items\),supplierKey\)\} toneRows=\{snapshotDailyRows\(detail\.items\)\}/)
   assert.match(snapshotsPage,/requirementMenuToneMap\(toneRows\)/)
   assert.match(snapshotsPage,/startsRequirementMenuGroup\(row,rows\[index-1\]\)/)
-  assert.match(snapshotsPage,/view==='daily'&&<SnapshotDailyTable rows=\{sortDailyRows\(snapshotDailyRows\(detail\.items\),'daily'\)\} showSupplier\/>/)
+  assert.match(snapshotsPage,/view==='daily'&&<SnapshotDailyTable rows=\{sortDailyRows\(snapshotDailyRows\(detail\.items\),'daily'\)\} showSupplier weightUnitMode=\{weightUnitMode\}\/>/)
 })
 
 test('supplier options are unique, include missing supplier, and filtering is exact',()=>{
