@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 import uuid
 
 from sqlalchemy import select
@@ -29,7 +31,7 @@ def _setup(client,db_session):
 
 
 def _save(client,headers,menu_id,slots):
-    response=client.put(f"/api/v1/menus/{menu_id}/editor",headers=headers,json={"slots":slots})
+    response=save_editor(client,f"/api/v1/menus/{menu_id}/editor",headers=headers,json={"slots":slots})
     assert response.status_code==200,response.text
     return response.json()
 

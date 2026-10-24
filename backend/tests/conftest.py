@@ -5,44 +5,136 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = BACKEND_ROOT.parent
-dotenv = dotenv_values(PROJECT_ROOT / ".env")
-test_database_url = os.getenv("TEST_DATABASE_URL") or dotenv.get("TEST_DATABASE_URL")
-if test_database_url:
-    os.environ["TEST_DATABASE_URL"] = test_database_url
-    os.environ["DATABASE_URL"] = test_database_url
 os.environ.setdefault("JWT_SECRET", "pytest-only-secret-with-at-least-32-characters")
 
-from app.db.session import SessionLocal  # noqa: E402
-from app.main import app  # noqa: E402
+from tests.database_safety import (  # noqa: E402
+    UnsafeTestDatabase, guarded_migration, test_database_target,
+    validate_engine_target, verify_connection,
+)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def migrated_test_database() -> Generator[Engine, None, None]:
-    if not test_database_url:
-        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL tests")
-    if not test_database_url.startswith(("postgresql+psycopg://", "postgresql://")):
-        pytest.fail("TEST_DATABASE_URL must point to PostgreSQL; SQLite is forbidden")
+def pytest_addoption(parser):
+    group = parser.getgroup("isolated PostgreSQL tests")
+    group.addoption("--database-tests", action="store_true", help="Use an approved disposable regression database")
+    group.addoption("--migration-tests", action="store_true", help="Use an approved disposable migration database")
+
+
+def pytest_configure(config):
+    migration = config.getoption("--migration-tests")
+    regression = config.getoption("--database-tests")
+    if migration and regression:
+        raise pytest.UsageError("Run migration and regression databases in separate pytest processes")
+    target = None
+    if migration or regression:
+        try:
+            target = test_database_target("migration" if migration else "regression", os.environ)
+        except UnsafeTestDatabase as error:
+            raise pytest.UsageError(str(error)) from None
+    config._isolated_database_target = target
+    patch = pytest.MonkeyPatch()
+    config._database_safety_patch = patch
+    original_connect = Engine.connect
+    application_name = f"kitchenerp-pytest:{os.getpid()}"
+
+    def safe_connect(engine, *args, **kwargs):
+        validate_engine_target(target, engine.url)
+        if test_database_target(target.kind, os.environ) != target:
+            raise UnsafeTestDatabase("TEST_DB_CONFIGURATION_CHANGED")
+        connection = None
+        try:
+            connection = original_connect(engine, *args, **kwargs)
+            verify_connection(connection, target, application_name)
+        except Exception:
+            if connection is not None:
+                connection.close()
+            raise UnsafeTestDatabase("TEST_DB_CONNECTION_NOT_VERIFIED") from None
+        return connection
+
+    patch.setattr(Engine, "connect", safe_connect)
+    for operation in ("upgrade", "downgrade"):
+        original = getattr(command, operation)
+
+        def safe_migration(alembic_config, *args, _operation=operation, _original=original, **kwargs):
+            from app.core.config import settings
+            if target is not None:
+                validate_engine_target(target, make_url(settings.database_url))
+                validate_engine_target(target, make_url(settings.test_database_url or ""))
+
+            def verified_invoke(*call_args, **call_kwargs):
+                # Preflight actual identity before entering Alembic. Engine.connect
+                # also verifies env.py's separate connection before any DDL.
+                probe = create_engine(target.url, pool_pre_ping=True)
+                try:
+                    with probe.connect():
+                        return _original(*call_args, **call_kwargs)
+                finally:
+                    probe.dispose()
+
+            return guarded_migration(_operation, verified_invoke, target, os.environ, alembic_config, *args, **kwargs)
+
+        patch.setattr(command, operation, safe_migration)
+
+
+def pytest_unconfigure(config):
+    patch = getattr(config, "_database_safety_patch", None)
+    if patch:
+        patch.undo()
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        migration = item.path.name.endswith("_migration.py")
+        unit = "unit" in item.path.relative_to(BACKEND_ROOT / "tests").parts
+        if migration:
+            item.add_marker(pytest.mark.migration)
+        if migration and not config.getoption("--migration-tests"):
+            item.add_marker(pytest.mark.skip(reason="Dedicated migration database and --migration-tests approval required"))
+        elif not unit and not migration and not config.getoption("--database-tests"):
+            item.add_marker(pytest.mark.skip(reason="Dedicated regression database and --database-tests approval required"))
+
+
+@pytest.fixture(scope="session")
+def migrated_test_database(pytestconfig) -> Generator[Engine, None, None]:
+    target = pytestconfig._isolated_database_target
+    if target is None:
+        pytest.skip("No disposable database explicitly configured")
+    from app.core.config import settings
+    validate_engine_target(target, make_url(settings.database_url))
+    engine = create_engine(target.url, pool_pre_ping=True)
+    # Verify the actual endpoint, role, ownership, disposable marker and other
+    # sessions BEFORE any schema change or existing cleanup fixture can run.
+    with engine.connect():
+        pass
 
     alembic_config = Config(str(BACKEND_ROOT / "alembic.ini"))
     alembic_config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
-    command.upgrade(alembic_config, "head")
-
-    engine = create_engine(test_database_url, pool_pre_ping=True)
-    yield engine
-    engine.dispose()
+    try:
+        if target.kind == "migration":
+            command.upgrade(alembic_config, "head")
+        else:
+            from alembic.script import ScriptDirectory
+            expected = ScriptDirectory.from_config(alembic_config).get_current_head()
+            with engine.connect() as connection:
+                if connection.scalar(text("SELECT version_num FROM alembic_version")) != expected:
+                    pytest.fail("REGRESSION_DB_MUST_ALREADY_BE_AT_HEAD; no automatic migration")
+        yield engine
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture(autouse=True)
-def clean_auth_tables(migrated_test_database: Engine) -> Generator[None, None, None]:
+def clean_auth_tables(request) -> Generator[None, None, None]:
+    if "unit" in request.path.relative_to(BACKEND_ROOT / "tests").parts:
+        yield
+        return
+    migrated_test_database = request.getfixturevalue("migrated_test_database")
     yield
     with migrated_test_database.begin() as connection:
         connection.execute(text("DELETE FROM audit_logs"))
@@ -93,6 +185,7 @@ def clean_auth_tables(migrated_test_database: Engine) -> Generator[None, None, N
 
 @pytest.fixture
 def db_session() -> Generator[Session, None, None]:
+    from app.db.session import SessionLocal
     session = SessionLocal()
     try:
         yield session
@@ -103,5 +196,6 @@ def db_session() -> Generator[Session, None, None]:
 
 @pytest.fixture
 def client() -> Generator[TestClient, None, None]:
+    from app.main import app
     with TestClient(app) as test_client:
         yield test_client

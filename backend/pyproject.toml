@@ -32,4 +32,7 @@ packages = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-markers = ["integration: requires a real PostgreSQL database"]
+markers = [
+  "integration: requires a real PostgreSQL database",
+  "migration: destructive schema tests; requires an explicitly approved disposable migration database",
+]

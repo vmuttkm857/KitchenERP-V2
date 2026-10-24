@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 import uuid
 from decimal import Decimal
 from sqlalchemy import event,select
@@ -31,7 +33,7 @@ def kitchen_fixture(client,headers,db_session):
     menu=client.post("/api/v1/menus",headers=headers,json={"name":"廚房兩日菜單","start_date":"2026-10-01","end_date":"2026-10-02"}).json()
     lunch=client.post(f"/api/v1/menus/{menu['id']}/meal-types",headers=headers,json={"name":"午餐","sort_order":1}).json();dinner=client.post(f"/api/v1/menus/{menu['id']}/meal-types",headers=headers,json={"name":"晚餐","sort_order":2}).json()
     slots=[{"menu_date":"2026-10-01","menu_meal_type_id":lunch["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":100,"notes":"先處理雞肉","sort_order":1},{"dish_id":dishes[2]["id"],"diner_count":3,"sort_order":2},{"dish_id":dishes[3]["id"],"diner_count":3,"sort_order":3},{"dish_id":dishes[4]["id"],"diner_count":3,"sort_order":4}]},{"menu_date":"2026-10-01","menu_meal_type_id":dinner["id"],"dishes":[{"dish_id":dishes[1]["id"],"diner_count":4,"sort_order":1}]},{"menu_date":"2026-10-02","menu_meal_type_id":lunch["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]}]
-    assert client.put(f"/api/v1/menus/{menu['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{menu['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
     return menu,lunch,dinner,dishes,ingredients
 
 def test_known_answer_hierarchy_decimal_notes_sort_and_units(client,db_session):

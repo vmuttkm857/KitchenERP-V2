@@ -78,6 +78,7 @@ export interface OrderingAdjustmentLine {
 }
 
 export interface OrderingAdjustmentDetail extends Omit<OrderingAdjustmentSummary,'created_by_name'> {
+  purchase_locked:boolean
   source_fingerprint:string
   last_reuse_source_sheet_id:string|null
   reuse_applied_at:string|null

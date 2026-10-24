@@ -228,6 +228,7 @@ class OrderingAdjustmentService:
         if sheet.status=="draft":snapshot,line_state,warnings,_=self._live(sheet,lines)
         data={column.name:getattr(sheet,column.name) for column in sheet.__table__.columns}
         data.update(criteria=snapshot.criteria,source_menus=snapshot.source_menus,stale=bool(warnings or any(line_state.values())),warnings=warnings)
+        data["purchase_locked"]=self.repository.purchase(sheet.baseline_snapshot_id) is not None
         data["lines"]=[]
         for line in lines:
             value={column.name:getattr(line,column.name) for column in line.__table__.columns}

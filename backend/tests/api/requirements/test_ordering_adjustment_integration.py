@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 import uuid
 from decimal import Decimal
 from io import BytesIO
@@ -44,7 +46,7 @@ def test_partial_date_and_multi_menu_daily_identity_are_preserved(client,db_sess
     client.patch(f"/api/v1/order-adjustments/{sheet_a['id']}/lines",headers=headers,json={"lock_version":1,"lines":[{"id":target["id"],"adjusted_quantity":"1.234567"}]})
     menu_b=client.post("/api/v1/menus",headers=headers,json={"name":"第二份菜單","start_date":"2026-09-02","end_date":"2026-09-02"}).json()
     meal=client.post(f"/api/v1/menus/{menu_b['id']}/meal-types",headers=headers,json={"name":"午餐","sort_order":1}).json()
-    client.put(f"/api/v1/menus/{menu_b['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-02","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]}]})
+    save_editor(client,f"/api/v1/menus/{menu_b['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-02","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]}]})
     response=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu_a["id"],menu_b["id"]],"start_date":"2026-09-02","end_date":"2026-09-02","ordering_adjustment_sheet_ids":[sheet_a["id"]]})
     assert response.status_code==200,response.text
     chicken=[row for row in response.json()["daily_rows"] if row["ingredient_code"]=="REQ-I1"]

@@ -171,6 +171,7 @@ class OrderingAdjustmentLinePublic(BaseModel):
 
 
 class OrderingAdjustmentDetail(BaseModel):
+    purchase_locked:bool
     id:uuid.UUID; baseline_snapshot_id:uuid.UUID; status:Literal["draft","confirmed","cancelled"]
     source_fingerprint:str; revision:int; lock_version:int; notes:str|None
     last_reuse_source_sheet_id:uuid.UUID|None; reuse_applied_at:datetime|None; reuse_applied_by:uuid.UUID|None

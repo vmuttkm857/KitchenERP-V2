@@ -3,7 +3,7 @@ import { attemptNavigation, confirmNavigation } from './navigationPolicy'
 
 interface NavigationBlockerValue {
   requestNavigation: (action: () => void) => void
-  setEditorDirty: (dirty: boolean) => void
+  setEditorDirty: (dirty: boolean, owner?: symbol) => void
 }
 
 const NavigationBlockerContext = createContext<NavigationBlockerValue | null>(null)
@@ -11,8 +11,12 @@ const NavigationBlockerContext = createContext<NavigationBlockerValue | null>(nu
 export function NavigationBlockerProvider({ children }: { children: ReactNode }) {
   const [dirty, setDirty] = useState(false)
   const dirtyRef = useRef(false)
+  const dirtyEditors = useRef(new Map<symbol | undefined, boolean>())
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
-  const setEditorDirty = useCallback((value: boolean) => {
+  const setEditorDirty = useCallback((editorDirty: boolean, owner?: symbol) => {
+    if (editorDirty) dirtyEditors.current.set(owner, true)
+    else dirtyEditors.current.delete(owner)
+    const value = dirtyEditors.current.size > 0
     dirtyRef.current = value
     setDirty(value)
   }, [])
@@ -27,7 +31,7 @@ export function NavigationBlockerProvider({ children }: { children: ReactNode })
   }, [dirty])
   function leave() {
     const action = pendingAction
-    setPendingAction(null); setEditorDirty(false)
+    setPendingAction(null); dirtyEditors.current.clear(); setEditorDirty(false)
     confirmNavigation(action)
   }
   return <NavigationBlockerContext.Provider value={{ requestNavigation, setEditorDirty }}>
@@ -44,6 +48,7 @@ export function useNavigationBlocker() {
 
 export function useEditorDirty(dirty: boolean) {
   const { setEditorDirty } = useNavigationBlocker()
-  useEffect(() => { setEditorDirty(dirty); return () => setEditorDirty(false) }, [dirty, setEditorDirty])
-  return useCallback(() => setEditorDirty(false), [setEditorDirty])
+  const owner = useRef(Symbol('editor'))
+  useEffect(() => { setEditorDirty(dirty, owner.current); return () => setEditorDirty(false, owner.current) }, [dirty, setEditorDirty])
+  return useCallback(() => setEditorDirty(false, owner.current), [setEditorDirty])
 }

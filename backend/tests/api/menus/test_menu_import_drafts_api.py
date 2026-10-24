@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 import uuid
 from datetime import date, timedelta
 from io import BytesIO
@@ -488,7 +490,7 @@ def test_finalize_builds_a_normal_menu_preserves_layout_and_is_idempotent(client
     }).json()
     existing_meal=client.post(f"/api/v1/menus/{existing['id']}/meal-types",headers=headers,json={"name":"既有早餐","sort_order":1}).json()
     existing_column=client.post(f"/api/v1/menus/{existing['id']}/meal-types/{existing_meal['id']}/columns",headers=headers,json={"name":"既有主菜","sort_order":1}).json()
-    existing_saved=client.put(f"/api/v1/menus/{existing['id']}/editor",headers=headers,json={"slots":[{
+    existing_saved=save_editor(client,f"/api/v1/menus/{existing['id']}/editor",headers=headers,json={"slots":[{
         "menu_date":"2026-10-05","menu_meal_type_id":existing_meal["id"],"dishes":[{
             "dish_id":auto["id"],"menu_meal_type_column_id":existing_column["id"],
             "diner_count":88,"notes":"既有內容","sort_order":1,

@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 from io import BytesIO
 from openpyxl import load_workbook
 from pypdf import PdfReader
@@ -63,7 +65,7 @@ def test_kitchen_export_query_count_does_not_grow_per_row(client,db_session):
 def test_menu_full_and_pretty_exports_are_authenticated_binary_downloads(client,db_session):
     headers=auth(client,db_session);category,dishes=foundations(client,headers);value=menu(client,headers,category["id"],name="中文匯出菜單",start="2026-09-01",end="2026-09-07");meal_types=meals(client,headers,value["id"],("早餐","早點","午餐","午點","晚餐","晚點","特殊餐"))
     assert client.post(f"/api/v1/menus/{value['id']}/meal-types/{meal_types[0]['id']}/columns",headers=headers,json={"name":"主菜","sort_order":1}).status_code==201
-    assert client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes,days=7)).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes,days=7)).status_code==200
     for layout in ("full","grid","pretty"):
         xlsx=client.get(f"/api/v1/exports/menus/{value['id']}/{layout}/xlsx",headers=headers)
         assert xlsx.status_code==200,xlsx.text;assert xlsx.content[:2]==b"PK";assert "attachment" in xlsx.headers["content-disposition"]
@@ -85,7 +87,7 @@ def test_menu_exports_require_auth(client):
 
 def test_menu_export_query_budget_is_constant(client,db_session):
     headers=auth(client,db_session);category,dishes=foundations(client,headers);value=menu(client,headers,category["id"]);meal_types=meals(client,headers,value["id"])
-    client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes));statements=[]
+    save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes));statements=[]
     def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx",headers=headers)
@@ -102,7 +104,7 @@ def test_menu_nutrition_exports_are_opt_in_complete_and_deduplicated(client,db_s
     client.patch(f"/api/v1/ingredients/{ingredient['id']}/nutrition",headers=headers,json={"nutrition_food_id":food["id"]})
     client.put(f"/api/v1/dishes/{dishes[0]['id']}/recipe",headers=headers,json={"items":[{"ingredient_id":ingredient["id"],"quantity":"150","unit":"g","loss_rate":"0"}]})
     value=menu(client,headers,category["id"],name="營養匯出菜單");meal_types=meals(client,headers,value["id"])
-    client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
+    save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
 
     original=client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx",headers=headers)
     original_text="\n".join(str(cell.value) for sheet in load_workbook(BytesIO(original.content)) for row in sheet.iter_rows() for cell in row)
@@ -141,7 +143,7 @@ def test_kitchen_simple_excel_pdf_known_answer_anomaly_and_query_budget(client,d
     payload={"slots":[{"menu_day_id":slot["menu_day_id"],"menu_date":slot["menu_date"],"menu_meal_type_id":slot["menu_meal_type_id"],"notes":slot["notes"],"dishes":[
         {key:dish.get(key) for key in ("id","dish_id","menu_meal_type_column_id","diner_count","notes","sort_order")}
         for dish in slot["dishes"]]} for slot in aggregate["slots"]]}
-    assert client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).status_code==200
     def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
     event.listen(process_engine,"before_cursor_execute",record)
     try:xlsx=client.post("/api/v1/exports/kitchen-operations/simple/xlsx",headers=headers,json=body)

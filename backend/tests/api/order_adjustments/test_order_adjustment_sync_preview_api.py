@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -65,7 +67,7 @@ def test_sync_preview_treats_dish_replacement_as_removed_and_added_without_reusi
     replacement=_new_dish(client,headers,code="SYNC-PORK",name="炸豬排",ingredient_id=ingredients[1]["id"],quantity="80")
     aggregate=client.get(f"/api/v1/menus/{menu['id']}/editor",headers=headers).json()
     target=next(dish for slot in aggregate["slots"] if slot["menu_date"]=="2026-09-01" for dish in slot["dishes"] if dish["id"]==old_line["source_menu_dish_id"])
-    changed=client.put(f"/api/v1/menus/{menu['id']}/editor",headers=headers,json=_editor_payload(aggregate,{target["id"]:replacement["id"]}))
+    changed=save_editor(client,f"/api/v1/menus/{menu['id']}/editor",headers=headers,json=_editor_payload(aggregate,{target["id"]:replacement["id"]}))
     assert changed.status_code==200,changed.text
     line_count=db_session.scalar(select(func.count()).select_from(OrderingAdjustmentLine).where(OrderingAdjustmentLine.sheet_id==sheet["id"]))
     audit_count=db_session.scalar(select(func.count()).select_from(AuditLog))
@@ -100,7 +102,7 @@ def test_sync_preview_detects_complete_selected_menu_replacement_deterministical
     aggregate=client.get(f"/api/v1/menus/{menu['id']}/editor",headers=headers).json()
     selected=[(dish,replacements[index%2]) for slot in aggregate["slots"] if slot["menu_date"]=="2026-09-01" for index,dish in enumerate(slot["dishes"])]
     mapping={dish["id"]:replacement["id"] for dish,replacement in selected}
-    changed=client.put(f"/api/v1/menus/{menu['id']}/editor",headers=headers,json=_editor_payload(aggregate,mapping))
+    changed=save_editor(client,f"/api/v1/menus/{menu['id']}/editor",headers=headers,json=_editor_payload(aggregate,mapping))
     assert changed.status_code==200,changed.text
 
     first=client.post(f"/api/v1/order-adjustments/{sheet['id']}/sync-preview",headers=headers,json={"lock_version":sheet["lock_version"]})
@@ -157,7 +159,7 @@ def test_sync_apply_replaces_dish_without_transferring_adjustment_and_reconciles
     standard_values={item["id"]:item["requirement_quantity"] for item in standard["items"]}
     replacement=_new_dish(client,headers,code="APPLY-PORK",name="炸豬排",ingredient_id=ingredients[1]["id"],quantity="80")
     aggregate=client.get(f"/api/v1/menus/{menu['id']}/editor",headers=headers).json()
-    changed=client.put(f"/api/v1/menus/{menu['id']}/editor",headers=headers,json=_editor_payload(aggregate,{old["source_menu_dish_id"]:replacement["id"]}))
+    changed=save_editor(client,f"/api/v1/menus/{menu['id']}/editor",headers=headers,json=_editor_payload(aggregate,{old["source_menu_dish_id"]:replacement["id"]}))
     assert changed.status_code==200,changed.text
     reopened=client.post(f"/api/v1/order-adjustments/{sheet['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]})
     assert reopened.status_code==200 and reopened.json()["stale"] is True

@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 import uuid
 
 from sqlalchemy import event, func, select
@@ -71,7 +73,7 @@ def create_masters(client, headers):
 
 
 def schedule(client, headers, menu, lunch, dishes):
-    response = client.put(f"/api/v1/menus/{menu['id']}/editor", headers=headers, json={
+    response = save_editor(client,f"/api/v1/menus/{menu['id']}/editor", headers=headers, json={
         "slots": [{
             "menu_date": TARGET_DATE, "menu_meal_type_id": lunch["id"],
             "dishes": [

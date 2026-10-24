@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 import uuid
 from decimal import Decimal
 from fastapi.testclient import TestClient
@@ -43,7 +45,7 @@ def fixture(client,headers):
     for day in ("2026-09-01","2026-09-02","2026-09-03"):
         for meal in meals:
             slots.append({"menu_date":day,"menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1},{"dish_id":dishes[1]["id"],"diner_count":5,"sort_order":2}]})
-    assert client.put(f"/api/v1/menus/{menu['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{menu['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
     return menu,meals,dishes,ingredients,suppliers
 
 
@@ -86,7 +88,7 @@ def test_missing_recipe_zero_quantity_incompatible_unit_missing_supplier_and_ina
     aggregate=client.get(f"/api/v1/menus/{menu['id']}/editor",headers=headers).json();slot=aggregate["slots"][0]
     slot["dishes"].extend([{"dish_id":no_recipe["id"],"diner_count":1,"sort_order":3},{"dish_id":bad_dish["id"],"diner_count":1,"sort_order":4}])
     payload={"slots":[{"menu_day_id":s["menu_day_id"],"menu_date":s["menu_date"],"menu_meal_type_id":s["menu_meal_type_id"],"notes":s["notes"],"dishes":[{"id":d.get("id"),"dish_id":d["dish_id"],"diner_count":d["diner_count"],"notes":d.get("notes"),"sort_order":d["sort_order"]} for d in s["dishes"]]} for s in aggregate["slots"]]}
-    assert client.put(f"/api/v1/menus/{menu['id']}/editor",headers=headers,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{menu['id']}/editor",headers=headers,json=payload).status_code==200
     client.post(f"/api/v1/ingredients/{ingredients[0]['id']}/deactivate",headers=headers)
     body=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu["id"]],"selected_dates":["2026-09-01"]}).json();codes={item["code"] for item in body["anomalies"]}
     assert {"MISSING_RECIPE","INCOMPATIBLE_UNIT","MISSING_SUPPLIER","INACTIVE_SOURCE"}.issubset(codes)
@@ -133,7 +135,7 @@ def test_same_named_meal_type_is_filtered_per_menu_active_state(client,db_sessio
     menu_b=client.post("/api/v1/menus",headers=headers,json={"name":"第二份需求菜單","start_date":"2026-09-01","end_date":"2026-09-01"}).json()
     breakfast_b=client.post(f"/api/v1/menus/{menu_b['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
     slots=[{"menu_date":"2026-09-01","menu_meal_type_id":breakfast_b["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]}]
-    assert client.put(f"/api/v1/menus/{menu_b['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{menu_b['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
     body=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu_a["id"],menu_b["id"]]}).json()
     chicken=next(row for row in body["rows"] if row["ingredient_code"]=="REQ-I1")
     assert Decimal(chicken["requirement_quantity"])==Decimal("1.1")

@@ -13,9 +13,13 @@ class MenuRepository:
     def __init__(self, session: Session): self.session = session
     def add(self, value): self.session.add(value)
     def delete(self, value): self.session.delete(value)
-    def menu_model(self, menu_id, for_update=False):
-        if not for_update: return self.session.get(Menu, menu_id)
-        return self.session.scalar(select(Menu).where(Menu.id==menu_id).with_for_update())
+    def menu_model(self, menu_id, for_update=False, for_share=False):
+        if not (for_update or for_share): return self.session.get(Menu, menu_id)
+        return self.session.scalar(select(Menu).where(Menu.id==menu_id)
+            .with_for_update(read=for_share and not for_update).execution_options(populate_existing=True))
+    def lock_menus(self, menu_ids):
+        return list(self.session.scalars(select(Menu).where(Menu.id.in_(menu_ids))
+            .order_by(Menu.id).with_for_update().execution_options(populate_existing=True)))
     def category(self, category_id): return self.session.get(MenuCategory, category_id)
     def meal_type(self, meal_type_id): return self.session.get(MenuMealType, meal_type_id)
     def meal_type_column(self, column_id): return self.session.get(MenuMealTypeColumn, column_id)
@@ -29,7 +33,10 @@ class MenuRepository:
         return select(Menu.id, Menu.name, Menu.start_date, Menu.end_date, Menu.category_id,
                       MenuCategory.name.label("category_name"), Menu.notes, Menu.is_active,
                       Menu.created_at, Menu.updated_at, Menu.created_by, Menu.updated_by).outerjoin(MenuCategory, MenuCategory.id == Menu.category_id)
-    def menu_view(self, menu_id): return self.session.execute(self._menu_view().where(Menu.id == menu_id)).mappings().one_or_none()
+    def menu_view(self, menu_id, for_share=False):
+        statement=self._menu_view().where(Menu.id==menu_id)
+        if for_share:statement=statement.with_for_update(read=True,of=Menu)
+        return self.session.execute(statement).mappings().one_or_none()
     def list(self, page, page_size, active, search, category_id, start_date=None, end_date=None):
         filters=[]
         if active is not None: filters.append(Menu.is_active == active)
@@ -41,7 +48,8 @@ class MenuRepository:
         rows=self.session.execute(self._menu_view().where(*filters).order_by(Menu.start_date.desc(), func.lower(Menu.name), Menu.id).offset((page-1)*page_size).limit(page_size)).mappings()
         return [dict(row) for row in rows], total
     def meal_types(self, menu_id):
-        return list(self.session.scalars(select(MenuMealType).where(MenuMealType.menu_id == menu_id).order_by(MenuMealType.sort_order, MenuMealType.id)))
+        return list(self.session.scalars(select(MenuMealType).where(MenuMealType.menu_id == menu_id)
+            .order_by(MenuMealType.sort_order, MenuMealType.id).execution_options(populate_existing=True)))
     def meal_name_exists(self, menu_id, name, exclude=None):
         stmt=select(MenuMealType.id).where(MenuMealType.menu_id==menu_id, func.lower(MenuMealType.name)==name.lower())
         if exclude: stmt=stmt.where(MenuMealType.id != exclude)
@@ -53,7 +61,7 @@ class MenuRepository:
     def menu_columns(self, menu_id):
         return list(self.session.scalars(select(MenuMealTypeColumn).join(MenuMealType).where(
             MenuMealType.menu_id==menu_id).order_by(MenuMealType.sort_order,
-            MenuMealTypeColumn.sort_order,MenuMealTypeColumn.id)))
+            MenuMealTypeColumn.sort_order,MenuMealTypeColumn.id).execution_options(populate_existing=True)))
     def column_name_exists(self, meal_type_id, name, exclude=None):
         stmt=select(MenuMealTypeColumn.id).where(
             MenuMealTypeColumn.menu_meal_type_id==meal_type_id,
@@ -61,12 +69,13 @@ class MenuRepository:
         if exclude: stmt=stmt.where(MenuMealTypeColumn.id!=exclude)
         return self.session.scalar(stmt.limit(1)) is not None
     def days(self, menu_id):
-        return list(self.session.scalars(select(MenuDay).where(MenuDay.menu_id==menu_id)))
+        return list(self.session.scalars(select(MenuDay).where(MenuDay.menu_id==menu_id)
+            .execution_options(populate_existing=True)))
     def details(self, day_ids: set[uuid.UUID], for_update=False):
         if not day_ids: return []
         statement=select(MenuDish).where(MenuDish.menu_day_id.in_(day_ids)).order_by(MenuDish.sort_order, MenuDish.id)
         if for_update:statement=statement.with_for_update()
-        return list(self.session.scalars(statement))
+        return list(self.session.scalars(statement.execution_options(populate_existing=True)))
     def menu_dish_position(self, menu_dish_id, for_update=False):
         statement=select(MenuDish,MenuDay).join(MenuDay,MenuDay.id==MenuDish.menu_day_id).where(MenuDish.id==menu_dish_id)
         if for_update: statement=statement.with_for_update()

@@ -10,15 +10,16 @@ from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user, require_admin
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.menus.exceptions import (
-    DuplicateMenuDishError, InvalidMenuCategoryError, InvalidMenuCopyError,
+    DuplicateMenuDishError, InvalidMenuCategoryError, InvalidMenuCopyError, MenuAdjustmentContextError,
     InvalidMenuDateRangeError, InvalidMenuStructureError, MealTypeInUseError,
     MealTypeColumnNameExistsError, MealTypeColumnNotFoundError,
-    MealTypeNameExistsError, MealTypeNotFoundError, MenuInUseError, MenuNotFoundError,
+    MealTypeNameExistsError, MealTypeNotFoundError, MenuInUseError, MenuNotFoundError, MenuVersionConflictError,
 )
 from app.domains.menus.schemas import (
     CopyDayCommand, CopyWeekCommand, MealTypeColumnCreate, MealTypeColumnPublic,
     MealTypeColumnReorder, MealTypeColumnUpdate, MealTypeCreate, MealTypePublic, MealTypeReorder, MealTypeUpdate,
     MenuCreate, MenuDishMove, MenuEditorAggregate, MenuEditorSave, MenuList, MenuPublic, MenuUpdate,
+    MenuMealSlotDetail, MenuMealSlotSave,
 )
 from app.domains.menus.service import MenuService
 from app.domains.users.models import User
@@ -29,6 +30,10 @@ logger=logging.getLogger("kitchenerp.menus")
 
 
 def error(exc):
+    if isinstance(exc,MenuAdjustmentContextError):return HTTPException(exc.status_code,{"code":exc.code})
+    if isinstance(exc,MenuVersionConflictError):
+        return HTTPException(409,{"code":exc.code,"message":"Menu content changed or version is missing; reload before saving.",
+                                  "current_fingerprint":exc.current_fingerprint})
     if isinstance(exc,MenuNotFoundError): return HTTPException(404,"Menu not found")
     if isinstance(exc,MealTypeNotFoundError): return HTTPException(404,"Meal type not found")
     if isinstance(exc,MealTypeColumnNotFoundError): return HTTPException(404,"Menu column not found")
@@ -178,6 +183,19 @@ def save_editor(menu_id:uuid.UUID,data:MenuEditorSave,user:Annotated[User,Depend
 @router.post("/{menu_id}/dish-move",response_model=MenuEditorAggregate)
 def move_menu_dish(menu_id:uuid.UUID,data:MenuDishMove,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
     try:return MenuEditorAggregate.model_validate(MenuService(session).move_menu_dish(menu_id,data,user.id))
+    except Exception as exc:raise error(exc) from exc
+
+
+@router.get("/{menu_id}/meal-slots/{meal_type_id}/{menu_date}",response_model=MenuMealSlotDetail)
+def meal_slot(menu_id:uuid.UUID,meal_type_id:uuid.UUID,menu_date:date,session:Annotated[Session,Depends(get_db_session)]):
+    try:return MenuMealSlotDetail.model_validate(MenuService(session).meal_slot(menu_id,meal_type_id,menu_date))
+    except Exception as exc:raise error(exc) from exc
+
+
+@router.put("/{menu_id}/meal-slots/{meal_type_id}/{menu_date}",response_model=MenuEditorAggregate)
+def save_meal_slot(menu_id:uuid.UUID,meal_type_id:uuid.UUID,menu_date:date,data:MenuMealSlotSave,
+                   user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return MenuEditorAggregate.model_validate(MenuService(session).save_meal_slot(menu_id,meal_type_id,menu_date,data,user.id))
     except Exception as exc:raise error(exc) from exc
 
 

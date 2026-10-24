@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 import uuid
 from datetime import date, timedelta
 
@@ -71,7 +73,7 @@ def test_meal_type_columns_are_independent_crud_and_do_not_touch_menu_dishes(cli
     assert [item["id"] for item in reordered.json()]==[vegetable["id"],main["id"]]
     assert client.put(f"/api/v1/menus/{value['id']}/meal-types/{breakfast['id']}/columns/reorder",headers=headers,json={"ordered_ids":[main["id"],main["id"]]}).status_code==422
     payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":breakfast["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":100,"sort_order":1}]}]}
-    before=client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).json()
+    before=save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).json()
     assert client.delete(f"/api/v1/menus/{value['id']}/meal-types/{breakfast['id']}/columns/{main['id']}",headers=headers).status_code==204
     after=client.get(f"/api/v1/menus/{value['id']}/editor",headers=headers).json()
     assert after["slots"]==before["slots"]
@@ -94,14 +96,14 @@ def test_menu_dish_column_assignment_validation_null_compatibility_and_delete_se
         {"dish_id":dishes[1]["id"],"menu_meal_type_column_id":None,"diner_count":80,"sort_order":2},
         {"dish_id":dishes[2]["id"],"diner_count":60,"sort_order":3},
     ]}]}
-    saved=client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload)
+    saved=save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload)
     assert saved.status_code==200,saved.text
     saved_dishes=saved.json()["slots"][0]["dishes"]
     assert [dish["menu_meal_type_column_id"] for dish in saved_dishes]==[breakfast_column["id"],None,None]
 
     def invalid(column_ids):
         dishes_payload=[{"dish_id":dishes[index]["id"],"menu_meal_type_column_id":column_id,"diner_count":1,"sort_order":index+1} for index,column_id in enumerate(column_ids)]
-        return client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-02","menu_meal_type_id":breakfast["id"],"dishes":dishes_payload}]})
+        return save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-02","menu_meal_type_id":breakfast["id"],"dishes":dishes_payload}]})
     assert invalid([lunch_column["id"]]).status_code==422
     assert invalid([other_column["id"]]).status_code==422
     assert invalid(["00000000-0000-0000-0000-000000000099"]).status_code==422
@@ -127,7 +129,7 @@ def test_editor_save_normalizes_dishes_by_custom_column_order_and_keeps_fallback
         {"dish_id":dishes[1]["id"],"menu_meal_type_column_id":None,"diner_count":40,"notes":"未指定","sort_order":2},
         {"dish_id":dishes[2]["id"],"menu_meal_type_column_id":earlier["id"],"diner_count":50,"notes":"前欄","sort_order":3},
     ]}]}
-    response=client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload)
+    response=save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload)
     assert response.status_code==200,response.text
     saved=response.json()["slots"][0]["dishes"]
     assert [item["dish_id"] for item in saved]==[dishes[2]["id"],dishes[0]["id"],dishes[1]["id"]]
@@ -149,7 +151,7 @@ def test_copy_day_preserves_same_menu_column_and_creates_or_reuses_cross_menu_co
     payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":source_meal["id"],"dishes":[{
         "dish_id":dishes[0]["id"],"menu_meal_type_column_id":source_column["id"],"diner_count":100,"sort_order":1,
     }]}]}
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
 
     same=client.post(f"/api/v1/menus/{source['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
     assert same.status_code==200,same.text
@@ -185,7 +187,7 @@ def test_copy_day_preserves_column_order_assignments_unassigned_and_modes(client
         {"dish_id":dishes[2]["id"],"menu_meal_type_column_id":soup["id"],"diner_count":60,"sort_order":3},
         {"dish_id":dishes[3]["id"],"menu_meal_type_column_id":None,"diner_count":40,"sort_order":4},
     ]}]}
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=source_payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=source_payload).status_code==200
 
     add_target=menu(client,headers,category["id"],"欄位加入目的")
     add_meal=meals(client,headers,add_target["id"],("中餐",))[0]
@@ -210,7 +212,7 @@ def test_copy_day_preserves_column_order_assignments_unassigned_and_modes(client
     replace_target=menu(client,headers,category["id"],"欄位覆蓋目的")
     replace_meal=meals(client,headers,replace_target["id"],("中餐",))[0]
     old_column=create_column(replace_target["id"],replace_meal,"舊欄位",1)
-    assert client.put(f"/api/v1/menus/{replace_target['id']}/editor",headers=headers,json={"slots":[{
+    assert save_editor(client,f"/api/v1/menus/{replace_target['id']}/editor",headers=headers,json={"slots":[{
         "menu_date":"2026-09-02","menu_meal_type_id":replace_meal["id"],"dishes":[{
             "dish_id":dishes[3]["id"],"menu_meal_type_column_id":old_column["id"],"diner_count":1,"sort_order":1}]}]}).status_code==200
     replace_response=client.post(f"/api/v1/menus/{replace_target['id']}/copy-day",headers=headers,json={
@@ -244,7 +246,7 @@ def test_copy_week_uses_distinct_destination_columns_and_persists_assignments(cl
             {"dish_id":dishes[1]["id"],"menu_meal_type_column_id":side["id"],"diner_count":80+offset,"sort_order":2},
             {"dish_id":dishes[2]["id"],"menu_meal_type_column_id":None,"diner_count":60+offset,"sort_order":3},
         ]})
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     assert response.status_code==200,response.text
     copied=response.json()
@@ -336,7 +338,7 @@ def test_controlled_hard_delete_for_empty_menu_and_unused_meal_type(client,db_se
 
 def test_three_days_three_meals_multiple_dishes_modify_remove_and_history_display(client,db_session):
     headers,actor_id=auth(client,db_session); category,dishes=foundations(client,headers); value=menu(client,headers,category["id"]); meal_types=meals(client,headers,value["id"])
-    saved=client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
+    saved=save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
     assert saved.status_code==200,saved.text; body=saved.json()
     editor_log=db_session.scalar(select(AuditLog).where(AuditLog.action=="menu_editor_save",AuditLog.entity_id==uuid.UUID(value["id"])));assert editor_log is not None
     assert len(body["dates"])==3 and len(body["meal_types"])==3 and len(body["slots"])==9
@@ -345,7 +347,7 @@ def test_three_days_three_meals_multiple_dishes_modify_remove_and_history_displa
     assert body["slots"][0]["dishes"][0]["created_by"]==actor_id
     first=body["slots"][0]; first["dishes"]=first["dishes"][:1]; first["dishes"][0]["diner_count"]=135; first["dishes"][0]["notes"]="修改後"
     payload={"slots":[{"menu_day_id":slot["menu_day_id"],"menu_date":slot["menu_date"],"menu_meal_type_id":slot["menu_meal_type_id"],"notes":slot["notes"],"dishes":[{"id":d["id"],"dish_id":d["dish_id"],"diner_count":d["diner_count"],"notes":d["notes"],"sort_order":d["sort_order"]} for d in slot["dishes"]]} for slot in body["slots"]]}
-    updated=client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload)
+    updated=save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload)
     assert updated.status_code==200 and updated.json()["slots"][0]["dishes"][0]["diner_count"]==135
     assert client.get(f"/api/v1/dishes/{dishes[0]['id']}",headers=headers).status_code==200
     client.post(f"/api/v1/dishes/{dishes[1]['id']}/deactivate",headers=headers)
@@ -357,7 +359,7 @@ def test_three_days_three_meals_multiple_dishes_modify_remove_and_history_displa
     inactive_slot=next(slot for slot in historical["slots"] if slot["menu_meal_type_id"]==meal_types[0]["id"])
     inactive_slot["dishes"].append({"dish_id":dishes[2]["id"],"diner_count":1,"sort_order":3})
     payload={"slots":[{"menu_day_id":slot["menu_day_id"],"menu_date":slot["menu_date"],"menu_meal_type_id":slot["menu_meal_type_id"],"notes":slot["notes"],"dishes":[{"id":d.get("id"),"dish_id":d["dish_id"],"diner_count":d["diner_count"],"notes":d.get("notes"),"sort_order":d["sort_order"]} for d in slot["dishes"]]} for slot in historical["slots"]]}
-    assert client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).status_code==422
+    assert save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).status_code==422
 
 
 def test_inactive_new_assignments_duplicate_and_atomic_rollback(client,db_session):
@@ -365,11 +367,11 @@ def test_inactive_new_assignments_duplicate_and_atomic_rollback(client,db_sessio
     client.post(f"/api/v1/dishes/{dishes[1]['id']}/deactivate",headers=headers)
     payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":meal_types[0]["id"],"dishes":[
         {"dish_id":dishes[0]["id"],"diner_count":1,"sort_order":1},{"dish_id":dishes[1]["id"],"diner_count":1,"sort_order":2}]}]}
-    assert client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).status_code==422
+    assert save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).status_code==422
     assert client.get(f"/api/v1/menus/{value['id']}/editor",headers=headers).json()["slots"]==[]
     duplicate={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":meal_types[0]["id"],"dishes":[
         {"dish_id":dishes[0]["id"],"diner_count":1,"sort_order":1},{"dish_id":dishes[0]["id"],"diner_count":2,"sort_order":2}]}]}
-    assert client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=duplicate).status_code==409
+    assert save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=duplicate).status_code==409
 
 
 def test_copy_day_preserves_values_and_is_atomic(client,db_session):
@@ -377,7 +379,7 @@ def test_copy_day_preserves_values_and_is_atomic(client,db_session):
     source=menu(client,headers,category["id"],"來源"); target=menu(client,headers,category["id"],"目的")
     source_meals=meals(client,headers,source["id"]); target_meals=meals(client,headers,target["id"])
     structure=full_structure(source["id"],source_meals,dishes,days=1)
-    client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=structure)
+    save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=structure)
     assert client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"replace"}).status_code==422
     copied=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"replace","confirm_replace":True})
     assert copied.status_code==200,copied.text
@@ -397,7 +399,7 @@ def test_copy_day_creates_dynamic_and_inactive_source_meal_types(client,db_sessi
     source_meals=meals(client,headers,source["id"],names)
     existing=meals(client,headers,target["id"],("第一餐",))[0]
     payload=full_structure(source["id"],source_meals,dishes,days=1)
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
     assert client.post(f"/api/v1/menus/{source['id']}/meal-types/{source_meals[2]['id']}/deactivate",headers=headers).status_code==200
 
     response=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
@@ -419,8 +421,8 @@ def test_copy_day_add_skips_duplicate_dish_assignment(client,db_session):
         {"dish_id":dishes[0]["id"],"diner_count":100,"sort_order":1},{"dish_id":dishes[1]["id"],"diner_count":80,"sort_order":2}]}]}
     target_payload={"slots":[{"menu_date":"2026-09-02","menu_meal_type_id":target_meal["id"],"dishes":[
         {"dish_id":dishes[0]["id"],"diner_count":5,"sort_order":1}]}]}
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=source_payload).status_code==200
-    assert client.put(f"/api/v1/menus/{target['id']}/editor",headers=headers,json=target_payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=source_payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{target['id']}/editor",headers=headers,json=target_payload).status_code==200
 
     response=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
     assert response.status_code==200,response.text
@@ -434,7 +436,7 @@ def test_exact_seven_day_week_copy(client,db_session):
     headers,_=auth(client,db_session); category,dishes=foundations(client,headers)
     source=menu(client,headers,category["id"],"來源週","2026-09-01","2026-09-07"); target=menu(client,headers,category["id"],"目的週","2026-09-08","2026-09-14")
     source_meals=meals(client,headers,source["id"],("早餐","午餐")); meals(client,headers,target["id"],("早餐","午餐"))
-    client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=full_structure(source["id"],source_meals,dishes,days=3))
+    save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=full_structure(source["id"],source_meals,dishes,days=3))
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     assert response.status_code==200,response.text
     assert len(response.json()["slots"])==6
@@ -446,7 +448,7 @@ def test_week_copy_creates_complete_meal_structure_for_empty_target(client,db_se
     target=menu(client,headers,category["id"],"空白目的","2026-09-08","2026-09-14")
     source_meals=meals(client,headers,source["id"],("早餐","午餐","晚點"))
     payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":source_meals[0]["id"],"notes":"早餐備註","dishes":[{"dish_id":dishes[0]["id"],"diner_count":120,"notes":"菜色備註","sort_order":1}]}]}
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
 
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     assert response.status_code==200,response.text
@@ -465,7 +467,7 @@ def test_week_copy_preserves_existing_case_insensitive_match_and_extra_meal(clie
     source_meals=meals(client,headers,source["id"],("BREAKFAST","午餐"))
     existing=meals(client,headers,target["id"],("breakfast","目的額外餐"))
     payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":source_meals[1]["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":1,"sort_order":1}]}]}
-    client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload)
+    save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload)
 
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     assert response.status_code==200,response.text
@@ -482,7 +484,7 @@ def test_week_copy_with_many_meals_preserves_partial_target_and_copies_all_days(
     source_meals=meals(client,headers,source["id"],names)
     target_meals=meals(client,headers,target["id"],names[:3])
     payload=full_structure(source["id"],source_meals,dishes,days=7)
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
 
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     assert response.status_code==200,response.text
@@ -510,11 +512,11 @@ def test_week_copy_same_dates_mixed_active_meals_add_and_replace(client,db_sessi
                 {"dish_id":dishes[0]["id"],"diner_count":100+offset,"notes":"菜色一","sort_order":1},
                 {"dish_id":dishes[1]["id"],"diner_count":80+offset,"notes":"菜色二","sort_order":2},
             ]})
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json={"slots":slots}).status_code==200
     for meal_type in source_meals[3:]:
         assert client.post(f"/api/v1/menus/{source['id']}/meal-types/{meal_type['id']}/deactivate",headers=headers).status_code==200
     existing_slot={"slots":[{"menu_date":"2026-08-17","menu_meal_type_id":replace_existing[0]["id"],"notes":"將被覆蓋","dishes":[{"dish_id":dishes[2]["id"],"diner_count":1,"sort_order":1}]}]}
-    assert client.put(f"/api/v1/menus/{replace_target['id']}/editor",headers=headers,json=existing_slot).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{replace_target['id']}/editor",headers=headers,json=existing_slot).status_code==200
 
     add_response=client.post(f"/api/v1/menus/{add_target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     replace_response=client.post(f"/api/v1/menus/{replace_target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"replace","confirm_replace":True})
@@ -541,7 +543,7 @@ def test_week_copy_copies_source_meal_deactivated_after_assignment(client,db_ses
     target=menu(client,headers,category["id"],"停用自訂餐別目的","2026-08-17","2026-08-23")
     source_meal=meals(client,headers,source["id"],("夜班專用餐",))[0]
     payload={"slots":[{"menu_date":"2026-08-17","menu_meal_type_id":source_meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":25,"sort_order":1}]}]}
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
     assert client.post(f"/api/v1/menus/{source['id']}/meal-types/{source_meal['id']}/deactivate",headers=headers).status_code==200
 
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
@@ -557,7 +559,7 @@ def test_week_copy_preserves_existing_destination_active_state(client,db_session
     target=menu(client,headers,category["id"],"停用目的","2026-09-08","2026-09-14")
     source_meals=meals(client,headers,source["id"],("夜班餐",)); target_meals=meals(client,headers,target["id"],("夜班餐",))
     payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":source_meals[0]["id"],"dishes":[]}]}
-    assert client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload).status_code==200
     client.post(f"/api/v1/menus/{source['id']}/meal-types/{source_meals[0]['id']}/deactivate",headers=headers)
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     assert response.status_code==200,response.text
@@ -571,7 +573,7 @@ def test_week_copy_rolls_back_created_meals_when_dish_copy_fails(client,db_sessi
     target=menu(client,headers,category["id"],"回滾目的","2026-09-08","2026-09-14")
     source_meals=meals(client,headers,source["id"],("早餐","空白餐"))
     payload={"slots":[{"menu_date":"2026-09-02","menu_meal_type_id":source_meals[0]["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":1,"sort_order":1}]}]}
-    client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload)
+    save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload)
     client.post(f"/api/v1/dishes/{dishes[0]['id']}/deactivate",headers=headers)
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     assert response.status_code==422
@@ -583,7 +585,7 @@ def test_copy_day_creates_missing_target_meals(client,db_session):
     headers,_=auth(client,db_session); category,dishes=foundations(client,headers)
     source=menu(client,headers,category["id"],"單日來源"); target=menu(client,headers,category["id"],"單日空白目的")
     source_meals=meals(client,headers,source["id"],("第一餐","下午點心"))
-    client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=full_structure(source["id"],source_meals,dishes,days=1))
+    save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=full_structure(source["id"],source_meals,dishes,days=1))
     response=client.post(f"/api/v1/menus/{target['id']}/copy-day",headers=headers,json={"source_menu_id":source["id"],"source_date":"2026-09-01","destination_date":"2026-09-02","mode":"add"})
     assert response.status_code==200,response.text
     assert [meal["name"] for meal in response.json()["meal_types"]]==["第一餐","下午點心"]
@@ -597,7 +599,7 @@ def test_week_copy_rolls_back_when_later_day_is_invalid(client,db_session):
         {"menu_date":"2026-09-01","menu_meal_type_id":source_meals[0]["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]},
         {"menu_date":"2026-09-02","menu_meal_type_id":source_meals[0]["id"],"dishes":[{"dish_id":dishes[1]["id"],"diner_count":20,"sort_order":1}]},
     ]}
-    client.put(f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload)
+    save_editor(client,f"/api/v1/menus/{source['id']}/editor",headers=headers,json=payload)
     client.post(f"/api/v1/dishes/{dishes[1]['id']}/deactivate",headers=headers)
     response=client.post(f"/api/v1/menus/{target['id']}/copy-week",headers=headers,json={"source_menu_id":source["id"],"mode":"add"})
     assert response.status_code==422
@@ -606,7 +608,7 @@ def test_week_copy_rolls_back_when_later_day_is_invalid(client,db_session):
 
 def test_aggregate_query_count_constant_and_fk(client,db_session):
     headers,_=auth(client,db_session); category,dishes=foundations(client,headers); value=menu(client,headers,category["id"]); meal_types=meals(client,headers,value["id"])
-    client.put(f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
+    save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
     statements=[]
     def record(conn,cursor,statement,parameters,context,executemany): statements.append(statement)
     event.listen(process_engine,"before_cursor_execute",record)

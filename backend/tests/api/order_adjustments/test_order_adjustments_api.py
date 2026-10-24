@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
@@ -87,7 +89,7 @@ def test_adjusted_weekly_excel_exports_each_menu_without_mixing_source_lines(cli
     headers=auth(client,db_session);menu_a,_,dishes,*_=fixture(client,headers)
     menu_b=client.post("/api/v1/menus",headers=headers,json={"name":"第二份調整菜單","start_date":"2026-09-01","end_date":"2026-09-01"}).json()
     meal_b=client.post(f"/api/v1/menus/{menu_b['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
-    assert client.put(
+    assert save_editor(client,
         f"/api/v1/menus/{menu_b['id']}/editor",headers=headers,
         json={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":meal_b["id"],"dishes":[{"dish_id":dishes[1]["id"],"diner_count":7,"sort_order":1}]}]},
     ).status_code==200
@@ -117,7 +119,7 @@ def test_reuse_preview_and_apply_are_authoritative_versioned_and_audited(client,
     assert previous["status"]=="confirmed"
     current_menu=client.post("/api/v1/menus",headers=headers,json={"name":"下一週菜單","start_date":"2026-09-08","end_date":"2026-09-08"}).json()
     meal=client.post(f"/api/v1/menus/{current_menu['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
-    assert client.put(f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":9},{"dish_id":dishes[1]["id"],"diner_count":5,"sort_order":1}]}]}).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":9},{"dish_id":dishes[1]["id"],"diner_count":5,"sort_order":1}]}]}).status_code==200
     current=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[current_menu["id"]],"selected_dates":["2026-09-08"]}}).json()
     payload={"previous_sheet_id":previous["id"],"current_lock_version":current["lock_version"],"previous_lock_version":previous["lock_version"],"menu_pairs":[{"previous_menu_id":previous_menu["id"],"current_menu_id":current_menu["id"]}]}
     preview=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=payload)
@@ -148,7 +150,7 @@ def test_reference_only_review_state_persists_until_each_line_is_saved(client,db
 
     current_menu=client.post("/api/v1/menus",headers=headers,json={"name":"Review 持久化菜單","start_date":"2026-09-08","end_date":"2026-09-08"}).json()
     meal=client.post(f"/api/v1/menus/{current_menu['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
-    saved=client.put(f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[
+    saved=save_editor(client,f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[
         {"dish_id":dishes[0]["id"],"diner_count":11,"sort_order":1},
         {"dish_id":dishes[1]["id"],"diner_count":5,"sort_order":2},
     ]}]})
@@ -295,7 +297,7 @@ def test_adjusted_unit_flows_to_requirements_confirmation_and_reuse(client,db_se
 
     current_menu=client.post("/api/v1/menus",headers=headers,json={"name":"單位沿用菜單","start_date":"2026-09-08","end_date":"2026-09-08"}).json()
     meal=client.post(f"/api/v1/menus/{current_menu['id']}/meal-types",headers=headers,json={"name":"早餐","sort_order":1}).json()
-    client.put(f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]}]})
+    save_editor(client,f"/api/v1/menus/{current_menu['id']}/editor",headers=headers,json={"slots":[{"menu_date":"2026-09-08","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":10,"sort_order":1}]}]})
     current=client.post("/api/v1/order-adjustments",headers=headers,json={"criteria":{"menu_ids":[current_menu["id"]],"selected_dates":["2026-09-08"]}}).json();payload={"previous_sheet_id":created["id"],"current_lock_version":current["lock_version"],"previous_lock_version":confirmed.json()["lock_version"],"menu_pairs":[{"previous_menu_id":menu["id"],"current_menu_id":current_menu["id"]}]}
     preview=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=payload).json();reusable=next(item for item in preview["lines"] if item["previous_line_id"]==target["id"])
     applied=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse",headers=headers,json={**payload,"selected_current_line_ids":[reusable["current_line_id"]]})

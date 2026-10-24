@@ -10,15 +10,16 @@ from app.domains.menus.exceptions import (
     DuplicateMenuDishError, InvalidMenuCategoryError, InvalidMenuCopyError,
     InvalidMenuDateRangeError, InvalidMenuStructureError, MealTypeInUseError,
     MealTypeColumnNameExistsError, MealTypeColumnNotFoundError,
-    MealTypeNameExistsError, MealTypeNotFoundError, MenuInUseError, MenuNotFoundError,
+    MealTypeNameExistsError, MealTypeNotFoundError, MenuInUseError, MenuNotFoundError, MenuVersionConflictError,
 )
+from app.domains.menus.fingerprint import editor_fingerprint, slot_fingerprint
 from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType, MenuMealTypeColumn
 from app.domains.menus.placement import menu_dish_visual_rows
 from app.domains.menus.repository import MenuRepository
 from app.domains.menus.schemas import (
     CopyDayCommand, CopyWeekCommand, MealTypeColumnCreate, MealTypeColumnReorder,
     MealTypeColumnUpdate, MealTypeCreate, MealTypeReorder, MealTypeUpdate, MenuCreate,
-    MenuDishMove, MenuEditorSave, MenuUpdate,
+    MenuDishMove, MenuEditorSave, MenuMealSlotSave, MenuSlotInput, MenuUpdate,
 )
 
 
@@ -29,6 +30,11 @@ class MenuService:
     def model(self, menu_id):
         value=self.repository.menu_model(menu_id)
         if value is None: raise MenuNotFoundError()
+        return value
+
+    def _lock_menu(self, menu_id):
+        value=self.repository.menu_model(menu_id,for_update=True)
+        if value is None:raise MenuNotFoundError()
         return value
 
     def get(self, menu_id):
@@ -139,7 +145,7 @@ class MenuService:
         return menu
 
     def update(self, menu_id, data: MenuUpdate, actor_id):
-        menu=self.model(menu_id); before=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active"); changes=data.model_dump(exclude_unset=True)
+        menu=self._lock_menu(menu_id); before=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active"); changes=data.model_dump(exclude_unset=True)
         start=changes.get("start_date",menu.start_date); end=changes.get("end_date",menu.end_date)
         if end < start: raise InvalidMenuDateRangeError()
         if "category_id" in changes: self._category(changes["category_id"])
@@ -153,14 +159,14 @@ class MenuService:
         self.session.commit(); return self.get(menu_id)
 
     def set_active(self, menu_id, active, actor_id):
-        menu=self.model(menu_id); before=audit_snapshot(menu,"name","is_active"); menu.is_active=active; menu.updated_by=actor_id
+        menu=self._lock_menu(menu_id); before=audit_snapshot(menu,"name","is_active"); menu.is_active=active; menu.updated_by=actor_id
         self.audit.record(actor_id=actor_id,action="menu_reactivate" if active else "menu_deactivate",entity_type="menu",
             entity_id=menu.id,entity_label=menu.name,before_data=before,after_data=audit_snapshot(menu,"name","is_active"))
         self.session.commit(); return self.get(menu_id)
 
     def hard_delete(self, menu_id, actor_id, password):
         AuthService(self.session).verify_current_password(actor_id,password)
-        menu=self.model(menu_id)
+        menu=self._lock_menu(menu_id)
         before=audit_snapshot(menu,"name","start_date","end_date","category_id","notes","is_active")
         if self.repository.has_children(menu_id): raise MenuInUseError()
         self.repository.delete(menu)
@@ -171,7 +177,7 @@ class MenuService:
     def meal_types(self, menu_id): self.model(menu_id); return self.repository.meal_types(menu_id)
 
     def create_meal_type(self, menu_id, data: MealTypeCreate, actor_id):
-        self.model(menu_id); name=data.name.strip()
+        self._lock_menu(menu_id); name=data.name.strip()
         if self.repository.meal_name_exists(menu_id,name): raise MealTypeNameExistsError()
         value=MenuMealType(id=uuid.uuid4(),menu_id=menu_id,name=name,sort_order=data.sort_order,created_by=actor_id,updated_by=actor_id)
         self.repository.add(value)
@@ -185,6 +191,7 @@ class MenuService:
         return value
 
     def update_meal_type(self, menu_id, meal_type_id, data: MealTypeUpdate, actor_id):
+        self._lock_menu(menu_id)
         value=self._meal(menu_id,meal_type_id); before=audit_snapshot(value,"menu_id","name","sort_order","is_active")
         if data.name is not None:
             name=data.name.strip()
@@ -197,6 +204,7 @@ class MenuService:
         self._commit_meal(); return value
 
     def set_meal_active(self, menu_id, meal_type_id, active, actor_id):
+        self._lock_menu(menu_id)
         value=self._meal(menu_id,meal_type_id); before=audit_snapshot(value,"menu_id","name","sort_order","is_active"); value.is_active=active; value.updated_by=actor_id
         self.audit.record(actor_id=actor_id,action="meal_type_reactivate" if active else "meal_type_deactivate",
             entity_type="menu_meal_type",entity_id=value.id,entity_label=value.name,before_data=before,
@@ -204,6 +212,7 @@ class MenuService:
         self.session.commit(); return value
 
     def reorder_meal_types(self, menu_id, data: MealTypeReorder, actor_id):
+        self._lock_menu(menu_id)
         values=self.repository.meal_types(menu_id)
         by_id={item.id:item for item in values}
         if len(set(data.ordered_ids)) != len(data.ordered_ids) or set(data.ordered_ids) != set(by_id):
@@ -218,6 +227,7 @@ class MenuService:
 
     def hard_delete_meal(self, menu_id, meal_type_id, actor_id, password):
         AuthService(self.session).verify_current_password(actor_id,password)
+        self._lock_menu(menu_id)
         value=self._meal(menu_id,meal_type_id)
         before=audit_snapshot(value,"menu_id","name","sort_order","is_active")
         if self.repository.meal_type_has_days(meal_type_id): raise MealTypeInUseError()
@@ -241,6 +251,7 @@ class MenuService:
         return value
 
     def create_meal_type_column(self, menu_id, meal_type_id, data: MealTypeColumnCreate, actor_id):
+        self._lock_menu(menu_id)
         self._meal(menu_id,meal_type_id); name=data.name.strip()
         if self.repository.column_name_exists(meal_type_id,name): raise MealTypeColumnNameExistsError()
         value=MenuMealTypeColumn(id=uuid.uuid4(),menu_meal_type_id=meal_type_id,name=name,sort_order=data.sort_order,
@@ -251,6 +262,7 @@ class MenuService:
         self._commit_column(); return value
 
     def update_meal_type_column(self, menu_id, meal_type_id, column_id, data: MealTypeColumnUpdate, actor_id):
+        self._lock_menu(menu_id)
         value=self._column(menu_id,meal_type_id,column_id); name=data.name.strip()
         if self.repository.column_name_exists(meal_type_id,name,column_id): raise MealTypeColumnNameExistsError()
         before=audit_snapshot(value,"menu_meal_type_id","name","sort_order")
@@ -261,6 +273,7 @@ class MenuService:
         self._commit_column(); return value
 
     def reorder_meal_type_columns(self, menu_id, meal_type_id, data: MealTypeColumnReorder, actor_id):
+        self._lock_menu(menu_id)
         self._meal(menu_id,meal_type_id); values=self.repository.meal_type_columns(meal_type_id)
         by_id={item.id:item for item in values}
         if len(set(data.ordered_ids))!=len(data.ordered_ids) or set(data.ordered_ids)!=set(by_id):
@@ -273,6 +286,7 @@ class MenuService:
         self.session.commit(); return self.repository.meal_type_columns(meal_type_id)
 
     def delete_meal_type_column(self, menu_id, meal_type_id, column_id, actor_id):
+        self._lock_menu(menu_id)
         value=self._column(menu_id,meal_type_id,column_id)
         before=audit_snapshot(value,"menu_meal_type_id","name","sort_order")
         self.repository.delete(value)
@@ -285,7 +299,11 @@ class MenuService:
         except IntegrityError as exc:self.session.rollback();raise MealTypeColumnNameExistsError() from exc
 
     def aggregate(self, menu_id):
-        menu=self.get(menu_id); meal_types=self.repository.meal_types(menu_id)
+        # Readers and all menu writers share the same root lock. This also
+        # protects empty slots, where a MenuDay row does not exist yet.
+        row=self.repository.menu_view(menu_id,for_share=True)
+        if row is None:raise MenuNotFoundError()
+        menu=dict(row); meal_types=self.repository.meal_types(menu_id)
         grouped={}
         for row in self.repository.aggregate_rows(menu_id):
             key=row["menu_day_id"]
@@ -300,18 +318,91 @@ class MenuService:
                     "created_by":row["created_by"],"updated_by":row["updated_by"]})
         dates=[]; current=menu["start_date"]
         while current <= menu["end_date"]: dates.append(current); current += timedelta(days=1)
-        return {"menu":menu,"dates":dates,"meal_types":meal_types,
+        result={"menu":menu,"dates":dates,"meal_types":meal_types,
             "meal_type_columns":self.repository.menu_columns(menu_id),"slots":list(grouped.values())}
+        result["editor_fingerprint"]=editor_fingerprint(result)
+        return result
 
     def save_editor(self, menu_id, data: MenuEditorSave, actor_id):
-        menu=self.model(menu_id)
-        before=self.aggregate(menu_id)
+        try:
+            menu=self._lock_menu(menu_id)
+            before=self.aggregate(menu_id)
+            if data.expected_editor_fingerprint is None:
+                raise MenuVersionConflictError("MENU_VERSION_REQUIRED",before["editor_fingerprint"])
+            if data.expected_editor_fingerprint!=before["editor_fingerprint"]:
+                raise MenuVersionConflictError(current_fingerprint=before["editor_fingerprint"])
+            self._write_slots(menu,data.slots,actor_id)
+            after=self.aggregate(menu_id)
+            self.audit.record(actor_id=actor_id,action="menu_editor_save",entity_type="menu",entity_id=menu.id,
+                entity_label=menu.name,before_data=before,after_data=after)
+            self.session.commit()
+            return after
+        except Exception:
+            self.session.rollback();raise
+
+    def meal_slot(self,menu_id,meal_type_id,menu_date):
+        aggregate=self.aggregate(menu_id)
+        self._meal(menu_id,meal_type_id)
+        if not (aggregate["menu"]["start_date"]<=menu_date<=aggregate["menu"]["end_date"]):
+            raise InvalidMenuStructureError("Slot date is outside menu range")
+        slot=next((slot for slot in aggregate["slots"] if slot["menu_date"]==menu_date
+                   and slot["menu_meal_type_id"]==meal_type_id),None)
+        return {**(slot or {"menu_day_id":None,"menu_date":menu_date,
+                "menu_meal_type_id":meal_type_id,"notes":None,"dishes":[]}),
+                "slot_fingerprint":slot_fingerprint(aggregate,menu_date,meal_type_id)}
+
+    def save_meal_slot(self,menu_id,meal_type_id,menu_date,data:MenuMealSlotSave,actor_id):
+        try:
+            if data.ordering_adjustment_context is not None:
+                self._lock_adjustment_edit_context(data.ordering_adjustment_context,menu_id,menu_date)
+            menu=self._lock_menu(menu_id)
+            before=self.meal_slot(menu_id,meal_type_id,menu_date)
+            if data.expected_slot_fingerprint!=before["slot_fingerprint"]:
+                raise MenuVersionConflictError("MENU_SLOT_VERSION_CONFLICT",before["slot_fingerprint"])
+            if data.menu_day_id is not None and data.menu_day_id!=before["menu_day_id"]:
+                raise InvalidMenuStructureError("Menu day identity mismatch")
+            slot=MenuSlotInput(menu_day_id=before["menu_day_id"],menu_date=menu_date,
+                menu_meal_type_id=meal_type_id,notes=data.notes,dishes=data.dishes)
+            self._write_slots(menu,[slot],actor_id,only_slot=(menu_date,meal_type_id))
+            after=self.meal_slot(menu_id,meal_type_id,menu_date)
+            self.audit.record(actor_id=actor_id,action="menu_meal_slot_save",entity_type="menu",entity_id=menu.id,
+                entity_label=menu.name,before_data=before,after_data=after)
+            aggregate=self.aggregate(menu_id)
+            self.session.commit()
+            return aggregate
+        except Exception:
+            self.session.rollback();raise
+
+    def _lock_adjustment_edit_context(self,context,menu_id,menu_date):
+        # Same ordering as confirm/sync/purchase: adjustment sheet before menu.
+        # Stale is allowed here: this action edits only the source menu.
+        from app.domains.menus.exceptions import MenuAdjustmentContextError
+        from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
+        from app.domains.requirements.schemas import RequirementCriteria
+
+        repository=OrderingAdjustmentRepository(self.session)
+        sheet=repository.sheet(context.sheet_id,for_update=True)
+        if sheet is None:raise MenuAdjustmentContextError("ADJUSTMENT_NOT_FOUND",404)
+        if sheet.status!="draft":raise MenuAdjustmentContextError("INVALID_ADJUSTMENT_STATUS")
+        if sheet.lock_version!=context.lock_version:raise MenuAdjustmentContextError("LOCK_VERSION_CONFLICT")
+        if repository.purchase(sheet.baseline_snapshot_id):raise MenuAdjustmentContextError("SNAPSHOT_LOCKED")
+        snapshot=repository.snapshot(sheet.baseline_snapshot_id)
+        criteria=RequirementCriteria.model_validate(snapshot.criteria)
+        in_date=(menu_date in criteria.selected_dates) if criteria.selected_dates is not None else (
+            criteria.start_date<=menu_date<=criteria.end_date if criteria.start_date is not None else True)
+        if snapshot.snapshot_kind!="ordering_adjustment" or menu_id not in criteria.menu_ids or not in_date:
+            raise MenuAdjustmentContextError("ADJUSTMENT_MENU_OUT_OF_SCOPE",403)
+
+    def _write_slots(self,menu,slots,actor_id,only_slot=None):
+        """Shared validation and replacement inside the caller's locked transaction."""
+        menu_id=menu.id
         meal_types={item.id:item for item in self.repository.meal_types(menu_id)}
-        existing_days={item.id:item for item in self.repository.days(menu_id)}
+        existing_days={item.id:item for item in self.repository.days(menu_id)
+                       if only_slot is None or (item.menu_date,item.menu_meal_type_id)==only_slot}
         existing_details={item.id:item for item in self.repository.details(set(existing_days))}
-        retained_days=set(); retained_details=set(); seen_slots=set()
-        all_dish_ids={detail.dish_id for slot in data.slots for detail in slot.dishes}
-        all_column_ids={detail.menu_meal_type_column_id for slot in data.slots for detail in slot.dishes if detail.menu_meal_type_column_id is not None}
+        retained_details=set(); seen_slots=set()
+        all_dish_ids={detail.dish_id for slot in slots for detail in slot.dishes}
+        all_column_ids={detail.menu_meal_type_column_id for slot in slots for detail in slot.dishes if detail.menu_meal_type_column_id is not None}
         dishes=self.repository.dish_models(all_dish_ids)
         columns=self.repository.meal_type_column_models(all_column_ids)
         columns_by_meal={}
@@ -319,65 +410,63 @@ class MenuService:
             columns_by_meal.setdefault(column.menu_meal_type_id,[]).append(column)
         if len(dishes) != len(all_dish_ids): raise InvalidMenuStructureError("Dish not found")
         if len(columns) != len(all_column_ids): raise InvalidMenuStructureError("Menu column not found")
-        try:
-            for slot in data.slots:
-                key=(slot.menu_date,slot.menu_meal_type_id)
-                if key in seen_slots: raise InvalidMenuStructureError("Duplicate date and meal type slot")
-                seen_slots.add(key)
-                meal=meal_types.get(slot.menu_meal_type_id)
-                if meal is None: raise InvalidMenuStructureError("Meal type does not belong to this menu")
-                if not (menu.start_date <= slot.menu_date <= menu.end_date): raise InvalidMenuStructureError("Slot date is outside menu range")
-                if slot.menu_day_id is None and not slot.dishes and not slot.notes:
-                    continue
-                if slot.menu_day_id is None:
-                    if not meal.is_active: raise InvalidMenuStructureError("Inactive meal type cannot receive a new assignment")
-                    day=MenuDay(menu_id=menu_id,menu_date=slot.menu_date,menu_meal_type_id=meal.id,
-                                created_by=actor_id,updated_by=actor_id)
-                    self.repository.add(day); self.session.flush()
+        # Release old unique column assignments and remove obsolete dish rows
+        # before inserts/updates, so swaps and remove+readd cannot collide mid-flush.
+        submitted_ids={detail.id for slot in slots for detail in slot.dishes if detail.id is not None}
+        for detail_id,detail in existing_details.items():
+            if detail_id not in submitted_ids:self.repository.delete(detail)
+            else:detail.menu_meal_type_column_id=None
+        self.session.flush()
+        for slot in slots:
+            key=(slot.menu_date,slot.menu_meal_type_id)
+            if key in seen_slots: raise InvalidMenuStructureError("Duplicate date and meal type slot")
+            seen_slots.add(key)
+            meal=meal_types.get(slot.menu_meal_type_id)
+            if meal is None: raise InvalidMenuStructureError("Meal type does not belong to this menu")
+            if not (menu.start_date <= slot.menu_date <= menu.end_date): raise InvalidMenuStructureError("Slot date is outside menu range")
+            if slot.menu_day_id is None and not slot.dishes and not slot.notes:
+                continue
+            if slot.menu_day_id is None:
+                if not meal.is_active: raise InvalidMenuStructureError("Inactive meal type cannot receive a new assignment")
+                day=MenuDay(menu_id=menu_id,menu_date=slot.menu_date,menu_meal_type_id=meal.id,
+                            created_by=actor_id,updated_by=actor_id)
+                self.repository.add(day); self.session.flush()
+            else:
+                day=existing_days.get(slot.menu_day_id)
+                if day is None or day.menu_date != slot.menu_date or day.menu_meal_type_id != meal.id:
+                    raise InvalidMenuStructureError("Menu day identity mismatch")
+            day.notes=slot.notes; day.updated_by=actor_id
+            seen_dishes=set();seen_columns=set();slot_details=[]
+            for order,payload in enumerate(sorted(slot.dishes,key=lambda value:value.sort_order),1):
+                if payload.dish_id in seen_dishes: raise DuplicateMenuDishError()
+                seen_dishes.add(payload.dish_id); dish=dishes[payload.dish_id]
+                if payload.menu_meal_type_column_id is not None:
+                    column=columns[payload.menu_meal_type_column_id]
+                    if column.menu_meal_type_id != meal.id: raise InvalidMenuStructureError("Menu column does not belong to this meal type")
+                    if column.id in seen_columns: raise InvalidMenuStructureError("Menu column may be used only once in a meal slot")
+                    seen_columns.add(column.id)
+                if payload.id is None:
+                    if not meal.is_active: raise InvalidMenuStructureError("Inactive meal type cannot receive a new dish assignment")
+                    if not dish.is_active: raise InvalidMenuStructureError("Inactive dish cannot be newly assigned")
+                    detail=MenuDish(menu_day_id=day.id,dish_id=dish.id,created_by=actor_id,updated_by=actor_id)
+                    self.repository.add(detail)
                 else:
-                    day=existing_days.get(slot.menu_day_id)
-                    if day is None or day.menu_date != slot.menu_date or day.menu_meal_type_id != meal.id:
-                        raise InvalidMenuStructureError("Menu day identity mismatch")
-                    retained_days.add(day.id)
-                day.notes=slot.notes; day.updated_by=actor_id
-                seen_dishes=set();seen_columns=set();slot_details=[]
-                for order,payload in enumerate(sorted(slot.dishes,key=lambda value:value.sort_order),1):
-                    if payload.dish_id in seen_dishes: raise DuplicateMenuDishError()
-                    seen_dishes.add(payload.dish_id); dish=dishes[payload.dish_id]
-                    if payload.menu_meal_type_column_id is not None:
-                        column=columns[payload.menu_meal_type_column_id]
-                        if column.menu_meal_type_id != meal.id: raise InvalidMenuStructureError("Menu column does not belong to this meal type")
-                        if column.id in seen_columns: raise InvalidMenuStructureError("Menu column may be used only once in a meal slot")
-                        seen_columns.add(column.id)
-                    if payload.id is None:
-                        if not meal.is_active: raise InvalidMenuStructureError("Inactive meal type cannot receive a new dish assignment")
-                        if not dish.is_active: raise InvalidMenuStructureError("Inactive dish cannot be newly assigned")
-                        detail=MenuDish(menu_day_id=day.id,dish_id=dish.id,created_by=actor_id,updated_by=actor_id)
-                        self.repository.add(detail)
-                    else:
-                        detail=existing_details.get(payload.id)
-                        if detail is None or detail.menu_day_id != day.id or detail.dish_id != dish.id:
-                            raise InvalidMenuStructureError("Menu dish identity mismatch")
-                        retained_details.add(detail.id)
-                    detail.menu_meal_type_column_id=payload.menu_meal_type_column_id
-                    detail.diner_count=payload.diner_count; detail.notes=payload.notes
-                    detail.sort_order=order; detail.updated_by=actor_id
-                    slot_details.append(detail)
-                visual_rows=menu_dish_visual_rows(columns_by_meal.get(meal.id,[]),slot_details)
-                for order,row in enumerate((row for row in visual_rows if row.dish is not None),1):
-                    row.dish.sort_order=order
-            submitted_existing_day_ids={slot.menu_day_id for slot in data.slots if slot.menu_day_id}
-            for detail_id,detail in existing_details.items():
-                if detail_id not in retained_details: self.repository.delete(detail)
-            for day_id,day in existing_days.items():
-                if day_id not in submitted_existing_day_ids: self.repository.delete(day)
-            after=self.aggregate(menu_id)
-            self.audit.record(actor_id=actor_id,action="menu_editor_save",entity_type="menu",entity_id=menu.id,
-                entity_label=menu.name,before_data=before,after_data=after)
-            self.session.commit()
-        except Exception:
-            self.session.rollback(); raise
-        return self.aggregate(menu_id)
+                    detail=existing_details.get(payload.id)
+                    if detail is None or detail.menu_day_id != day.id or detail.dish_id != dish.id:
+                        raise InvalidMenuStructureError("Menu dish identity mismatch")
+                    if detail.id in retained_details:raise InvalidMenuStructureError("Duplicate menu dish identity")
+                    retained_details.add(detail.id)
+                detail.menu_meal_type_column_id=payload.menu_meal_type_column_id
+                detail.diner_count=payload.diner_count; detail.notes=payload.notes
+                detail.sort_order=order; detail.updated_by=actor_id
+                slot_details.append(detail)
+            visual_rows=menu_dish_visual_rows(columns_by_meal.get(meal.id,[]),slot_details)
+            for order,row in enumerate((row for row in visual_rows if row.dish is not None),1):
+                row.dish.sort_order=order
+        submitted_existing_day_ids={slot.menu_day_id for slot in slots if slot.menu_day_id}
+        for day_id,day in existing_days.items():
+            if day_id not in submitted_existing_day_ids:self.repository.delete(day)
+        self.session.flush()
 
     def move_menu_dish(self,menu_id,data:MenuDishMove,actor_id):
         menu=self.repository.menu_model(menu_id,for_update=True)
@@ -470,6 +559,7 @@ class MenuService:
         return self.aggregate(menu_id)
 
     def copy_day(self, destination_menu_id, command: CopyDayCommand, actor_id):
+        self.repository.lock_menus({destination_menu_id,command.source_menu_id})
         destination=self.model(destination_menu_id); before=self.aggregate(destination_menu_id)
         try:
             self._copy_day(destination_menu_id,command.source_menu_id,command.source_date,command.destination_date,command.mode,actor_id)
@@ -579,6 +669,7 @@ class MenuService:
                 if column_id is not None:columns_by_day[dest_day.id].add(column_id)
 
     def copy_week(self,destination_menu_id,command: CopyWeekCommand,actor_id):
+        self.repository.lock_menus({destination_menu_id,command.source_menu_id})
         source=self.model(command.source_menu_id); destination=self.model(destination_menu_id)
         before=self.aggregate(destination_menu_id)
         if (source.end_date-source.start_date).days != 6 or (destination.end_date-destination.start_date).days != 6:

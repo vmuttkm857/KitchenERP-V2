@@ -119,6 +119,20 @@ class MenuSlotInput(BaseModel):
 
 class MenuEditorSave(BaseModel):
     slots: list[MenuSlotInput] = Field(max_length=5000)
+    expected_editor_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class MenuMealAdjustmentContext(BaseModel):
+    sheet_id: uuid.UUID
+    lock_version: int = Field(ge=1)
+
+
+class MenuMealSlotSave(BaseModel):
+    expected_slot_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ordering_adjustment_context: MenuMealAdjustmentContext | None = None
+    menu_day_id: uuid.UUID | None = None
+    notes: str | None = Field(default=None, max_length=1000)
+    dishes: list[MenuDishInput] = Field(default_factory=list, max_length=200)
 
 
 class MenuDishMove(BaseModel):
@@ -158,6 +172,12 @@ class MenuEditorAggregate(BaseModel):
     meal_types: list[MealTypePublic]
     meal_type_columns: list[MealTypeColumnPublic]
     slots: list[MenuSlotPublic]
+    editor_fingerprint: str
+
+
+class MenuMealSlotDetail(MenuSlotPublic):
+    menu_day_id: uuid.UUID | None
+    slot_fingerprint: str
 
 
 class CopyDayCommand(BaseModel):

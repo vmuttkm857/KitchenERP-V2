@@ -1,3 +1,5 @@
+from tests.menu_editor import save_editor
+
 from io import BytesIO
 from urllib.parse import unquote
 
@@ -108,7 +110,7 @@ def test_menu_driven_plan_missing_profile_and_pdf(client:TestClient,db_session:S
     menu=client.post("/api/v1/menus",headers=admin,json={"name":"九月菜單","start_date":"2026-09-01","end_date":"2026-09-02","category_id":category["id"]}).json()
     meal=client.post(f"/api/v1/menus/{menu['id']}/meal-types",headers=admin,json={"name":"午餐","sort_order":1}).json()
     payload={"slots":[{"menu_date":"2026-09-01","menu_meal_type_id":meal["id"],"dishes":[{"dish_id":dishes[2]["id"],"diner_count":120,"sort_order":3},{"dish_id":dishes[1]["id"],"diner_count":80,"sort_order":2},{"dish_id":dishes[0]["id"],"diner_count":286,"sort_order":1}]}]}
-    assert client.put(f"/api/v1/menus/{menu['id']}/editor",headers=admin,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{menu['id']}/editor",headers=admin,json=payload).status_code==200
     client.post(f"/api/v1/dishes/{dishes[0]['id']}/production-profile",headers=admin,json={"max_batch_size":100})
     client.post(f"/api/v1/dishes/{dishes[0]['id']}/production-profile/versions",headers=admin,json={"serving_count":100,"name":"百人正式版","is_official":True})
     draft=client.post(f"/api/v1/dishes/{dishes[0]['id']}/production-profile/versions",headers=admin,json={"serving_count":60,"name":"六十人草稿","is_official":False}).json()
@@ -148,7 +150,7 @@ def test_selected_meal_uses_its_actual_diner_counts_sorting_and_per_dish_maximum
         {"menu_date":"2026-09-01","menu_meal_type_id":meal_types[1]["id"],"dishes":[{"dish_id":dishes[1]["id"],"diner_count":286,"sort_order":2},{"dish_id":dishes[0]["id"],"diner_count":286,"sort_order":1}]},
         {"menu_date":"2026-09-01","menu_meal_type_id":meal_types[2]["id"],"dishes":[{"dish_id":dishes[0]["id"],"diner_count":80,"sort_order":1}]},
     ]}
-    assert client.put(f"/api/v1/menus/{menu['id']}/editor",headers=admin,json=payload).status_code==200
+    assert save_editor(client,f"/api/v1/menus/{menu['id']}/editor",headers=admin,json=payload).status_code==200
     client.post(f"/api/v1/dishes/{dishes[0]['id']}/production-profile",headers=admin,json={"max_batch_size":100})
     client.post(f"/api/v1/dishes/{dishes[1]['id']}/production-profile",headers=admin,json={"max_batch_size":50})
 
