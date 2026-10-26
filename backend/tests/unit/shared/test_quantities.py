@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.shared.domain.quantities import calculate_recipe_cost, convert_quantity, quantize_quantity
+from app.shared.domain.quantities import calculate_recipe_cost, classify_erp_unit, convert_quantity, quantize_quantity
 
 
 def test_weight_and_volume_conversions_are_decimal_safe() -> None:
@@ -12,6 +12,15 @@ def test_weight_and_volume_conversions_are_decimal_safe() -> None:
 def test_unknown_dimensions_are_not_guessed_and_legacy_ml_is_not_runtime_compatible() -> None:
     assert not convert_quantity(Decimal("1"), "個", "kg").convertible
     assert not convert_quantity(Decimal("1"), "mL", "ml").convertible
+
+
+def test_erp_unit_classification_distinguishes_weight_non_weight_and_invalid_data() -> None:
+    for unit in ("g", "kg", "斤", "KG"):
+        assert classify_erp_unit(unit) == "weight"
+    for unit in ("片", "個", "隻", "包", "盒", "袋", "箱", "ml", "L", "罐", "桶"):
+        assert classify_erp_unit(unit) == "non_weight"
+    for unit in (None, "", "   ", "公克", 123):
+        assert classify_erp_unit(unit) == "invalid"
 
 
 def test_recipe_cost_includes_percentage_loss() -> None:

@@ -1,10 +1,15 @@
 from dataclasses import dataclass
 from decimal import Decimal,ROUND_HALF_UP
+from typing import Literal
 
 
 _UNIT_ALIASES = {"l": "L", "ml": "ml", "g": "g", "kg": "kg", "斤": "斤"}
 _WEIGHT_IN_GRAMS = {"g": Decimal("1"), "kg": Decimal("1000"), "斤": Decimal("600")}
 _VOLUME_IN_ML = {"ml": Decimal("1"), "L": Decimal("1000")}
+# Canonical units accepted by current ERP workflows and historical data.  Units
+# in this set are valid business data even when they cannot convert to weight.
+ERP_UNITS = frozenset({"g", "kg", "斤", "片", "個", "隻", "包", "盒", "袋", "箱", "ml", "L", "罐", "桶"})
+WEIGHT_UNITS = frozenset(_WEIGHT_IN_GRAMS)
 QUANTITY_QUANTUM = Decimal("0.000001")
 
 
@@ -24,6 +29,18 @@ def normalize_unit(unit: str) -> str:
     if stripped == "mL":
         return stripped
     return _UNIT_ALIASES.get(stripped.lower(), stripped)
+
+
+def classify_erp_unit(unit: object) -> Literal["weight", "non_weight", "invalid"]:
+    """Classify a persisted unit without guessing unknown or damaged values."""
+    if not isinstance(unit, str) or not unit.strip():
+        return "invalid"
+    normalized = normalize_unit(unit)
+    if normalized in WEIGHT_UNITS:
+        return "weight"
+    if normalized in ERP_UNITS:
+        return "non_weight"
+    return "invalid"
 
 
 def convert_quantity(quantity: Decimal, source_unit: str, target_unit: str) -> ConversionResult:

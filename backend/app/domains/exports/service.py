@@ -10,6 +10,7 @@ from app.domains.nutrition.dish_service import DishNutritionService
 from app.domains.purchases.service import PurchaseService
 from app.domains.production.service import ProductionService
 from app.domains.exports.recipe_cards import recipe_cards_pdf
+from app.domains.exports.supplier_weekly import rows_from_adjustment_lines,rows_from_snapshot_items,supplier_weekly_workbook
 from app.domains.requirements.service import RequirementService
 from app.domains.order_adjustments.service import OrderingAdjustmentService
 from app.domains.snapshots.service import SnapshotService
@@ -53,6 +54,20 @@ class ExportService:
         result=SnapshotService(self.session).detail(snapshot_id)
         if not result["items"]:raise EmptyExportError("Snapshot has no items")
         return snapshot_workbook(result),f'需求快照_R{result["revision"]}'
+    def supplier_weekly(self,snapshot_id,supplier_id):
+        result=SnapshotService(self.session).detail(snapshot_id)
+        adjustment_id=result.get("ordering_adjustment_sheet_id")
+        if adjustment_id:
+            if result.get("ordering_adjustment_status")!="confirmed":
+                from app.domains.exports.exceptions import SupplierWeeklyExportError
+                raise SupplierWeeklyExportError("ADJUSTMENT_EXPORT_STATUS_INVALID",status=result.get("ordering_adjustment_status"))
+            from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
+            rows=rows_from_adjustment_lines(OrderingAdjustmentRepository(self.session).lines(adjustment_id),supplier_id)
+        else:
+            rows=rows_from_snapshot_items(result["items"],supplier_id)
+        dates=sorted({row["requirement_date"] for row in rows})
+        supplier_name=next((row["supplier_name"] for row in rows if row["supplier_name"]),"供應商")
+        return supplier_weekly_workbook(rows),f'{supplier_name}_{dates[0]:%Y%m%d}-{dates[-1]:%m%d}_叫貨單'
     def purchase(self,purchase_id,format):
         result=PurchaseService(self.session).detail(purchase_id)
         if not result["orders"]:raise EmptyExportError("Purchase has no supplier orders")

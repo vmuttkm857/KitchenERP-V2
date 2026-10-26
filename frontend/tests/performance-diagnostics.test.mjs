@@ -179,6 +179,21 @@ test('apiDownload preserves 401 refresh and retry behavior',async()=>{
   assert.deepEqual(runtime.revokedUrls,runtime.objectUrls)
 })
 
+test('apiDownload preserves a structured API error for safe user-facing export validation',async()=>{
+  const detail={code:'SUPPLIER_ORDER_UNIT_UNSUPPORTED',ingredient_name:'紙箱',unit:'箱'}
+  const runtime=runtimeClient([
+    new Response(JSON.stringify({detail}),{status:422,headers:{'Content-Type':'application/json'}}),
+  ])
+  await assert.rejects(runtime.api.apiDownload('/exports/report.xlsx'),error=>{
+    assert.equal(error.name,'ApiError')
+    assert.equal(error.status,422)
+    assert.deepEqual(error.detail,detail)
+    return true
+  })
+  assert.equal(runtime.calls.length,1)
+  assert.equal(runtime.objectUrls.length,0)
+})
+
 test('apiBlobUrl preserves 401 refresh and retry behavior',async()=>{
   const runtime=runtimeClient([
     new Response('{}',{status:401}),

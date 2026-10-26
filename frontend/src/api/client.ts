@@ -127,7 +127,18 @@ export async function apiDownload(path: string, init?: RequestInit): Promise<voi
         authExpiredHandler?.()
       }
     }
-    if (!response.ok) throw new Error(`Download failed with status ${response.status}`)
+    if (!response.ok) {
+      let message = '下載失敗，請稍後再試。'
+      let detail: unknown = null
+      try {
+        const payload = await response.json() as { detail?: unknown }
+        detail = payload.detail ?? null
+        if (typeof detail === 'string' && response.status < 500) message = detail
+      } catch {
+        // Never expose reverse-proxy HTML or a server traceback to the UI.
+      }
+      throw new ApiError(response.status, message, detail)
+    }
     const disposition = response.headers.get('Content-Disposition') ?? ''
     const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
     const fallback = disposition.match(/filename="([^"]+)"/i)?.[1]

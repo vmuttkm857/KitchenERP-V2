@@ -25,6 +25,34 @@ def test_exports_require_auth(client):
     response=client.post("/api/v1/exports/kitchen-operations/xlsx",json={"menu_id":"00000000-0000-0000-0000-000000000001"})
     assert response.status_code==401
 
+
+def test_supplier_weekly_snapshot_export_keeps_dish_sources_separate(client,db_session):
+    headers=auth(client,db_session);menu,_,_,_,suppliers=requirements_fixture(client,headers)
+    snapshot=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}})
+    assert snapshot.status_code==201,snapshot.text
+    response=client.get(f'/api/v1/exports/requirement-snapshots/{snapshot.json()["id"]}/suppliers/{suppliers[0]["id"]}/weekly-order.xlsx',headers=headers)
+    assert response.status_code==200,response.text
+    workbook=load_workbook(BytesIO(response.content))
+    assert workbook.sheetnames==["三日需求菜單_0901","三日需求菜單_0902","三日需求菜單_0903"]
+    first=workbook["三日需求菜單_0901"]
+    assert first["A2"].value=="供應商名稱：供應商1" and first["A4"].value=="菜單名稱：三日需求菜單"
+    actual_rows=[row for row in range(6,first.max_row+1) if first.cell(row,1).value is not None]
+    assert len(actual_rows)==9  # six chicken lines and three salt lines, never merged by ingredient
+    assert [first.cell(row,2).value for row in actual_rows].count("雞肉")==6
+    assert {first.cell(row,4).value for row in actual_rows}=={"kg"}
+    assert first.auto_filter.ref is None
+    assert "filename*=UTF-8''" in response.headers["content-disposition"]
+
+
+def test_supplier_weekly_snapshot_export_rejects_unallocatable_aggregate_adjustment(client,db_session):
+    headers=auth(client,db_session);menu,_,_,_,suppliers=requirements_fixture(client,headers)
+    snapshot=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}}).json()
+    chicken=next(item for item in snapshot["items"] if item["ingredient_code_snapshot"]=="REQ-I1")
+    assert client.patch(f'/api/v1/requirement-snapshots/{snapshot["id"]}/items/{chicken["id"]}',headers=headers,json={"adjusted_quantity":"20"}).status_code==200
+    response=client.get(f'/api/v1/exports/requirement-snapshots/{snapshot["id"]}/suppliers/{suppliers[0]["id"]}/weekly-order.xlsx',headers=headers)
+    assert response.status_code==409
+    assert response.json()["detail"]["code"]=="SNAPSHOT_SOURCE_ALLOCATION_UNAVAILABLE"
+
 def test_kitchen_excel_and_pdf_are_binary_authenticated_downloads(client,db_session):
     headers=auth(client,db_session);menu,*_=kitchen_fixture(client,headers,db_session);body={"menu_id":menu["id"],"selected_dates":["2026-10-01"]}
     xlsx=client.post("/api/v1/exports/kitchen-operations/xlsx",headers=headers,json=body)

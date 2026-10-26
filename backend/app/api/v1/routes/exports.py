@@ -5,7 +5,7 @@ from fastapi import APIRouter,Depends,HTTPException,Query,Response
 from sqlalchemy.orm import Session
 from app.api.dependencies import get_db_session
 from app.domains.auth.dependencies import get_current_user
-from app.domains.exports.exceptions import EmptyExportError
+from app.domains.exports.exceptions import EmptyExportError,SupplierWeeklyExportError
 from app.domains.exports.safety import content_disposition,safe_filename
 from app.domains.exports.service import ExportService
 from app.domains.kitchen_operations.exceptions import KitchenMenuNotFoundError
@@ -26,6 +26,7 @@ def mapped(exc):
     if isinstance(exc,(KitchenMenuNotFoundError,MenuNotFoundError,RequirementMenuNotFoundError,SnapshotNotFoundError,PurchaseNotFoundError,ProductionMenuNotFound)):return HTTPException(404,"Export source not found")
     if isinstance(exc,ProductionValidationError):return HTTPException(422,detail={"code":"INVALID_PRODUCTION_SCOPE","message":str(exc)})
     if isinstance(exc,EmptyExportError):return HTTPException(422,detail={"code":"EMPTY_EXPORT","message":str(exc)})
+    if isinstance(exc,SupplierWeeklyExportError):return HTTPException(409 if exc.code in {"SNAPSHOT_SOURCE_ALLOCATION_UNAVAILABLE","SNAPSHOT_SOURCE_UNIT_CONFLICT","ADJUSTMENT_EXPORT_STATUS_INVALID"} else 422,detail={"code":exc.code,**exc.details})
     if isinstance(exc,OrderingAdjustmentNotFoundError):return HTTPException(404,detail={"code":"ADJUSTMENT_NOT_FOUND"})
     if isinstance(exc,OrderingAdjustmentStaleError):return HTTPException(409,detail={"code":"ADJUSTMENT_STALE","reasons":exc.reasons})
     if isinstance(exc,OrderingAdjustmentExportError):return HTTPException(409 if exc.code=="ADJUSTMENT_EXPORT_STATUS_INVALID" else 422,detail={"code":exc.code,**exc.details})
@@ -70,6 +71,10 @@ def export_requirements(criteria:RequirementCriteria,session:Annotated[Session,D
 @router.get("/requirement-snapshots/{snapshot_id}/xlsx")
 def export_snapshot(snapshot_id:uuid.UUID,session:Annotated[Session,Depends(get_db_session)]):
     try:payload,name=ExportService(session).snapshot(snapshot_id);return binary(payload,name,"xlsx")
+    except Exception as exc:raise mapped(exc) from exc
+@router.get("/requirement-snapshots/{snapshot_id}/suppliers/{supplier_id}/weekly-order.xlsx")
+def export_supplier_weekly(snapshot_id:uuid.UUID,supplier_id:uuid.UUID,session:Annotated[Session,Depends(get_db_session)]):
+    try:payload,name=ExportService(session).supplier_weekly(snapshot_id,supplier_id);return binary(payload,name,"xlsx")
     except Exception as exc:raise mapped(exc) from exc
 @router.get("/purchases/{purchase_id}/{format}")
 def export_purchase(purchase_id:uuid.UUID,format:Literal["xlsx","pdf"],session:Annotated[Session,Depends(get_db_session)]):

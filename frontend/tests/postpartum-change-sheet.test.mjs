@@ -21,7 +21,7 @@ test('Word export uses the authenticated download helper for the selected date',
   assert.match(page,/exportingWord\?'匯出中…':'匯出 Word'/)
   assert.match(page,/disabled=\{exportingWord\}/)
   assert.match(page,/Word 異動單匯出失敗/)
-  assert.match(client,/if \(!response\.ok\) throw new Error\(`Download failed with status/)
+  assert.match(client,/if \(!response\.ok\) \{[\s\S]*throw new ApiError\(response\.status, message, detail\)/)
   assert.match(client,/Content-Disposition/)
   assert.match(client,/response\.blob\(\)/)
   assert.match(client,/anchor\.download = filename/)

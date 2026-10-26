@@ -52,6 +52,16 @@ test('snapshot page shares the display-only unit mode across daily supplier and 
   assert.doesNotMatch(snapshotsPage,/apiDownload\([^\n]*weightUnitMode/)
 })
 
+test('snapshot supplier view exposes the weekly supplier order download without changing display conversion',()=>{
+  assert.match(snapshotsPage,/下載此供應商每週叫貨 Excel/)
+  assert.match(snapshotsPage,/SUPPLIER_ORDER_NO_ITEMS/)
+  assert.match(snapshotsPage,/此供應商沒有可匯出的叫貨品項/)
+  assert.match(snapshotsPage,/SUPPLIER_ORDER_UNIT_INVALID/)
+  assert.match(snapshotsPage,/單位資料無效/)
+  assert.match(snapshotsPage,/\/exports\/requirement-snapshots\/\$\{detail\.id\}\/suppliers\/\$\{supplierKey\}\/weekly-order\.xlsx/)
+  assert.match(snapshotsPage,/supplierKey==='unassigned'/)
+})
+
 test('weight unit toggle has scoped readable active inactive hover focus and disabled colors',()=>{
   assert.match(globalCss,/\.requirement-weight-unit-toggle button\{color:#245536;background:#edf4ef;border:1px solid #b8cdbd\}/)
   assert.match(globalCss,/\.requirement-weight-unit-toggle button\.active,\.requirement-weight-unit-toggle button\[aria-pressed="true"\]\{color:#fff;background:#2f6840;border-color:#2f6840/)
