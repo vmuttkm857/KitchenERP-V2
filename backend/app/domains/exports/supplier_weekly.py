@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -60,7 +60,22 @@ def _source_value(source: dict, key: str):
     return value
 
 
-def rows_from_snapshot_items(items: list[dict], supplier_id) -> list[dict]:
+def _historical_meal_name(value, *, required=False) -> str:
+    if required and (not isinstance(value, str) or not value.strip()):
+        raise SupplierWeeklyExportError("SUPPLIER_ORDER_MEAL_UNAVAILABLE")
+    return str(value or "")
+
+
+def supplier_delivery_date(row: dict, *, breakfast_previous_day=False) -> date:
+    requirement_date = row["requirement_date"]
+    if breakfast_previous_day:
+        meal_name = _historical_meal_name(row.get("meal_type_name"), required=True)
+        if "早餐" in meal_name:
+            return requirement_date - timedelta(days=1)
+    return requirement_date
+
+
+def rows_from_snapshot_items(items: list[dict], supplier_id, *, require_meal_name=False) -> list[dict]:
     """Expand immutable source rows; never allocate an aggregate adjustment by guessing."""
     result = []
     supplier_key = str(supplier_id)
@@ -94,7 +109,7 @@ def rows_from_snapshot_items(items: list[dict], supplier_id) -> list[dict]:
                 "menu_id": str(_source_value(source, "menu_id")),
                 "menu_name": str(_source_value(source, "menu_name")),
                 "requirement_date": date.fromisoformat(str(_source_value(source, "requirement_date"))),
-                "meal_type_name": str(source.get("meal_type_name") or ""),
+                "meal_type_name": _historical_meal_name(source.get("meal_type_name"), required=require_meal_name),
                 "dish_id": str(_source_value(source, "dish_id")),
                 "dish_name": str(_source_value(source, "dish_name")),
                 "ingredient_name": str(item.get("ingredient_name_snapshot") or ""),
@@ -163,21 +178,21 @@ def _export_row(row: dict) -> dict:
     return {**row, "_export_quantity": quantity, "_export_unit": normalize_unit(str(row["unit"]))}
 
 
-def supplier_weekly_workbook(rows: list[dict]) -> bytes:
+def supplier_weekly_workbook(rows: list[dict], *, breakfast_previous_day=False) -> bytes:
     if not rows:
         raise SupplierWeeklyExportError("SUPPLIER_ORDER_NO_ITEMS")
-    rows = [_export_row(row) for row in rows]
+    rows = [{**_export_row(row), "delivery_date": supplier_delivery_date(row, breakfast_previous_day=breakfast_previous_day)} for row in rows]
     workbook = Workbook()
     workbook.remove(workbook.active)
     grouped = defaultdict(list)
     for row in rows:
         # menu_id is deliberately part of the key: equal display names are distinct menus.
-        grouped[(row["requirement_date"], row["menu_id"])].append(row)
+        grouped[(row["delivery_date"], row["menu_id"])].append(row)
     used_titles: set[str] = set()
-    for (requirement_date, menu_id), group in sorted(grouped.items(), key=lambda value: (value[0][0], value[1][0]["menu_name"], value[0][1])):
+    for (delivery_date, menu_id), group in sorted(grouped.items(), key=lambda value: (value[0][0], value[1][0]["menu_name"], value[0][1])):
         del menu_id
         first = group[0]
-        title = supplier_weekly_sheet_title(first["menu_name"], requirement_date, used_titles)
+        title = supplier_weekly_sheet_title(first["menu_name"], delivery_date, used_titles)
         sheet = workbook.create_sheet(title)
         sheet.sheet_view.showGridLines = False
         sheet.merge_cells("A1:D1")
@@ -187,7 +202,7 @@ def supplier_weekly_workbook(rows: list[dict]) -> bytes:
         sheet.row_dimensions[1].height = 24
         metadata = [
             f'供應商名稱：{first["supplier_name"] or "未指定供應商"}',
-            _delivery_date_label(requirement_date),
+            _delivery_date_label(delivery_date),
             f'菜單名稱：{first["menu_name"]}',
         ]
         for row_index, value in enumerate(metadata, 2):

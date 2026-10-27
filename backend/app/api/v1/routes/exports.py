@@ -73,8 +73,8 @@ def export_snapshot(snapshot_id:uuid.UUID,session:Annotated[Session,Depends(get_
     try:payload,name=ExportService(session).snapshot(snapshot_id);return binary(payload,name,"xlsx")
     except Exception as exc:raise mapped(exc) from exc
 @router.get("/requirement-snapshots/{snapshot_id}/suppliers/{supplier_id}/weekly-order.xlsx")
-def export_supplier_weekly(snapshot_id:uuid.UUID,supplier_id:uuid.UUID,session:Annotated[Session,Depends(get_db_session)]):
-    try:payload,name=ExportService(session).supplier_weekly(snapshot_id,supplier_id);return binary(payload,name,"xlsx")
+def export_supplier_weekly(snapshot_id:uuid.UUID,supplier_id:uuid.UUID,session:Annotated[Session,Depends(get_db_session)],breakfast_previous_day:bool=False):
+    try:payload,name=ExportService(session).supplier_weekly(snapshot_id,supplier_id,breakfast_previous_day=breakfast_previous_day);return binary(payload,name,"xlsx")
     except Exception as exc:raise mapped(exc) from exc
 @router.get("/purchases/{purchase_id}/{format}")
 def export_purchase(purchase_id:uuid.UUID,format:Literal["xlsx","pdf"],session:Annotated[Session,Depends(get_db_session)]):
