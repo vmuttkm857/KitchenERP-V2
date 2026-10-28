@@ -1,0 +1,53 @@
+name: PostgreSQL regression (manual only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approved_database_name:
+        description: 'Approved NEW disposable DB: kitchenerp_regression_test_<32 lowercase hex>'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgresql-regression-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    env:
+      APP_ENV: test
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      CI_APPROVED_DATABASE: ${{ inputs.approved_database_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend and existing test dependencies
+        run: python -m pip install '.[test]'
+      - name: Start a fresh PostgreSQL 17 cluster on runner loopback
+        run: bash ci/start_postgresql.sh
+      - name: Provision approved DB, guarded upgrade, verify restricted test identity
+        run: python -B ci/postgresql_regression.py prepare
+      - name: H01 (4 real PostgreSQL API cases)
+        run: python -B ci/postgresql_regression.py h01
+      - name: H07 (5 real PostgreSQL API cases)
+        run: python -B ci/postgresql_regression.py h07
+      - name: Snapshots, ordering adjustments, exports, purchases
+        run: python -B ci/postgresql_regression.py modules
+      - name: Full API, integration and regression (no migration tests)
+        run: python -B ci/postgresql_regression.py full
+      # No deploy, database restore, shared cache or business-data artifacts.
+      # The GitHub-hosted VM owns all resources and is discarded after the job.
