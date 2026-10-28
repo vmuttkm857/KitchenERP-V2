@@ -9,6 +9,8 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from openpyxl.styles import Alignment, Border, Font, Side
 
+from app.domains.exports.safety import safe_cell_text
+
 
 FONT_NAME = "標楷體"
 ROOM_COLOR = "7030A0"
@@ -77,16 +79,17 @@ def _restriction_note_value(cell, item: dict):
     restrictions = _restriction_text(item)
     note = str(item.get("service_note") or "").strip()
     if restrictions and note:
+        # Rich text is serialized as inline text; preserve its formatted runs.
         cell.value = CellRichText(
             TextBlock(_inline_font(26, color=RESTRICTION_COLOR), restrictions),
             TextBlock(_inline_font(26, bold=True, color=NOTE_COLOR), f"\n{note}"),
         )
         cell.font = _font(26, color=RESTRICTION_COLOR)
     elif restrictions:
-        cell.value = restrictions
+        cell.value = safe_cell_text(restrictions)
         cell.font = _font(26, color=RESTRICTION_COLOR)
     elif note:
-        cell.value = note
+        cell.value = safe_cell_text(note)
         cell.font = _font(26, bold=True, color=NOTE_COLOR)
     else:
         cell.value = ""
@@ -129,9 +132,10 @@ def _write_case(sheet, main_row: int, start_col: int, item: dict | None):
     blank = sheet.cell(main_row + 1, start_col + 2)
 
     if item:
-        room.value = item["current_room"]
-        preparation.value, preparation_color = _preparation_mode(item["preparation_mode_label"])
-        name.value = item["name"]
+        room.value = safe_cell_text(item["current_room"])
+        preparation_label, preparation_color = _preparation_mode(item["preparation_mode_label"])
+        preparation.value = safe_cell_text(preparation_label)
+        name.value = safe_cell_text(item["name"])
         start.value = _service_start(item)
     else:
         room.value = preparation.value = name.value = start.value = ""
