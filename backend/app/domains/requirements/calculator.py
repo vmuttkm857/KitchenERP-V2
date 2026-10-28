@@ -37,6 +37,10 @@ def calculate_requirement_rows(source_rows,quantity_overrides=None):
         quantity=converted.quantity if convertible else with_loss
         source_line_key=f'{source["menu_dish_id"]}:{source["recipe_detail_id"]}'
         override=quantity_overrides.get(source_line_key)
+        # A retained MenuDish UUID can move outside a confirmed sheet's dates.
+        # Its live occurrence must not inherit the old frozen occurrence's amount.
+        if override is not None and override.get("source_scope",(source["menu_id"],source["menu_date"]))!=(source["menu_id"],source["menu_date"]):
+            override=None
         if override is not None:
             adjusted=convert_quantity(override["quantity"],override["unit"],final_unit)
             if not adjusted.convertible or adjusted.quantity is None:

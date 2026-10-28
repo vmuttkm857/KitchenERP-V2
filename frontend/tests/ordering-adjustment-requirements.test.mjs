@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import test from 'node:test'
+import vm from 'node:vm'
+import ts from 'typescript'
 
 const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
 const app=read('../src/app/App.tsx')
@@ -111,4 +113,16 @@ test('structured adjustment failures have friendly Traditional Chinese messages'
   assert.match(requirements,/ADJUSTMENT_STATUS_INVALID/)
   assert.match(requirements,/已確認或取消，不能套用到即時食材需求/)
   assert.match(requirements,/ADJUSTMENT_DUPLICATE_OVERRIDE/)
+})
+
+test('H01 coverage failures explain why calculation stopped without falling back to live menus',()=>{
+  // Evaluate the real pure error mapper, including its ApiError type check.
+  const source=requirements.match(/function adjustmentErrorCode[\s\S]*?\nfunction DailyRequirementTable/)?.[0].replace(/\nfunction DailyRequirementTable$/,'')
+  assert.ok(source)
+  class ApiError extends Error { constructor(detail){super('API failed');this.detail=detail} }
+  const context={ApiError}
+  vm.createContext(context)
+  vm.runInContext(ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context)
+  assert.match(context.requirementErrorMessage(new ApiError({code:'ADJUSTMENT_COVERAGE_CONFLICT'})),/重疊的確認範圍.*請只選擇一個有效來源/)
+  assert.match(context.requirementErrorMessage(new ApiError({code:'ADJUSTMENT_COVERAGE_UNAVAILABLE'})),/歷史範圍資料不完整.*已停止計算.*勿以最新菜單代替/)
 })

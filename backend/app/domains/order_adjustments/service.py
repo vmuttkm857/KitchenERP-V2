@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 import uuid
 
@@ -94,6 +94,54 @@ def _source_fingerprint(criteria,plans):
     return hash_payload({"criteria":criteria.model_dump(exclude_none=True),"lines":[{"key":p["source_line_key"],"signature":p["source_signature"]} for p in plans]})
 
 
+def _saved_requirement_coverage(sheet,snapshot):
+    """The persisted criteria has menu/date filters, never a per-meal filter.
+
+    Use saved menu bounds even for 'all dates'; current menu edits must not
+    enlarge a confirmed sheet. Unknown historical filters cannot be ignored.
+    Each value is (first date, last date, optional discrete selected dates).
+    """
+    try:
+        if snapshot is None or snapshot.snapshot_kind!="ordering_adjustment":raise ValueError()
+        raw=snapshot.criteria
+        if not isinstance(raw,dict) or set(raw)-set(RequirementCriteria.model_fields):raise ValueError()
+        criteria=RequirementCriteria.model_validate(raw)
+        if criteria.ordering_adjustment_sheet_ids:raise ValueError()
+        menus=snapshot.source_menus
+        if not isinstance(menus,list):raise ValueError()
+        coverage={}
+        for menu in menus:
+            menu_id=uuid.UUID(str(menu["menu_id"]))
+            start=date.fromisoformat(str(menu["start_date"]));end=date.fromisoformat(str(menu["end_date"]))
+            if start>end or menu_id in coverage:raise ValueError()
+            if criteria.start_date is not None:
+                start=max(start,criteria.start_date);end=min(end,criteria.end_date)
+            selected=None if criteria.selected_dates is None else frozenset(criteria.selected_dates)
+            coverage[menu_id]=(start,end,selected)
+        if set(coverage)!=set(criteria.menu_ids):raise ValueError()
+        return coverage
+    except (AttributeError,KeyError,TypeError,ValueError) as exc:
+        raise RequirementAdjustmentError("ADJUSTMENT_COVERAGE_UNAVAILABLE",sheet_id=str(sheet.id)) from exc
+
+
+def _coverage_contains(coverage,menu_id,day):
+    bounds=coverage.get(menu_id)
+    return bounds is not None and bounds[0]<=day<=bounds[1] and (bounds[2] is None or day in bounds[2])
+
+
+def _coverage_overlaps(left,right,criteria):
+    # Only conflicts inside this calculation matter; sparse selected_dates are
+    # not a continuous start/end range. Do not enumerate unbounded date ranges.
+    for menu_id in set(left)&set(right)&set(criteria.menu_ids):
+        first,last=left[menu_id],right[menu_id]
+        start=max(first[0],last[0],criteria.start_date or date.min)
+        end=min(first[1],last[1],criteria.end_date or date.max)
+        if start>end:continue
+        selections=[set(values) for values in (first[2],last[2],criteria.selected_dates) if values is not None]
+        if not selections or any(start<=day<=end for day in set.intersection(*selections)):return True
+    return False
+
+
 def _actionable_reuse_review(item):
     return item["status"]=="reference_only" and "CURRENT_ALREADY_ADJUSTED" not in item["reason_codes"]
 
@@ -154,13 +202,21 @@ class OrderingAdjustmentService:
         confirmed_item_ids={line.snapshot_item_id for line in lines if line.sheet_id in confirmed_sheet_ids}
         snapshot_items={item.id:item for item in self.repository.snapshot_items_by_ids(confirmed_item_ids)} if confirmed_item_ids else {}
         current_keys={f'{row["menu_dish_id"]}:{row["recipe_detail_id"]}' for row in calculation_source if row["recipe_detail_id"] is not None}
-        overrides={};matched_sheets=set();frozen=[];frozen_keys=set()
+        overrides={};matched_sheets=set();frozen=[];coverages={}
         for sheet in sheets:
             sheet_lines=by_sheet[sheet.id]
             if sheet.status=="draft":
-                _,states,warnings,_=self._live(sheet,sheet_lines)
+                snapshot,states,warnings,_=self._live(sheet,sheet_lines)
                 stale=[{"line_id":str(line_id),"reasons":reasons} for line_id,reasons in states.items() if reasons]+warnings
                 if stale:raise RequirementAdjustmentError("ADJUSTMENT_STALE",sheet_id=str(sheet.id),reasons=stale)
+            else:snapshot=self.repository.snapshot(sheet.baseline_snapshot_id)
+            if confirmed_sheet_ids:
+                coverage=_saved_requirement_coverage(sheet,snapshot);coverages[sheet.id]=coverage
+                if any(not _coverage_contains(coverage,line.source_menu_id,line.requirement_date) for line in sheet_lines):
+                    raise RequirementAdjustmentError("ADJUSTMENT_COVERAGE_UNAVAILABLE",sheet_id=str(sheet.id))
+                # An originally empty date is still explicitly covered. Its
+                # frozen demand is empty, not permission to use newly added food.
+                if sheet.status=="confirmed" and _coverage_overlaps(coverage,coverage,criteria):matched_sheets.add(sheet.id)
             for line in sheet_lines:
                 date_selected=(line.requirement_date in criteria.selected_dates) if criteria.selected_dates is not None else (
                     criteria.start_date<=line.requirement_date<=criteria.end_date if criteria.start_date is not None else True
@@ -173,12 +229,20 @@ class OrderingAdjustmentService:
                 overrides[line.source_line_key]={
                     "quantity":line.adjusted_quantity if line.adjusted_quantity is not None else line.system_quantity,
                     "unit":line.adjusted_unit if line.adjusted_quantity is not None else line.system_unit,"sheet_id":sheet.id,
+                    "source_scope":(line.source_menu_id,line.requirement_date),
                 }
                 if sheet.status=="confirmed":
-                    frozen_keys.add(line.source_line_key);frozen.append(self._frozen_source_row(line,snapshot_items[line.snapshot_item_id]))
+                    item=snapshot_items.get(line.snapshot_item_id)
+                    if item is None:raise RequirementAdjustmentError("ADJUSTMENT_COVERAGE_UNAVAILABLE",sheet_id=str(sheet.id))
+                    frozen.append(self._frozen_source_row(line,item))
         unmatched=[str(sheet.id) for sheet in sheets if sheet.id not in matched_sheets]
         if unmatched:raise RequirementAdjustmentError("ADJUSTMENT_NO_SOURCE_OVERLAP",sheet_ids=unmatched)
-        source=[row for row in calculation_source if f'{row["menu_dish_id"]}:{row["recipe_detail_id"]}' not in frozen_keys]
+        for index,sheet in enumerate(sheets):
+            for other in sheets[index+1:]:
+                if (sheet.id in confirmed_sheet_ids or other.id in confirmed_sheet_ids) and _coverage_overlaps(coverages[sheet.id],coverages[other.id],criteria):
+                    raise RequirementAdjustmentError("ADJUSTMENT_COVERAGE_CONFLICT",sheet_ids=[str(sheet.id),str(other.id)])
+        confirmed_coverage=[coverages[sheet_id] for sheet_id in confirmed_sheet_ids]
+        source=[row for row in calculation_source if not any(_coverage_contains(coverage,row["menu_id"],row["menu_date"]) for coverage in confirmed_coverage)]
         source.extend(frozen)
         source.sort(key=lambda row:(str(row["menu_id"]),row["menu_date"],row["meal_type_sort_order"],row["menu_dish_sort_order"],row["dish_ingredient_sort_order"],str(row["recipe_detail_id"])))
         return source,overrides

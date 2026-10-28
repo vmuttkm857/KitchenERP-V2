@@ -90,6 +90,8 @@ function requirementErrorMessage(cause:unknown,fallback='需求量計算失敗�
   if(code==='ADJUSTMENT_STALE'||code==='ADJUSTMENT_UNIT_MISMATCH')return '這張叫貨調整的來源菜單已變更，請回到叫貨調整重新建立／更新。'
   if(code==='ADJUSTMENT_STATUS_INVALID')return '這張叫貨調整已確認或取消，不能套用到即時食材需求。'
   if(code==='ADJUSTMENT_DUPLICATE_OVERRIDE')return '選取的叫貨調整有重複來源，無法同時計算。'
+  if(code==='ADJUSTMENT_COVERAGE_CONFLICT')return '選取的叫貨調整有重疊的確認範圍，無法混用不同版本；請只選擇一個有效來源。'
+  if(code==='ADJUSTMENT_COVERAGE_UNAVAILABLE')return '已確認叫貨調整的歷史範圍資料不完整，系統已停止計算；請聯絡管理員檢查，勿以最新菜單代替。'
   if(code==='ADJUSTMENT_NOT_FOUND'||code==='ADJUSTMENT_NO_SOURCE_OVERLAP')return '找不到可套用的叫貨調整來源，請回到叫貨調整重新進入。'
   return fallback
 }
