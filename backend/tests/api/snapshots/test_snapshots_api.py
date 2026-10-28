@@ -13,6 +13,7 @@ from app.domains.recipes.models import DishIngredient
 from app.domains.menus.models import MenuDish
 from app.domains.users.models import User
 from tests.snapshot_requests import save_snapshot
+from tests.query_budget import SelectQueryBudget
 
 def create_snapshot(client,headers,menu):
     return save_snapshot(client,headers,{"menu_ids":[menu["id"]]})
@@ -73,22 +74,21 @@ def test_snapshot_list_date_filters_end_inclusive_pagination_order_and_query_bud
     assert second["items"][0]["id"]==by_label["start"]
     assert client.get("/api/v1/requirement-snapshots?start_date=2026-08-11&end_date=2026-08-10",headers=headers).status_code==422
 
-    statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
-    event.listen(process_engine,"before_cursor_execute",record)
+    budget=SelectQueryBudget(maximum=3)
+    event.listen(process_engine,"before_cursor_execute",budget.record)
     try:response=client.get("/api/v1/requirement-snapshots?start_date=2026-08-10&end_date=2026-08-10&page=1&page_size=25",headers=headers)
-    finally:event.remove(process_engine,"before_cursor_execute",record)
+    finally:event.remove(process_engine,"before_cursor_execute",budget.record)
     assert response.status_code==200
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=3
+    budget.assert_within_budget()
 
 def test_detail_query_count_is_constant(client,db_session):
-    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_snapshot(client,headers,menu).json();statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
-    event.listen(process_engine,"before_cursor_execute",record)
+    headers=auth(client,db_session);menu,*_=fixture(client,headers);created=create_snapshot(client,headers,menu).json()
+    budget=SelectQueryBudget(maximum=4)
+    event.listen(process_engine,"before_cursor_execute",budget.record)
     try:response=client.get(f"/api/v1/requirement-snapshots/{created['id']}",headers=headers)
-    finally:event.remove(process_engine,"before_cursor_execute",record)
+    finally:event.remove(process_engine,"before_cursor_execute",budget.record)
     assert response.status_code==200
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=4
+    budget.assert_within_budget()
 
 def test_concurrent_duplicate_is_constraint_backed(client,db_session):
     headers=auth(client,db_session);menu,*_=fixture(client,headers)
