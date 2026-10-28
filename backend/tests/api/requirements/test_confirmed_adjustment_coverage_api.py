@@ -11,6 +11,7 @@ from tests.api.order_adjustments.test_order_adjustment_sync_preview_api import _
 from tests.api.order_adjustments.test_order_adjustments_api import create_sheet
 from tests.api.requirements.test_requirements_api import auth, fixture
 from tests.menu_editor import save_editor
+from tests.snapshot_comparison import assert_snapshot_unchanged
 
 
 def _workbook_values(payload):
@@ -61,7 +62,9 @@ def test_confirmed_workflow_keeps_frozen_requirements_snapshot_and_supplier_exce
     current = client.post("/api/v1/requirements/calculate", headers=headers, json=criteria)
     assert current.status_code == 200, current.text
     assert current.json() == original.json()
-    assert client.get(f"/api/v1/requirement-snapshots/{snapshot_a['id']}", headers=headers).json() == snapshot_a
+    historical = client.get(f"/api/v1/requirement-snapshots/{snapshot_a['id']}", headers=headers)
+    assert historical.status_code == 200, historical.text
+    assert_snapshot_unchanged(historical.json(), snapshot_a)
     after_excel = client.get(export_url, headers=headers)
     assert after_excel.status_code == 200, after_excel.text
     assert _workbook_values(after_excel.content) == _workbook_values(original_excel.content)
