@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from zipfile import ZipFile
 from io import BytesIO
 
@@ -100,13 +101,14 @@ def test_catering_overview_has_fixed_read_only_query_budget(client, db_session):
     process_engine = db_session.get_bind()
 
     def record(_conn, _cursor, statement, _parameters, _context, _executemany):
-        statements.append(statement.strip().upper())
+        statements.append(statement.strip().upper());budget.record(_conn,_cursor,statement,_parameters,_context,_executemany)
 
+    budget=SelectQueryBudget(maximum=4)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         response = client.get("/api/v1/postpartum/catering-overview?target_date=2026-09-12", headers=headers)
     finally:
         event.remove(process_engine, "before_cursor_execute", record)
     assert response.status_code == 200
-    assert sum(statement.startswith("SELECT") for statement in statements) <= 4
+    assert budget.business_selects <= 4
     assert not any(statement.startswith(("INSERT", "UPDATE", "DELETE")) for statement in statements)

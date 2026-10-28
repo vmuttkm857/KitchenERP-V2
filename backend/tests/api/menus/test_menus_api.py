@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from tests.menu_editor import save_editor
 
 import uuid
@@ -610,11 +611,12 @@ def test_aggregate_query_count_constant_and_fk(client,db_session):
     headers,_=auth(client,db_session); category,dishes=foundations(client,headers); value=menu(client,headers,category["id"]); meal_types=meals(client,headers,value["id"])
     save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes))
     statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany): statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany): statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=5)
     event.listen(process_engine,"before_cursor_execute",record)
     try: response=client.get(f"/api/v1/menus/{value['id']}/editor",headers=headers)
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
-    assert len([s for s in statements if s.lstrip().upper().startswith("SELECT")])<=5
+    assert budget.business_selects<=5
     fk=db_session.execute(text("SELECT confdeltype FROM pg_constraint WHERE conname='menu_days_menu_meal_type_id_fkey'")).scalar_one()
     assert fk=="r"

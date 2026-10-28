@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from tests.menu_editor import save_editor
 
 import uuid
@@ -98,12 +99,13 @@ def test_missing_recipe_zero_quantity_incompatible_unit_missing_supplier_and_ina
 
 def test_requirement_query_count_is_constant_and_read_only(client,db_session):
     headers=auth(client,db_session);menu,*_=fixture(client,headers);statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=3)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.post("/api/v1/requirements/calculate",headers=headers,json={"menu_ids":[menu["id"]]})
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
-    assert len([value for value in statements if value.lstrip().upper().startswith("SELECT")])<=3
+    assert budget.business_selects<=3
     assert not [value for value in statements if value.lstrip().upper().startswith(("INSERT","UPDATE","DELETE"))]
 
 

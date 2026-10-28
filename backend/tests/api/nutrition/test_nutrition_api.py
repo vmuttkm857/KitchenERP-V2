@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -72,13 +73,14 @@ def test_manual_crud_mapping_transitions_filter_reference_protection_and_no_erp_
 
 def test_food_lists_and_ingredient_status_use_bounded_queries(client,db_session):
     _,headers=create_login(client,db_session,"nutrition-query-admin");ingredient=create_ingredient(client,headers);import_foods(client,headers);statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=7)
     event.listen(process_engine,"before_cursor_execute",record)
     try:
         assert client.get("/api/v1/nutrition/foods?source=tfda&page_size=25",headers=headers).status_code==200
         assert client.get("/api/v1/ingredients?nutrition_status=none&page_size=25",headers=headers).status_code==200
     finally:event.remove(process_engine,"before_cursor_execute",record)
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=7
+    assert budget.business_selects<=7
 
 
 def test_upload_validation_auth_and_official_read_only(client,db_session):

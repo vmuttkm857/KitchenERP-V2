@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
@@ -89,18 +90,20 @@ def test_list_pagination_filters_and_detail_query_budget(client,db_session):
     headers,_,_,snapshot=setup_snapshot(client,db_session);created=client.post("/api/v1/purchases",headers=headers,json={"snapshot_id":snapshot["id"]}).json()
     listing=client.get(f"/api/v1/purchases?page=1&page_size=1&purchase_status=draft&search={created['purchase_number']}",headers=headers).json();assert listing["pagination"]["total"]==1 and len(listing["items"][0]["supplier_summary"])==2
     statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=5)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.get(f"/api/v1/purchases/{created['id']}",headers=headers)
     finally:event.remove(process_engine,"before_cursor_execute",record)
-    assert response.status_code==200 and len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=5
+    assert response.status_code==200 and budget.business_selects<=5
 
 def test_creation_query_count_does_not_scale_per_item(client,db_session):
     headers,_,_,snapshot=setup_snapshot(client,db_session);statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=8)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.post("/api/v1/purchases",headers=headers,json={"snapshot_id":snapshot["id"]})
     finally:event.remove(process_engine,"before_cursor_execute",record)
     # One fixed query locks a linked adjustment sheet before purchase creation;
     # the count remains constant regardless of snapshot item count.
-    assert response.status_code==201 and len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=8
+    assert response.status_code==201 and budget.business_selects<=8

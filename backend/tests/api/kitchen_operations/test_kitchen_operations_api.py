@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from tests.menu_editor import save_editor
 
 import uuid
@@ -75,13 +76,14 @@ def test_inactive_ingredient_and_dish_warn_without_supplier_or_price_validation(
 def test_auth_query_budget_read_only_and_no_snapshot_purchase_dependency(client,db_session):
     assert client.post("/api/v1/kitchen-operations/calculate",json={"menu_id":"00000000-0000-0000-0000-000000000001"}).status_code==401
     headers=auth(client,db_session);menu,*_=kitchen_fixture(client,headers,db_session);statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=4)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.post("/api/v1/kitchen-operations/calculate",headers=headers,json={"menu_id":menu["id"]})
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
     # Fixed reads: authenticated user, menu metadata, menu-column metadata, and the kitchen aggregate.
-    selects=[sql for sql in statements if sql.lstrip().upper().startswith("SELECT")];assert len(selects)<=4
+    selects=[sql for sql in statements if sql.lstrip().upper().startswith("SELECT")];assert budget.business_selects<=4
     assert not [sql for sql in statements if sql.lstrip().upper().startswith(("INSERT","UPDATE","DELETE"))]
     combined=" ".join(selects).lower();assert "requirement_snapshot" not in combined and "purchase_" not in combined
 

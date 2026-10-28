@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 import uuid
 
 from fastapi.testclient import TestClient
@@ -57,7 +58,8 @@ def test_supplier_fields_ordering_filters_pagination_and_query_budget(client: Te
     assert inactive.status_code == 200 and inactive.json()["sort_order"] == 1
 
     statements: list[str] = []
-    def record_query(conn, cursor, statement, parameters, context, executemany): statements.append(statement)
+    def record_query(conn, cursor, statement, parameters, context, executemany): statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=3)
     event.listen(process_engine, "before_cursor_execute", record_query)
     try:
         listed = client.get("/api/v1/suppliers?search=供應商&active=true&page=1&page_size=1", headers=headers)
@@ -67,7 +69,7 @@ def test_supplier_fields_ordering_filters_pagination_and_query_budget(client: Te
     assert listed.json()["pagination"] == {"page": 1, "page_size": 1, "total": 1}
     assert listed.json()["items"][0]["id"] == second["id"]
     selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 3
+    assert budget.business_selects <= 3
 
     all_rows = client.get("/api/v1/suppliers?page=1&page_size=25", headers=headers).json()["items"]
     assert [row["code"] for row in all_rows] == ["SUP-A", "SUP-B"]

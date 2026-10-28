@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 import uuid
 
 from sqlalchemy import event, select
@@ -128,7 +129,8 @@ def test_assignment_audit_and_case_list_fixed_query_budget(client, db_session):
     statements = []
     process_engine = db_session.get_bind()
     def record(_conn, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_many)
+    budget=SelectQueryBudget(maximum=4)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         response = client.get("/api/v1/postpartum/cases?page=1&page_size=25", headers=headers)
@@ -136,4 +138,4 @@ def test_assignment_audit_and_case_list_fixed_query_budget(client, db_session):
         event.remove(process_engine, "before_cursor_execute", record)
     assert response.status_code == 200
     selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 4
+    assert budget.business_selects <= 4

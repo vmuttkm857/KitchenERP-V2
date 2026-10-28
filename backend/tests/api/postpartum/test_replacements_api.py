@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from sqlalchemy import delete, event, func, select, update
 
 from app.domains.audit.models import AuditLog
@@ -45,7 +46,8 @@ def test_candidate_search_create_cancel_and_audit(client, db_session):
     statements = []
     process_engine = db_session.get_bind()
     def record(_conn, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_many)
+    budget=SelectQueryBudget(maximum=12)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         search = client.post("/api/v1/postpartum/replacement-candidates/search", headers=headers, json={
@@ -61,7 +63,7 @@ def test_candidate_search_create_cancel_and_audit(client, db_session):
     assert by_id[dishes[2]["id"]]["status"] == "insufficient_recipe_data"
     assert by_id[safe["id"]]["status"] == "no_known_conflict"
     selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 12  # auth + fixed conflict preload + candidate page/count/recipe
+    assert budget.business_selects <= 12  # auth + fixed conflict preload + candidate page/count/recipe
 
     rejected = client.post("/api/v1/postpartum/replacement-groups", headers=headers, json={
         "target_date": TARGET_DATE, "postpartum_meal": "lunch",
@@ -84,6 +86,7 @@ def test_candidate_search_create_cancel_and_audit(client, db_session):
     assert body["candidate_status"] == "insufficient_recipe_data"
     assert body["review_needed"] is True and body["status"] == "replaced"
     statements = []
+    budget=SelectQueryBudget(maximum=14)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         listing = client.get(
@@ -95,7 +98,7 @@ def test_candidate_search_create_cancel_and_audit(client, db_session):
     assert listing.status_code == 200
     assert "replaced" in {row["status"] for row in listing.json()["conflict_items"]}
     selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 14  # fixed daily read; independent of group/item counts
+    assert budget.business_selects <= 14  # fixed daily read; independent of group/item counts
     duplicate = client.post("/api/v1/postpartum/conflict-acknowledgements", headers=headers, json={
         "target_date": TARGET_DATE, "postpartum_meal": "lunch", "item": item,
     })

@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -145,7 +146,8 @@ def test_bulk_nutrition_has_constant_query_count_and_reuses_duplicate_dish(clien
         "code": "NC-D2", "name": "空白營養料理", "category_id": dish_category["id"],
     }).json()
     statements = []
-    def record_query(conn, cursor, statement, parameters, context, executemany): statements.append(statement)
+    def record_query(conn, cursor, statement, parameters, context, executemany): statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=5)
     event.listen(process_engine, "before_cursor_execute", record_query)
     try:
         response = client.post("/api/v1/dishes/nutrition/bulk", headers=headers, json={
@@ -157,4 +159,4 @@ def test_bulk_nutrition_has_constant_query_count_and_reuses_duplicate_dish(clien
     assert [item["dish_id"] for item in response.json()["items"]] == [dish["id"], second["id"], dish["id"]]
     assert response.json()["items"][1]["missing_calorie_ingredients"][0]["reason"] == "no_recipe"
     selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 5  # current user + definitions + recipe inputs + conversions + all food values
+    assert budget.business_selects <= 5  # current user + definitions + recipe inputs + conversions + all food values

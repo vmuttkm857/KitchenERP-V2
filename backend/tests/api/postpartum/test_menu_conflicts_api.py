@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from tests.menu_editor import save_editor
 
 import uuid
@@ -144,7 +145,8 @@ def test_conflicts_exact_matching_eligibility_partial_coverage_and_read_only(cli
     statements = []
     process_engine = db_session.get_bind()
     def record(_conn, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_many)
+    budget=SelectQueryBudget(maximum=9)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         response = client.get(
@@ -174,7 +176,7 @@ def test_conflicts_exact_matching_eligibility_partial_coverage_and_read_only(cli
         item["code"] for item in body["eligible_cases"][0]["warnings"]
     }
     selects = [item for item in statements if item.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 9  # auth plus eight fixed batch queries, including both association tables
+    assert budget.business_selects <= 9  # auth plus eight fixed batch queries, including both association tables
     assert db_session.scalar(select(func.count()).select_from(AuditLog)) == audit_before
 
 
@@ -227,7 +229,8 @@ def test_complete_no_conflict_and_query_count_is_fixed(client, db_session):
     statements = []
     process_engine = db_session.get_bind()
     def record(_conn, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_many)
+    budget=SelectQueryBudget(maximum=9)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         response = client.get(path, headers=headers)
@@ -238,7 +241,7 @@ def test_complete_no_conflict_and_query_count_is_fixed(client, db_session):
     assert body["evaluation_status"] == "complete"
     assert {item["outcome"] for item in body["case_dish_results"]} == {"no_conflict"}
     selects = [item for item in statements if item.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 9  # auth plus eight fixed domain metadata/association/recipe queries
+    assert budget.business_selects <= 9  # auth plus eight fixed domain metadata/association/recipe queries
 
 
 def test_missing_menu_day_and_inactive_mapped_meal_are_unavailable(client, db_session):
@@ -270,8 +273,9 @@ def test_daily_conflicts_return_six_canonical_meals_and_case_details(client, db_
     process_engine = db_session.get_bind()
 
     def record(_conn, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_many)
 
+    budget=SelectQueryBudget(maximum=9)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         response = client.get(
@@ -296,7 +300,7 @@ def test_daily_conflicts_return_six_canonical_meals_and_case_details(client, db_
     assert body["summaries"][0]["status"] == "unmapped"
     assert body["conflict_case_count"] == 1 and body["conflict_count"] == 2
     selects = [item for item in statements if item.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 9  # auth plus the same eight fixed preload queries used by one meal
+    assert budget.business_selects <= 9  # auth plus the same eight fixed preload queries used by one meal
 
 
 def test_weekly_conflicts_are_monday_to_sunday_with_7_by_6_fixed_query_budget(client, db_session):
@@ -305,8 +309,9 @@ def test_weekly_conflicts_are_monday_to_sunday_with_7_by_6_fixed_query_budget(cl
     process_engine = db_session.get_bind()
 
     def record(_conn, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_many)
 
+    budget=SelectQueryBudget(maximum=9)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         response = client.get(
@@ -329,7 +334,7 @@ def test_weekly_conflicts_are_monday_to_sunday_with_7_by_6_fixed_query_budget(cl
     assert target_day["meals"][2]["status"] == "conflict"
     assert body["days"][0]["meals"][0]["status"] == "unavailable"
     selects = [item for item in statements if item.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 9  # query count does not grow to 42 evaluations
+    assert budget.business_selects <= 9  # query count does not grow to 42 evaluations
 
 
 def test_daily_summaries_cover_missing_ambiguous_and_no_eligible_cases(client, db_session):

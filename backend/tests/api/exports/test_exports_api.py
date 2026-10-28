@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from tests.menu_editor import save_editor
 from tests.snapshot_requests import save_snapshot
 
@@ -75,21 +76,23 @@ def test_kitchen_a4_excel_is_an_independent_print_download(client,db_session):
 
 def test_kitchen_a4_export_query_count_does_not_grow_per_row(client,db_session):
     headers=auth(client,db_session);menu,*_=kitchen_fixture(client,headers,db_session);statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=4)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.post("/api/v1/exports/kitchen-operations/a4-xlsx",headers=headers,json={"menu_id":menu["id"]})
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=4
+    assert budget.business_selects<=4
 
 def test_kitchen_export_query_count_does_not_grow_per_row(client,db_session):
     headers=auth(client,db_session);menu,*_=kitchen_fixture(client,headers,db_session);statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=4)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.post("/api/v1/exports/kitchen-operations/xlsx",headers=headers,json={"menu_id":menu["id"]})
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=4
+    assert budget.business_selects<=4
 
 def test_menu_full_and_pretty_exports_are_authenticated_binary_downloads(client,db_session):
     headers=auth(client,db_session);category,dishes=foundations(client,headers);value=menu(client,headers,category["id"],name="中文匯出菜單",start="2026-09-01",end="2026-09-07");meal_types=meals(client,headers,value["id"],("早餐","早點","午餐","午點","晚餐","晚點","特殊餐"))
@@ -117,12 +120,13 @@ def test_menu_exports_require_auth(client):
 def test_menu_export_query_budget_is_constant(client,db_session):
     headers=auth(client,db_session);category,dishes=foundations(client,headers);value=menu(client,headers,category["id"]);meal_types=meals(client,headers,value["id"])
     save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=full_structure(value["id"],meal_types,dishes));statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=5)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx",headers=headers)
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert response.status_code==200
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=5
+    assert budget.business_selects<=5
 
 
 def test_menu_nutrition_exports_are_opt_in_complete_and_deduplicated(client,db_session):
@@ -140,14 +144,15 @@ def test_menu_nutrition_exports_are_opt_in_complete_and_deduplicated(client,db_s
     assert "kcal" not in original_text
 
     statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=9)
     event.listen(process_engine,"before_cursor_execute",record)
     try:calories=client.get(f"/api/v1/exports/menus/{value['id']}/full/xlsx?nutrition=calories",headers=headers)
     finally:event.remove(process_engine,"before_cursor_execute",record)
     assert calories.status_code==200,calories.text
     calorie_text="\n".join(str(cell.value) for sheet in load_workbook(BytesIO(calories.content)) for row in sheet.iter_rows() for cell in row)
     assert "測試菜色1（300 kcal）" in calorie_text and "測試菜色2（無）" in calorie_text
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=9
+    assert budget.business_selects<=9
 
     detailed=client.get(f"/api/v1/exports/menus/{value['id']}/grid/xlsx?nutrition=detailed",headers=headers)
     workbook=load_workbook(BytesIO(detailed.content));assert workbook.sheetnames==["原版-菜色分格週表","熱量-菜色分格週表","詳細營養"]
@@ -173,7 +178,8 @@ def test_kitchen_simple_excel_pdf_known_answer_anomaly_and_query_budget(client,d
         {key:dish.get(key) for key in ("id","dish_id","menu_meal_type_column_id","diner_count","notes","sort_order")}
         for dish in slot["dishes"]]} for slot in aggregate["slots"]]}
     assert save_editor(client,f"/api/v1/menus/{value['id']}/editor",headers=headers,json=payload).status_code==200
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=5)
     event.listen(process_engine,"before_cursor_execute",record)
     try:xlsx=client.post("/api/v1/exports/kitchen-operations/simple/xlsx",headers=headers,json=body)
     finally:event.remove(process_engine,"before_cursor_execute",record)
@@ -183,7 +189,7 @@ def test_kitchen_simple_excel_pdf_known_answer_anomaly_and_query_budget(client,d
     assert workbook.active["B2"].value=="菜單欄位" and [workbook.active.cell(row,2).value for row in range(3,5)]==[main["name"],soup["name"]]
     assert "紅燒雞腿" not in (workbook.active["C3"].value or "") and "紅燒雞腿" in workbook.active["C4"].value
     assert "雞肉" in text and "16.5 kg" in text and "⚠ 此菜有配方資料異常，請確認" in text
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=5
+    assert budget.business_selects<=5
     pdf=client.post("/api/v1/exports/kitchen-operations/simple/pdf",headers=headers,json=body)
     assert pdf.status_code==200,pdf.text
     assert "".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf.content)).pages)==""

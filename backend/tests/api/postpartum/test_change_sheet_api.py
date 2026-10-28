@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 import uuid
 from datetime import date
 
@@ -177,12 +178,13 @@ def test_change_sheet_uses_fixed_read_queries_and_never_writes(client, db_sessio
     engine = db_session.get_bind()
 
     def record(_conn, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_many)
 
     def reject_commit():
         raise AssertionError("read endpoint must not commit")
 
     monkeypatch.setattr(db_session, "commit", reject_commit)
+    budget=SelectQueryBudget(maximum=15)
     event.listen(engine, "before_cursor_execute", record)
     try:
         response = client.get(_path(), headers=headers)
@@ -191,7 +193,7 @@ def test_change_sheet_uses_fixed_read_queries_and_never_writes(client, db_sessio
     assert response.status_code == 200, response.text
     selects = [item for item in statements if item.lstrip().upper().startswith("SELECT")]
     writes = [item for item in statements if item.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))]
-    assert len(selects) <= 15  # auth + fixed handling/conflict preload + one batch case lookup
+    assert budget.business_selects <= 15  # auth + fixed handling/conflict preload + one batch case lookup
     assert writes == []
 
 
@@ -324,12 +326,13 @@ def test_daily_change_sheet_uses_one_fixed_read_preload_and_never_writes(client,
     engine = db_session.get_bind()
 
     def record(_conn, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_many)
 
     def reject_commit():
         raise AssertionError("daily read endpoint must not commit")
 
     monkeypatch.setattr(db_session, "commit", reject_commit)
+    budget=SelectQueryBudget(maximum=15)
     event.listen(engine, "before_cursor_execute", record)
     try:
         response = client.get(_daily_path(), headers=headers)
@@ -338,5 +341,5 @@ def test_daily_change_sheet_uses_one_fixed_read_preload_and_never_writes(client,
     assert response.status_code == 200, response.text
     selects = [item for item in statements if item.lstrip().upper().startswith("SELECT")]
     writes = [item for item in statements if item.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))]
-    assert len(selects) <= 15  # auth + one all-meal handling/conflict preload + one batch case lookup
+    assert budget.business_selects <= 15  # auth + one all-meal handling/conflict preload + one batch case lookup
     assert writes == []

@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 from tests.menu_editor import save_editor
 from tests.snapshot_requests import save_snapshot
 
@@ -126,11 +127,12 @@ def test_reuse_preview_and_apply_are_authoritative_versioned_and_audited(client,
     preview=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=payload)
     assert preview.status_code==200,preview.text;body=preview.json();assert body["summary"]["safe_to_reuse"]>=1
     statements=[]
-    def record_reuse_query(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record_reuse_query(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=10)
     event.listen(process_engine,"before_cursor_execute",record_reuse_query)
     try:assert client.post(f"/api/v1/order-adjustments/{current['id']}/reuse-preview",headers=headers,json=payload).status_code==200
     finally:event.remove(process_engine,"before_cursor_execute",record_reuse_query)
-    assert len([value for value in statements if value.lstrip().upper().startswith("SELECT")])<=10
+    assert budget.business_selects<=10
     target=next(item for item in body["lines"] if item["status"]=="safe_to_reuse" and item["ingredient_name"]==source["ingredient_name_snapshot"])
     applied=client.post(f"/api/v1/order-adjustments/{current['id']}/reuse",headers=headers,json={**payload,"selected_current_line_ids":[target["current_line_id"]]})
     assert applied.status_code==200,applied.text;result=applied.json();assert result["lock_version"]==current["lock_version"]+1
@@ -759,7 +761,8 @@ def test_list_is_authenticated_paginated_and_constant_query_count(client,db_sess
     assert client.get("/api/v1/order-adjustments").status_code==401
     headers=auth(client,db_session);menu,*_=fixture(client,headers);create_sheet(client,headers,menu)
     statements=[]
-    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement)
+    def record(conn,cursor,statement,parameters,context,executemany):statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=4)
     event.listen(process_engine,"before_cursor_execute",record)
     try:response=client.get("/api/v1/order-adjustments?page=1&page_size=1",headers=headers)
     finally:event.remove(process_engine,"before_cursor_execute",record)
@@ -767,7 +770,7 @@ def test_list_is_authenticated_paginated_and_constant_query_count(client,db_sess
     assert response.json()["items"][0]["stale"] is False
     # The fourth fixed query batch-loads current source rows so list badges can
     # distinguish stale drafts without one query per adjustment sheet.
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])<=4
+    assert budget.business_selects<=4
 
 
 def test_delete_stale_draft_cleans_owned_lines_and_snapshot_but_keeps_audit(client,db_session):

@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 import uuid
 
 import pytest
@@ -146,7 +147,8 @@ def test_ingredient_list_has_constant_query_count(client: TestClient, db_session
     headers, _ = auth_headers(client, db_session)
     create_chain(client, headers)
     statements: list[str] = []
-    def record_query(conn, cursor, statement, parameters, context, executemany): statements.append(statement)
+    def record_query(conn, cursor, statement, parameters, context, executemany): statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=3)
     event.listen(process_engine, "before_cursor_execute", record_query)
     try:
         response = client.get("/api/v1/ingredients?page=1&page_size=25", headers=headers)
@@ -154,7 +156,7 @@ def test_ingredient_list_has_constant_query_count(client: TestClient, db_session
         event.remove(process_engine, "before_cursor_execute", record_query)
     assert response.status_code == 200
     selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 3
+    assert budget.business_selects <= 3
     assert "password_hash" not in response.text
 
 
@@ -196,7 +198,8 @@ def test_ingredient_list_supplier_filter_combinations_and_pagination(client: Tes
     assert second_page.json()["items"][0]["id"] != filtered.json()["items"][0]["id"]
 
     statements: list[str] = []
-    def record_query(conn, cursor, statement, parameters, context, executemany): statements.append(statement)
+    def record_query(conn, cursor, statement, parameters, context, executemany): statements.append(statement);budget.record(conn,cursor,statement,parameters,context,executemany)
+    budget=SelectQueryBudget(maximum=3)
     event.listen(process_engine, "before_cursor_execute", record_query)
     try:
         response = client.get(
@@ -208,7 +211,7 @@ def test_ingredient_list_supplier_filter_combinations_and_pagination(client: Tes
     assert response.status_code == 200
     assert response.json()["pagination"]["total"] == 2
     selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
-    assert len(selects) <= 3
+    assert budget.business_selects <= 3
 
 
 def test_ingredient_and_dish_codes_use_natural_numeric_order_across_pages(client: TestClient, db_session: Session) -> None:

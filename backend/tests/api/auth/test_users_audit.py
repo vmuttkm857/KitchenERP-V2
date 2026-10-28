@@ -1,3 +1,4 @@
+from tests.query_budget import SelectQueryBudget
 import uuid
 
 import pytest
@@ -145,7 +146,8 @@ def test_audit_before_after_sanitization_snapshot_filters_and_query_budget(
 
     statements: list[str] = []
     def record(_conn, _cursor, statement, _parameters, _context, _executemany):
-        statements.append(statement)
+        statements.append(statement);budget.record(_conn,_cursor,statement,_parameters,_context,_executemany)
+    budget=SelectQueryBudget(maximum=3)
     event.listen(process_engine, "before_cursor_execute", record)
     try:
         response = client.get("/api/v1/audit-logs?page=1&page_size=2&action=category_update"
@@ -154,7 +156,7 @@ def test_audit_before_after_sanitization_snapshot_filters_and_query_budget(
         event.remove(process_engine, "before_cursor_execute", record)
     assert response.status_code == 200
     assert response.json()["pagination"]["total"] == 1
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]) <= 3
+    assert budget.business_selects <= 3
     detail = client.get(f"/api/v1/audit-logs/{update_log.id}", headers=headers)
     assert detail.status_code == 200 and detail.json()["before_data"]["name"] == "稽核分類"
 
