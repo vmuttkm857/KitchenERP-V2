@@ -19,6 +19,7 @@ _REJECTIONS = frozenset({
 class ConnectionDiagnostic:
     def __init__(self):
         self.phase = "connect"
+        self.other_count = None
 
     def stage(self, phase):
         self.phase = phase if phase in _PHASES else "unknown"
@@ -48,6 +49,12 @@ def connection_stage(phase):
         diagnostic.stage(phase)
 
 
+def connection_competitors(count):
+    diagnostic = _CURRENT.get()
+    if diagnostic is not None:
+        diagnostic.other_count = count if type(count) is int and count >= 0 else None
+
+
 def open_verified_connection(connect, engine, target, application_name, *args, verify=None, **kwargs):
     from tests.database_safety import UnsafeTestDatabase, verify_connection
 
@@ -55,11 +62,26 @@ def open_verified_connection(connect, engine, target, application_name, *args, v
     diagnostic = ConnectionDiagnostic()
     token = _CURRENT.set(diagnostic)
     connection = None
+    from tests.session_diagnostics import active_trace
+    trace = active_trace()
     try:
+        if trace is not None:
+            try:
+                trace.instrument(engine)
+            except Exception:
+                pass
         connection = connect(engine, *args, **kwargs)
         verifier(connection, target, application_name)
+        if trace is not None:
+            trace.verified(connection)
     except Exception as error:
         diagnostic.failure(error)
+        if (trace is not None and connection is not None and isinstance(error, UnsafeTestDatabase)
+                and error.args == ("TEST_DB_IN_USE",)):
+            try:
+                trace.rejected(connection, application_name, diagnostic.other_count)
+            except Exception:
+                pass
         if connection is not None:
             try:
                 connection.close()

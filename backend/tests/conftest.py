@@ -19,6 +19,7 @@ from tests.database_safety import (  # noqa: E402
     validate_engine_target, verify_connection,
 )
 from tests.connection_diagnostics import open_verified_connection  # noqa: E402
+from tests.session_diagnostics import activate, active_trace, deactivate  # noqa: E402
 
 
 def pytest_addoption(parser):
@@ -39,6 +40,8 @@ def pytest_configure(config):
         except UnsafeTestDatabase as error:
             raise pytest.UsageError(str(error)) from None
     config._isolated_database_target = target
+    if target is not None:
+        config._previous_session_trace = activate()
     patch = pytest.MonkeyPatch()
     config._database_safety_patch = patch
     original_connect = Engine.connect
@@ -79,6 +82,32 @@ def pytest_unconfigure(config):
     patch = getattr(config, "_database_safety_patch", None)
     if patch:
         patch.undo()
+    if hasattr(config, "_previous_session_trace"):
+        deactivate(config._previous_session_trace)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_setup(item):
+    trace = active_trace()
+    if trace is not None:
+        trace.context(item.nodeid, "setup")
+    yield
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    trace = active_trace()
+    if trace is not None:
+        trace.context(item.nodeid, "call")
+    yield
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item):
+    trace = active_trace()
+    if trace is not None:
+        trace.context(item.nodeid, "teardown")
+    yield
 
 
 def pytest_collection_modifyitems(config, items):

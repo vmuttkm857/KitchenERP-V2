@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
 
-from tests.connection_diagnostics import connection_stage
+from tests.connection_diagnostics import connection_competitors, connection_stage
 
 
 class UnsafeTestDatabase(RuntimeError):
@@ -104,6 +104,7 @@ def verify_connection(connection, target: TestDatabaseTarget, application_name: 
           AND application_name IS DISTINCT FROM :application_name
     """), {"application_name": application_name})
     connection_stage("identity_validation")
+    connection_competitors(active_others)
     validate_database_identity(target, actual, active_others)
     # Identity checks are read-only. Do not return an implicit open transaction.
     connection_stage("rollback")
