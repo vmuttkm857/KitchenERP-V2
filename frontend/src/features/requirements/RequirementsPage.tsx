@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useLayoutEffect, useRef, useState } from 'react'
 import { ApiError, apiDownload, apiRequest } from '../../api/client'
 import { AnomalyGroups } from '../../components/anomalies/AnomalyGroups'
 import { groupAnomalies,type Anomaly } from '../../components/anomalies/anomalies'
@@ -10,11 +10,13 @@ import { PaginationControls } from '../../components/ui/PaginationControls'
 import { MenuCandidateFilters,MenuCandidateOption,menuMonthRange } from '../menus/MenuCandidateFilters'
 import { useMenuCandidates } from '../menus/useMenuCandidates'
 import type { OrderingAdjustmentDetail } from '../order_adjustments/types'
+import { RequestSequence } from '../../utils/listQuery'
 
 interface Row { row_key:string; ingredient_code:string; ingredient_name:string; supplier_name:string|null; requirement_quantity:string; requirement_unit:string; suggested_purchase_quantity:string|null; suggested_purchase_unit:string|null; configured_purchase_unit:string|null; package_size:string; minimum_order_quantity:string; current_price:string|null; estimated_cost:string|null; needs_review:boolean }
 interface Result { rows:Row[]; daily_rows:DailyRequirementRow[]; known_estimated_cost:string; total_estimated_cost:string|null; anomalies:Anomaly[]; anomaly_summary:{total:number;errors:number;warnings:number} }
 type RangeMode='all'|'custom'
 type QuantityBasis='theoretical'|'actual'
+interface CalculationCriteria { menu_ids:string[]; start_date:string|null; end_date:string|null; ordering_adjustment_sheet_ids?:string[] }
 export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentContext?:OrderingAdjustmentDetail|null;onOpenSnapshot?:(snapshotId:string)=>void}) {
   const initialMenus=()=>new Map((adjustmentContext?.source_menus??[]).map(menu=>[menu.menu_id,{id:menu.menu_id,name:menu.menu_name,start_date:menu.start_date,end_date:menu.end_date,is_active:menu.is_active,category_id:null,category_name:null,notes:null} satisfies Menu]))
   const initialStart=adjustmentContext?.criteria.start_date??adjustmentContext?.criteria.selected_dates?.at(0)??''
@@ -35,7 +37,13 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
   const [basisMessage,setBasisMessage]=useState('')
   const [supplierKey,setSupplierKey]=useState('')
   const [weightUnitMode,setWeightUnitMode]=useState<WeightUnitMode>('original')
-  useEffect(()=>{
+  const requestSequence=useRef(new RequestSequence())
+  const snapshotRequest=useRef<number|null>(null),downloadRequest=useRef<number|null>(null)
+  const [resultCriteria,setResultCriteria]=useState<CalculationCriteria|null>(null)
+  const [calculatedRequest,setCalculatedRequest]=useState<number|null>(null)
+  useLayoutEffect(()=>()=>{requestSequence.current.next()},[])
+  useLayoutEffect(()=>{
+    invalidateResult('')
     if(!adjustmentContext){setActiveAdjustment(null);setQuantityBasis('theoretical');setCalculatedBasis(null);setResult(null);setSavedSnapshotId(null);setBasisMessage('');return}
     setActiveAdjustment(adjustmentContext);setQuantityBasis('actual');setCalculatedBasis(null);setSelectedMenuMap(initialMenus());setRangeMode('custom');setStartDate(adjustmentContext.criteria.start_date??adjustmentContext.criteria.selected_dates?.at(0)??'');setEndDate(adjustmentContext.criteria.end_date??adjustmentContext.criteria.selected_dates?.at(-1)??'');setResult(null);setError('');setSnapshotMessage('');setSavedSnapshotId(null);setBasisMessage('')
   },[adjustmentContext])
@@ -46,17 +54,51 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
   const criteriaDates=rangeMode==='custom'?{start_date:startDate,end_date:endDate}:{start_date:null,end_date:null}
   const criteriaForBasis=(basis:QuantityBasis)=>({menu_ids:menuIds,...criteriaDates,...(basis==='actual'&&activeAdjustment?{ordering_adjustment_sheet_ids:[activeAdjustment.id]}:{})})
   const requestCriteria=criteriaForBasis(quantityBasis)
-  const resultCriteria=criteriaForBasis(calculatedBasis??quantityBasis)
-  function invalidateResult(message='作業條件已變更，請重新計算需求量。'){setCalculatedBasis(null);setResult(null);setSavedSnapshotId(null);setSnapshotMessage('');setBasisMessage(message);setError('')}
+  function isCurrentResult(){return result!==null&&resultCriteria!==null&&calculatedRequest!==null&&requestSequence.current.isCurrent(calculatedRequest)}
+  function invalidateResult(message='作業條件已變更，請重新計算需求量。'){
+    const request=requestSequence.current.next()
+    setCalculatedBasis(null);setResult(null);setResultCriteria(null);setCalculatedRequest(null)
+    setSavedSnapshotId(null);setSnapshotMessage('');setCopyMessage('');setBasisMessage(message);setError('');setLoading(false);setSavingSnapshot(false)
+    return request
+  }
   function toggle(menu:Menu){setSelectedMenuMap(current=>{const next=new Map(current);if(next.has(menu.id))next.delete(menu.id);else next.set(menu.id,menu);return next});invalidateResult()}
   function changeRangeMode(mode:RangeMode){setRangeMode(mode);if(mode==='all'){setStartDate('');setEndDate('')}else{setStartDate(rangeMin);setEndDate(rangeMax)}invalidateResult()}
-  async function calculate(event:FormEvent){event.preventDefault();if(!menuIds.length){setError('請至少選擇一份菜單');return}if(rangeError)return;setLoading(true);setError('');setBasisMessage('');try{const data=await apiRequest<Result>('/requirements/calculate',{method:'POST',body:JSON.stringify(requestCriteria)});setResult(data);setCalculatedBasis(quantityBasis);setSupplierKey(supplierOptions(data.daily_rows)[0]?.key??'');setView('daily')}catch(cause){setError(requirementErrorMessage(cause))}finally{setLoading(false)}}
-  async function saveSnapshot(){if(rangeError)return;setSavingSnapshot(true);setSnapshotMessage('');try{const snapshot=await apiRequest<{id:string}>('/requirement-snapshots',{method:'POST',body:JSON.stringify({criteria:resultCriteria})});setSavedSnapshotId(snapshot.id);setSnapshotMessage('固定需求快照已建立，可前往正式採購繼續處理。')}catch(cause){const existingId=duplicateSnapshotId(cause);setSavedSnapshotId(existingId);setSnapshotMessage(existingId?'相同條件的固定快照已存在，可開啟既有版本繼續正式採購。':requirementErrorMessage(cause,'固定快照建立失敗'))}finally{setSavingSnapshot(false)}}
-  async function download(){if(rangeError)return;setLoading(true);setError('');try{await apiDownload(`/exports/requirements/xlsx?${new URLSearchParams({weight_unit_mode:weightUnitMode})}`,{method:'POST',body:JSON.stringify(resultCriteria)})}catch{setError('需求量 Excel 下載失敗；若來源菜單已變更，請回到叫貨調整重新建立。')}finally{setLoading(false)}}
+  async function calculate(event:FormEvent){
+    event.preventDefault();if(!menuIds.length){setError('請至少選擇一份菜單');return}if(rangeError)return
+    const request=invalidateResult('');setLoading(true)
+    try{
+      const data=await apiRequest<Result>('/requirements/calculate',{method:'POST',body:JSON.stringify(requestCriteria)})
+      if(!requestSequence.current.isCurrent(request))return
+      setResult(data);setCalculatedBasis(quantityBasis);setResultCriteria(requestCriteria);setCalculatedRequest(request)
+      setSupplierKey(supplierOptions(data.daily_rows)[0]?.key??'');setView('daily')
+    }catch(cause){if(requestSequence.current.isCurrent(request))setError(requirementErrorMessage(cause))}
+    finally{if(requestSequence.current.isCurrent(request))setLoading(false)}
+  }
+  async function saveSnapshot(){
+    const request=calculatedRequest
+    if(request===null||!isCurrentResult()||rangeError||snapshotRequest.current===request)return
+    snapshotRequest.current=request;setSavingSnapshot(true);setSnapshotMessage('')
+    try{
+      const snapshot=await apiRequest<{id:string}>('/requirement-snapshots',{method:'POST',body:JSON.stringify({criteria:resultCriteria})})
+      if(!requestSequence.current.isCurrent(request))return
+      setSavedSnapshotId(snapshot.id);setSnapshotMessage('固定需求快照已建立，可前往正式採購繼續處理。')
+    }catch(cause){
+      if(!requestSequence.current.isCurrent(request))return
+      const existingId=duplicateSnapshotId(cause);setSavedSnapshotId(existingId);setSnapshotMessage(existingId?'相同條件的固定快照已存在，可開啟既有版本繼續正式採購。':requirementErrorMessage(cause,'固定快照建立失敗'))
+    }finally{if(snapshotRequest.current===request)snapshotRequest.current=null;if(requestSequence.current.isCurrent(request))setSavingSnapshot(false)}
+  }
+  async function download(){
+    const request=calculatedRequest
+    if(request===null||!isCurrentResult()||rangeError||downloadRequest.current===request)return
+    downloadRequest.current=request;setLoading(true);setError('')
+    try{await apiDownload(`/exports/requirements/xlsx?${new URLSearchParams({weight_unit_mode:weightUnitMode})}`,{method:'POST',body:JSON.stringify(resultCriteria)},()=>requestSequence.current.isCurrent(request))}
+    catch{if(requestSequence.current.isCurrent(request))setError('需求量 Excel 下載失敗；若來源菜單已變更，請回到叫貨調整重新建立。')}
+    finally{if(downloadRequest.current===request)downloadRequest.current=null;if(requestSequence.current.isCurrent(request))setLoading(false)}
+  }
   function changeQuantityBasis(next:QuantityBasis){if(next===quantityBasis||next==='actual'&&!activeAdjustment)return;setQuantityBasis(next);invalidateResult('數量依據已切換，請重新計算需求量。')}
-  function openPurchaseFlow(){if(!savedSnapshotId){setSnapshotMessage('請先將目前結果儲存為固定需求快照，再前往正式採購。');return}onOpenSnapshot?.(savedSnapshotId)}
-  function showCopyMessage(value:string){setCopyMessage(value);window.setTimeout(()=>setCopyMessage(current=>current===value?'':current),2500)}
-  async function copyCurrent(){if(!result)return;const text=view==='total'?buildTsv(['食材編號','食材','供應商','需求量','單位','建議採購量','採購單位','現價','預估成本','狀態'],result.rows.map(row=>{const requirement=requirementQuantityPresentation(row.requirement_quantity,row.requirement_unit,weightUnitMode);const suggested=row.suggested_purchase_quantity===null?null:requirementQuantityPresentation(row.suggested_purchase_quantity,row.suggested_purchase_unit,weightUnitMode);return [row.ingredient_code,row.ingredient_name,row.supplier_name??'未指定供應商',plainDecimal(requirement.quantity),requirement.unit,suggested===null?'':plainDecimal(suggested.quantity),suggested?.unit??'',row.current_price===null?'':plainDecimal(row.current_price),row.estimated_cost===null?'':plainDecimal(row.estimated_cost),row.needs_review?'需確認':'正常']})):view==='supplier'?supplierRowsTsv(result.daily_rows,supplierKey,weightUnitMode):dailyRowsTsv(result.daily_rows,'daily',weightUnitMode);try{await writeClipboard(text);showCopyMessage('已複製，可直接貼到 Excel')}catch{showCopyMessage('複製失敗，請重新操作')}}
+  function openPurchaseFlow(){if(!isCurrentResult())return;if(!savedSnapshotId){setSnapshotMessage('請先將目前結果儲存為固定需求快照，再前往正式採購。');return}onOpenSnapshot?.(savedSnapshotId)}
+  function showCopyMessage(value:string){const request=calculatedRequest;if(request===null||!requestSequence.current.isCurrent(request))return;setCopyMessage(value);window.setTimeout(()=>{if(requestSequence.current.isCurrent(request))setCopyMessage(current=>current===value?'':current)},2500)}
+  async function copyCurrent(){if(!result||!isCurrentResult())return;const text=view==='total'?buildTsv(['食材編號','食材','供應商','需求量','單位','建議採購量','採購單位','現價','預估成本','狀態'],result.rows.map(row=>{const requirement=requirementQuantityPresentation(row.requirement_quantity,row.requirement_unit,weightUnitMode);const suggested=row.suggested_purchase_quantity===null?null:requirementQuantityPresentation(row.suggested_purchase_quantity,row.suggested_purchase_unit,weightUnitMode);return [row.ingredient_code,row.ingredient_name,row.supplier_name??'未指定供應商',plainDecimal(requirement.quantity),requirement.unit,suggested===null?'':plainDecimal(suggested.quantity),suggested?.unit??'',row.current_price===null?'':plainDecimal(row.current_price),row.estimated_cost===null?'':plainDecimal(row.estimated_cost),row.needs_review?'需確認':'正常']})):view==='supplier'?supplierRowsTsv(result.daily_rows,supplierKey,weightUnitMode):dailyRowsTsv(result.daily_rows,'daily',weightUnitMode);try{await writeClipboard(text);showCopyMessage('已複製，可直接貼到 Excel')}catch{showCopyMessage('複製失敗，請重新操作')}}
   const anomalyGroups=groupAnomalies(result?.anomalies??[])
   const issueKinds=anomalyGroups.filter(group=>group.severity==='error').length
   const affectedOccurrences=anomalyGroups.filter(group=>group.severity==='error').reduce((total,group)=>total+group.count,0)
@@ -72,12 +114,12 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
     <div className="requirements-section-title"><strong>A. 目前作業條件</strong><span>已選 {menuIds.length} 份菜單｜{rangeMode==='custom'&&startDate&&endDate?`${startDate}～${endDate}`:'全部已選菜單日期'}｜{basisLabel}</span></div>
     <form className="calculation-workflow" onSubmit={calculate}><fieldset className="workflow-step menu-selection-step"><legend>選擇菜單</legend><strong>已選 {menuIds.length} 份菜單</strong>{selectedMenus.length>0&&<div className="requirements-selected-menus" aria-label="已選菜單">{selectedMenus.map(menu=><button type="button" className="menu-selection-chip" aria-label={`取消選取 ${menu.name}`} key={menu.id} onClick={()=>toggle(menu)}>{menu.name}　×</button>)}</div>}<MenuCandidateFilters month={menuMonth} onMonth={setMenuMonth} categoryId={menuCategoryId} onCategoryId={setMenuCategoryId} search={menuCandidates.search} onSearch={menuCandidates.setSearch}/>{menuCandidates.error&&<small className="error">{menuCandidates.error}</small>}<div className="menu-choices">{menuCandidates.items.map(menu=><MenuCandidateOption key={menu.id} menu={menu} checked={menuIds.includes(menu.id)} onToggle={()=>toggle(menu)}/>)}</div>{!menuCandidates.loading&&!menuCandidates.items.length&&<small>目前篩選條件沒有符合的菜單；已選菜單仍會保留。</small>}{menuCandidates.loading&&<small>菜單候選載入中…</small>}<PaginationControls page={menuCandidates.page} pageSize={menuCandidates.pageSize} total={menuCandidates.total} onPage={menuCandidates.setPage}/></fieldset><fieldset className="workflow-step date-range-step"><legend>日期範圍</legend><small>決定實際需求量計算期間，與上方菜單月份篩選互不影響。</small><div className="range-options"><label className="inline-check"><input type="radio" checked={rangeMode==='all'} onChange={()=>changeRangeMode('all')}/>全部已選菜單日期</label><label className="inline-check"><input type="radio" checked={rangeMode==='custom'} disabled={!menuIds.length} onChange={()=>changeRangeMode('custom')}/>自訂日期範圍</label></div>{rangeMode==='custom'&&<div className="date-range-fields"><label>計算開始日期<input type="date" min={rangeMin} max={rangeMax} value={startDate} onChange={e=>{setStartDate(e.target.value);invalidateResult()}}/></label><label>計算結束日期<input type="date" min={rangeMin} max={rangeMax} value={endDate} onChange={e=>{setEndDate(e.target.value);invalidateResult()}}/></label></div>}{rangeError&&<p className="error inline-validation">{rangeError}</p>}</fieldset><fieldset className="workflow-step quantity-basis-step"><legend>數量依據</legend><div className="quantity-basis-options" role="radiogroup" aria-label="數量依據"><label className={`quantity-basis-option${quantityBasis==='theoretical'?' is-selected':''}`}><input type="radio" name="quantity-basis" value="theoretical" checked={quantityBasis==='theoretical'} disabled={loading} onChange={()=>changeQuantityBasis('theoretical')}/><span><strong>理論需求</strong><small>依配方、人數計算的原始需求量</small></span></label><label className={`quantity-basis-option${quantityBasis==='actual'?' is-selected':''}${!activeAdjustment?' is-disabled':''}`}><input type="radio" name="quantity-basis" value="actual" checked={quantityBasis==='actual'} disabled={loading||!activeAdjustment} onChange={()=>changeQuantityBasis('actual')}/><span><strong>實際叫貨</strong><small>使用叫貨調整後的數量</small>{!activeAdjustment&&<small className="quantity-basis-unavailable">尚未選擇叫貨調整單</small>}</span></label></div><strong className="quantity-basis-current">目前使用：{basisLabel}</strong>{activeAdjustment&&<div className="quantity-basis-source"><strong>可用實際叫貨來源</strong><small>{adjustmentMenus}</small><small>{adjustmentStart}～{adjustmentEnd}　Rev.{activeAdjustment.revision}</small></div>}</fieldset><div className="workflow-submit"><strong>B. 計算操作</strong><small>本次將依「{basisLabel}」計算</small><button disabled={loading||!menuIds.length||Boolean(rangeError)}>{loading?'計算中…':'計算需求量'}</button></div></form>
     {basisMessage&&<p className="quantity-basis-message">{basisMessage}</p>}
-    {error&&<p className="error">{error}</p>}{result&&calculatedBasis&&<><div className="requirements-section-title"><strong>C. 結果摘要</strong><span>以下結果對應目前顯示的菜單、日期與「{calculatedBasisLabel}」</span></div><div className="requirement-result-basis"><strong>目前數量依據：{calculatedBasisLabel}</strong>{calculatedBasis==='actual'&&activeAdjustment&&<small>來源：{adjustmentMenus}　{adjustmentStart}～{adjustmentEnd}　Rev.{activeAdjustment.revision}</small>}</div><div className="requirement-summary summary-cards"><div><small>預估成本</small><strong>{formatMoney(result.total_estimated_cost??result.known_estimated_cost)}</strong><span>{result.total_estimated_cost===null?'部分食材缺少價格，總成本尚未完整':'成本資料完整'}</span></div><div><small>資料問題</small><strong>{issueKinds} 個</strong><span>影響 {affectedOccurrences} 筆菜單內容</span></div><div><small>提醒</small><strong>{reminderKinds} 項</strong><span>請依下方分組確認</span></div><div><small>數量依據</small><strong>{calculatedBasisLabel}</strong><span>{calculatedBasis==='actual'?'已套用叫貨調整':'依配方與人數計算'}</span></div></div>
+    {error&&<p className="error">{error}</p>}{result&&calculatedBasis&&isCurrentResult()&&<><div className="requirements-section-title"><strong>C. 結果摘要</strong><span>以下結果對應目前顯示的菜單、日期與「{calculatedBasisLabel}」</span></div><div className="requirement-result-basis"><strong>目前數量依據：{calculatedBasisLabel}</strong>{calculatedBasis==='actual'&&activeAdjustment&&<small>來源：{adjustmentMenus}　{adjustmentStart}～{adjustmentEnd}　Rev.{activeAdjustment.revision}</small>}</div><div className="requirement-summary summary-cards"><div><small>預估成本</small><strong>{formatMoney(result.total_estimated_cost??result.known_estimated_cost)}</strong><span>{result.total_estimated_cost===null?'部分食材缺少價格，總成本尚未完整':'成本資料完整'}</span></div><div><small>資料問題</small><strong>{issueKinds} 個</strong><span>影響 {affectedOccurrences} 筆菜單內容</span></div><div><small>提醒</small><strong>{reminderKinds} 項</strong><span>請依下方分組確認</span></div><div><small>數量依據</small><strong>{calculatedBasisLabel}</strong><span>{calculatedBasis==='actual'?'已套用叫貨調整':'依配方與人數計算'}</span></div></div>
       <div className="requirements-section-title"><strong>D. 結果工具列</strong><span>檢視、單位顯示、下載與複製功能皆可直接操作</span></div>
       <AnomalyGroups groups={anomalyGroups}/>
       <div className="requirement-view-toolbar"><div className="requirement-view-tabs" role="tablist" aria-label="需求量檢視"><button type="button" className={view==='daily'?'':'secondary'} onClick={()=>{setView('daily');setCopyMessage('')}}>每日需求</button><button type="button" className={view==='supplier'?'':'secondary'} onClick={()=>{setView('supplier');setCopyMessage('')}}>單一供應商</button><button type="button" className={view==='total'?'':'secondary'} onClick={()=>{setView('total');setCopyMessage('')}}>總需求</button></div><div className="segmented requirement-weight-unit-toggle" role="group" aria-label="重量顯示單位"><strong>重量顯示</strong><button type="button" className={weightUnitMode==='original'?'active':'secondary'} aria-pressed={weightUnitMode==='original'} onClick={()=>setWeightUnitMode('original')}>原始單位</button><button type="button" className={weightUnitMode==='kg'?'active':'secondary'} aria-pressed={weightUnitMode==='kg'} onClick={()=>setWeightUnitMode('kg')}>重量換算 kg</button></div>{view==='supplier'&&<label className="supplier-selector">供應商<select value={supplierKey} onChange={event=>{setSupplierKey(event.target.value);setCopyMessage('')}}>{supplierOptions(result.daily_rows).map(option=><option key={option.key} value={option.key}>{option.label}</option>)}</select></label>}<button type="button" className="secondary" disabled={loading} onClick={()=>void download()}>下載 Excel</button><button type="button" disabled={view==='supplier'&&!supplierKey} onClick={()=>void copyCurrent()}>{view==='supplier'?'複製此供應商':'複製目前表格'}</button>{copyMessage&&<small className={copyMessage.startsWith('已複製')?'success':'error'}>{copyMessage}</small>}</div>
       {view==='daily'&&<DailyRequirementTable rows={sortDailyRows(result.daily_rows,'daily')} toneRows={result.daily_rows} showSupplier weightUnitMode={weightUnitMode}/>} {view==='supplier'&&<DailyRequirementTable rows={filterSupplierRows(result.daily_rows,supplierKey)} toneRows={result.daily_rows} showSupplier={false} weightUnitMode={weightUnitMode}/>} {view==='total'&&<RequirementTable rows={result.rows} weightUnitMode={weightUnitMode}/>}</>}
-    {result&&calculatedBasis&&<><div className="requirements-section-title"><strong>E. 下一步操作</strong><span>固定需求快照是建立正式採購前的必要步驟</span></div><div className="snapshot-action"><button type="button" disabled={savingSnapshot} onClick={()=>void saveSnapshot()}>{savingSnapshot?'儲存中…':'儲存為固定需求快照'}</button><button type="button" className={savedSnapshotId?'':'secondary'} onClick={openPurchaseFlow}>前往正式採購</button><small>將以目前「{calculatedBasisLabel}」建立固定需求快照；不會自動建立正式採購單。</small>{snapshotMessage&&<strong>{snapshotMessage}</strong>}</div></>}
+    {result&&calculatedBasis&&isCurrentResult()&&<><div className="requirements-section-title"><strong>E. 下一步操作</strong><span>固定需求快照是建立正式採購前的必要步驟</span></div><div className="snapshot-action"><button type="button" disabled={savingSnapshot} onClick={()=>void saveSnapshot()}>{savingSnapshot?'儲存中…':'儲存為固定需求快照'}</button><button type="button" className={savedSnapshotId?'':'secondary'} onClick={openPurchaseFlow}>前往正式採購</button><small>將以目前「{calculatedBasisLabel}」建立固定需求快照；不會自動建立正式採購單。</small>{snapshotMessage&&<strong>{snapshotMessage}</strong>}</div></>}
   </section>
 }
 

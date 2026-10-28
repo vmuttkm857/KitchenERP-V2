@@ -71,7 +71,9 @@ test('mode switch clears stale results but preserves menus dates and adjustment'
 
 test('calculate export and snapshot use the currently selected quantity basis',()=>{
   assert.match(requirements,/const criteriaForBasis=\(basis:QuantityBasis\)=>\(\{menu_ids:menuIds,\.\.\.criteriaDates,\.\.\.\(basis==='actual'&&activeAdjustment/)
-  assert.match(requirements,/const resultCriteria=criteriaForBasis\(calculatedBasis\?\?quantityBasis\)/)
+  assert.match(requirements,/\[resultCriteria,setResultCriteria\]=useState<CalculationCriteria\|null>\(null\)/)
+  assert.match(requirements,/setResultCriteria\(requestCriteria\)/)
+  assert.doesNotMatch(requirements,/const resultCriteria=criteriaForBasis\(calculatedBasis\?\?quantityBasis\)/)
   assert.match(requirements,/本次將依「\{basisLabel\}」計算/)
   assert.match(requirements,/目前數量依據：\{calculatedBasisLabel\}/)
   assert.match(requirements,/將以目前「\{calculatedBasisLabel\}」建立固定需求快照/)

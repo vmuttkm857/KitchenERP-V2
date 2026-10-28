@@ -103,7 +103,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiDownload(path: string, init?: RequestInit): Promise<void> {
+export async function apiDownload(path: string, init?: RequestInit, canDownload?: () => boolean): Promise<void> {
   const resourcePath=`${apiBaseUrl}${path}`
   const observation=safeBeginObservation(path,init?.method??'GET',resourcePath);let response:Response|undefined;let finished=false
   let attempt=safeBeginAttempt(observation,resourcePath)
@@ -143,7 +143,10 @@ export async function apiDownload(path: string, init?: RequestInit): Promise<voi
     const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
     const fallback = disposition.match(/filename="([^"]+)"/i)?.[1]
     const filename = encoded ? decodeURIComponent(encoded) : fallback ?? 'export'
-    const url = URL.createObjectURL(await response.blob())
+    const blob = await response.blob()
+    // The caller may have changed criteria while the response body was loading.
+    if (canDownload && !canDownload()) { finish(); return }
+    const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = filename
