@@ -192,6 +192,9 @@ def prepare():
             from app.core.config import settings
             require(make_url(settings.database_url) == init_url and make_url(settings.test_database_url) == init_url,
                     "CI_CACHED_SETTINGS_MISMATCH")
+            # The preflight Connection has exited, but QueuePool keeps its
+            # PostgreSQL session idle. Close it before Alembic opens a new one.
+            engine.dispose()
             config = Config(str(BACKEND / "alembic.ini"))
             command.upgrade(config, "head")
     finally:

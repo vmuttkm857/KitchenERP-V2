@@ -5,6 +5,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from sqlalchemy.pool import QueuePool
 
 import postgresql_regression as ci
 
@@ -125,6 +126,181 @@ class ConnectionTests(unittest.TestCase):
             with ci.guarded_connections(url, Mock(side_effect=RuntimeError("CI_REJECTED"))), self.assertRaises(RuntimeError):
                 ci.Engine.connect(SimpleNamespace(url=url))
         connection.close.assert_called_once()
+
+
+class PreflightPoolLifecycleTests(unittest.TestCase):
+    def prepare_flow(self, *, bad_identity=False, nonempty=False, dispose_failure=False, outsider=False):
+        """Real SQLAlchemy pooling, fake DBAPI sessions, no database or subprocess."""
+        events, sessions, engines = [], set(), []
+        init_url = ci.URL.create("postgresql+psycopg", username=ci.INITIALIZER, password="2" * 64,
+                                 host="127.0.0.1", port=5432, database=NAME)
+
+        class DBAPI:
+            def __init__(self):
+                sessions.add(self)
+
+            def close(self):
+                sessions.remove(self)
+                events.append("physical_close")
+
+        class Connection:
+            def __init__(self, engine):
+                self.proxy = engine.pool.connect()
+                self.transaction = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                events.append("preflight_exit")
+                self.close()
+
+            def close(self):
+                self.rollback()
+                self.proxy.close()
+
+            def rollback(self):
+                self.transaction = False
+
+            def execute(self, statement):
+                events.append("verify_identity")
+                self.transaction = True
+                row = [NAME, ci.INITIALIZER, ci.INITIALIZER, "127.0.0.1", 5432, 170000,
+                       ci.ROLE, "kitchenerp-disposable:regression:" + NAME[-32:], False, 0, False]
+                if bad_identity:
+                    row[0] = "kitchenerp_test"
+                return SimpleNamespace(one=lambda: row)
+
+            def scalar(self, statement):
+                self.transaction = True
+                sql = str(statement)
+                if "pg_stat_activity" in sql:
+                    return len(sessions) - 1
+                if "pg_class" in sql:
+                    events.append("check_empty_tables")
+                    return int(nonempty)
+                if "pg_namespace" in sql:
+                    events.append("check_empty_schemas")
+                    return 0
+                raise AssertionError("Unexpected offline query")
+
+        class PreflightEngine:
+            def __init__(self, url):
+                self.url = url
+                self.pool = QueuePool(DBAPI, reset_on_return=None)
+                self.dispose_calls = 0
+                engines.append(self)
+
+            def connect(self):
+                # Exercise the production guarded_connections wrapper itself.
+                return ci.Engine.connect(self)
+
+            def dispose(self):
+                self.dispose_calls += 1
+                events.append("dispose")
+                if dispose_failure and self is engines[0] and self.dispose_calls == 1:
+                    raise RuntimeError("CI_POOL_RELEASE_FAILED")
+                # No checked-out Connection/Transaction may survive this point.
+                assert self.pool.checkedout() == 0
+                self.pool.dispose()
+
+        def admin(sql, database="postgres"):
+            if sql == "SHOW data_directory;":
+                return str(Path("/cluster/data"))
+            if sql == "SELECT current_user;":
+                return "postgres"
+            if "BETWEEN 170000" in sql or "NOT rolcanlogin" in sql:
+                return "t"
+            if sql.startswith("SELECT count(*)"):
+                return "0"
+            return ""
+
+        def upgrade(config, revision):
+            events.append("migration_requested")
+            self.assertEqual(revision, "head")
+            if outsider:
+                sessions.add("unknown_session")
+            migration_engine = PreflightEngine(init_url)
+            try:
+                with migration_engine.connect():
+                    events.append("migration_started")
+            finally:
+                migration_engine.dispose()
+
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.dict(os.environ, {"GITHUB_ENV": str(Path(folder) / "env")}, clear=True), \
+                patch.dict(ci.sys.modules, {"app.core.config": SimpleNamespace(settings=SimpleNamespace(
+                    database_url=init_url.render_as_string(hide_password=False),
+                    test_database_url=init_url.render_as_string(hide_password=False)))}), \
+                patch.object(ci, "context", return_value=(NAME, Path("/cluster"))), \
+                patch.object(ci, "admin", side_effect=admin) as admin_call, \
+                patch.object(ci, "mask"), patch("builtins.print"), \
+                patch.object(ci.secrets, "token_hex", side_effect=["1" * 64, "2" * 64]), \
+                patch.object(ci, "create_engine", side_effect=PreflightEngine), \
+                patch.object(ci.Engine, "connect", autospec=True, side_effect=Connection), \
+                patch.object(ci.command, "upgrade", side_effect=upgrade) as migration, \
+                patch.object(ci, "verify_ready") as ready:
+            error = None
+            try:
+                ci.prepare()
+            except RuntimeError as exc:
+                error = str(exc)
+            finally:
+                # Fake pools only; never perform real DB cleanup.
+                for engine in engines:
+                    engine.pool.dispose()
+            return SimpleNamespace(events=events, error=error, migration=migration,
+                                   ready=ready, admin=admin_call, sessions=sessions)
+
+    def test_returning_connection_to_queuepool_keeps_session_until_dispose(self):
+        dbapi = Mock()
+        pool = QueuePool(lambda: dbapi, reset_on_return=None)
+        connection = pool.connect()
+        connection.close()
+        self.assertEqual(pool.checkedout(), 0)
+        self.assertEqual(pool.checkedin(), 1)
+        dbapi.close.assert_not_called()
+        pool.dispose()
+        dbapi.close.assert_called_once()
+
+    def test_prepare_releases_pool_after_all_checks_and_before_guarded_migration(self):
+        flow = self.prepare_flow()
+        self.assertIsNone(flow.error)
+        self.assertLess(flow.events.index("check_empty_tables"), flow.events.index("check_empty_schemas"))
+        self.assertLess(flow.events.index("check_empty_schemas"), flow.events.index("preflight_exit"))
+        self.assertLess(flow.events.index("preflight_exit"), flow.events.index("dispose"))
+        self.assertLess(flow.events.index("physical_close"), flow.events.index("migration_requested"))
+        self.assertEqual(flow.events.count("verify_identity"), 2)
+        self.assertIn("migration_started", flow.events)
+        self.assertEqual(flow.sessions, set())
+        flow.ready.assert_called_once()
+        self.assertTrue(any("REASSIGN OWNED" in call.args[0] for call in flow.admin.call_args_list))
+        self.assertTrue(any(f"ALTER ROLE {ci.INITIALIZER} NOLOGIN" in call.args[0] for call in flow.admin.call_args_list))
+
+    def test_bad_identity_never_invokes_migration(self):
+        flow = self.prepare_flow(bad_identity=True)
+        self.assertEqual(flow.error, "CI_INITIALIZER_IDENTITY_REJECTED")
+        flow.migration.assert_not_called()
+        flow.ready.assert_not_called()
+        self.assertEqual(flow.sessions, set())
+
+    def test_nonempty_database_never_invokes_migration(self):
+        flow = self.prepare_flow(nonempty=True)
+        self.assertEqual(flow.error, "CI_DATABASE_NOT_EMPTY")
+        flow.migration.assert_not_called()
+
+    def test_pool_release_failure_stops_before_migration(self):
+        flow = self.prepare_flow(dispose_failure=True)
+        self.assertEqual(flow.error, "CI_POOL_RELEASE_FAILED")
+        flow.migration.assert_not_called()
+        flow.ready.assert_not_called()
+
+    def test_unknown_concurrent_session_is_still_rejected_at_migration_connection(self):
+        flow = self.prepare_flow(outsider=True)
+        self.assertEqual(flow.error, "CI_DATABASE_IN_USE")
+        self.assertNotIn("migration_started", flow.events)
+        flow.ready.assert_not_called()
+        self.assertFalse(any("REASSIGN OWNED" in call.args[0] for call in flow.admin.call_args_list))
 
 
 class ReportTests(unittest.TestCase):
