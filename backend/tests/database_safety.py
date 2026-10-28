@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
 
+from tests.connection_diagnostics import connection_stage
+
 
 class UnsafeTestDatabase(RuntimeError):
     pass
@@ -81,6 +83,7 @@ def validate_database_identity(target: TestDatabaseTarget, actual: Mapping, acti
 
 
 def verify_connection(connection, target: TestDatabaseTarget, application_name: str) -> None:
+    connection_stage("identity_query")
     actual = connection.execute(text("""
         SELECT current_database() AS database_name, current_user AS current_role,
                session_user AS session_role, host(inet_server_addr()) AS server_address,
@@ -94,17 +97,23 @@ def verify_connection(connection, target: TestDatabaseTarget, application_name: 
         FROM pg_database d JOIN pg_roles r ON r.rolname = current_user
         WHERE d.datname = current_database()
     """)).mappings().one()
+    connection_stage("competing_sessions_query")
     active_others = connection.scalar(text("""
         SELECT count(*) FROM pg_stat_activity
         WHERE datname = current_database() AND pid <> pg_backend_pid()
           AND application_name IS DISTINCT FROM :application_name
     """), {"application_name": application_name})
+    connection_stage("identity_validation")
     validate_database_identity(target, actual, active_others)
     # Identity checks are read-only. Do not return an implicit open transaction.
+    connection_stage("rollback")
     connection.rollback()
+    connection_stage("application_name")
     connection.execute(text("SELECT set_config('application_name', :name, false)"),
                        {"name": application_name})
+    connection_stage("commit")
     connection.commit()
+    connection_stage("verified")
 
 
 def guarded_migration(operation: str, invoke, target: TestDatabaseTarget | None,

@@ -18,6 +18,7 @@ from tests.database_safety import (  # noqa: E402
     UnsafeTestDatabase, guarded_migration, test_database_target,
     validate_engine_target, verify_connection,
 )
+from tests.connection_diagnostics import open_verified_connection  # noqa: E402
 
 
 def pytest_addoption(parser):
@@ -47,15 +48,7 @@ def pytest_configure(config):
         validate_engine_target(target, engine.url)
         if test_database_target(target.kind, os.environ) != target:
             raise UnsafeTestDatabase("TEST_DB_CONFIGURATION_CHANGED")
-        connection = None
-        try:
-            connection = original_connect(engine, *args, **kwargs)
-            verify_connection(connection, target, application_name)
-        except Exception:
-            if connection is not None:
-                connection.close()
-            raise UnsafeTestDatabase("TEST_DB_CONNECTION_NOT_VERIFIED") from None
-        return connection
+        return open_verified_connection(original_connect, engine, target, application_name, *args, verify=verify_connection, **kwargs)
 
     patch.setattr(Engine, "connect", safe_connect)
     for operation in ("upgrade", "downgrade"):
