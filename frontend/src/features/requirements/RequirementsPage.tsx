@@ -13,7 +13,7 @@ import type { OrderingAdjustmentDetail } from '../order_adjustments/types'
 import { RequestSequence } from '../../utils/listQuery'
 
 interface Row { row_key:string; ingredient_code:string; ingredient_name:string; supplier_name:string|null; requirement_quantity:string; requirement_unit:string; suggested_purchase_quantity:string|null; suggested_purchase_unit:string|null; configured_purchase_unit:string|null; package_size:string; minimum_order_quantity:string; current_price:string|null; estimated_cost:string|null; needs_review:boolean }
-interface Result { rows:Row[]; daily_rows:DailyRequirementRow[]; known_estimated_cost:string; total_estimated_cost:string|null; anomalies:Anomaly[]; anomaly_summary:{total:number;errors:number;warnings:number} }
+interface Result { result_fingerprint:string; rows:Row[]; daily_rows:DailyRequirementRow[]; known_estimated_cost:string; total_estimated_cost:string|null; anomalies:Anomaly[]; anomaly_summary:{total:number;errors:number;warnings:number} }
 type RangeMode='all'|'custom'
 type QuantityBasis='theoretical'|'actual'
 interface CalculationCriteria { menu_ids:string[]; start_date:string|null; end_date:string|null; ordering_adjustment_sheet_ids?:string[] }
@@ -69,6 +69,7 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
     try{
       const data=await apiRequest<Result>('/requirements/calculate',{method:'POST',body:JSON.stringify(requestCriteria)})
       if(!requestSequence.current.isCurrent(request))return
+      if(typeof data.result_fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(data.result_fingerprint)){setError('需求計算結果缺少有效的一致性識別，請重新計算；若仍發生，請確認前後端版本已更新。');return}
       setResult(data);setCalculatedBasis(quantityBasis);setResultCriteria(requestCriteria);setCalculatedRequest(request)
       setSupplierKey(supplierOptions(data.daily_rows)[0]?.key??'');setView('daily')
     }catch(cause){if(requestSequence.current.isCurrent(request))setError(requirementErrorMessage(cause))}
@@ -76,14 +77,15 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
   }
   async function saveSnapshot(){
     const request=calculatedRequest
-    if(request===null||!isCurrentResult()||rangeError||snapshotRequest.current===request)return
+    if(request===null||!result||!isCurrentResult()||rangeError||snapshotRequest.current===request)return
     snapshotRequest.current=request;setSavingSnapshot(true);setSnapshotMessage('')
     try{
-      const snapshot=await apiRequest<{id:string}>('/requirement-snapshots',{method:'POST',body:JSON.stringify({criteria:resultCriteria})})
+      const snapshot=await apiRequest<{id:string}>('/requirement-snapshots',{method:'POST',body:JSON.stringify({criteria:resultCriteria,expected_result_fingerprint:result.result_fingerprint})})
       if(!requestSequence.current.isCurrent(request))return
       setSavedSnapshotId(snapshot.id);setSnapshotMessage('固定需求快照已建立，可前往正式採購繼續處理。')
     }catch(cause){
       if(!requestSequence.current.isCurrent(request))return
+      if(adjustmentErrorCode(cause)==='SNAPSHOT_RESULT_CHANGED'){invalidateResult('需求內容已變更，請重新計算並確認後再儲存快照。');return}
       const existingId=duplicateSnapshotId(cause);setSavedSnapshotId(existingId);setSnapshotMessage(existingId?'相同條件的固定快照已存在，可開啟既有版本繼續正式採購。':requirementErrorMessage(cause,'固定快照建立失敗'))
     }finally{if(snapshotRequest.current===request)snapshotRequest.current=null;if(requestSequence.current.isCurrent(request))setSavingSnapshot(false)}
   }

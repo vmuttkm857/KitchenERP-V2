@@ -1,4 +1,5 @@
 from tests.menu_editor import save_editor
+from tests.snapshot_requests import save_snapshot
 
 from decimal import Decimal
 
@@ -155,7 +156,7 @@ def test_sync_apply_replaces_dish_without_transferring_adjustment_and_reconciles
         ]},
     ).json()
     confirmed=client.post(f"/api/v1/order-adjustments/{sheet['id']}/confirm",headers=headers,json={"lock_version":saved["lock_version"]}).json()
-    standard=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]],"selected_dates":["2026-09-01"],"ordering_adjustment_sheet_ids":[sheet["id"]]}}).json()
+    standard=save_snapshot(client,headers,{"menu_ids":[menu["id"]],"selected_dates":["2026-09-01"],"ordering_adjustment_sheet_ids":[sheet["id"]]}).json()
     standard_values={item["id"]:item["requirement_quantity"] for item in standard["items"]}
     replacement=_new_dish(client,headers,code="APPLY-PORK",name="炸豬排",ingredient_id=ingredients[1]["id"],quantity="80")
     aggregate=client.get(f"/api/v1/menus/{menu['id']}/editor",headers=headers).json()

@@ -106,6 +106,7 @@ class AnomalySummary(BaseModel):
 
 
 class RequirementResult(BaseModel):
+    result_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     criteria: RequirementCriteria
     source_menus: list[RequirementSourceMenu]
     rows: list[RequirementRow]

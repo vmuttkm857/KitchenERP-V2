@@ -1,4 +1,5 @@
 from tests.menu_editor import save_editor
+from tests.snapshot_requests import save_snapshot
 
 import uuid
 from decimal import Decimal
@@ -100,7 +101,7 @@ def test_adjusted_requirements_flow_into_excel_and_standard_snapshot(client,db_s
     sheet_values=load_workbook(BytesIO(exported.content))["需求彙總"]
     excel_quantity=next(Decimal(str(row[3].value)) for row in sheet_values.iter_rows(min_row=2) if row[0].value=="REQ-I1")
     assert excel_quantity==expected
-    snapshot=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":criteria})
+    snapshot=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":criteria,"expected_result_fingerprint":result["result_fingerprint"]})
     assert snapshot.status_code==201,snapshot.text
     item=next(item for item in snapshot.json()["items"] if item["ingredient_code_snapshot"]=="REQ-I1")
     assert Decimal(item["requirement_quantity"])==expected
@@ -112,7 +113,7 @@ def test_reopened_adjustment_uses_latest_saved_values_and_preserves_standard_sna
     saved=client.patch(f"/api/v1/order-adjustments/{sheet['id']}/lines",headers=headers,json={"lock_version":sheet["lock_version"],"lines":[{"id":line["id"],"adjusted_quantity":"2"}]}).json()
     confirmed=client.post(f"/api/v1/order-adjustments/{sheet['id']}/confirm",headers=headers,json={"lock_version":saved["lock_version"]}).json()
     criteria=_criteria(menu,sheet["id"],selected_dates=["2026-09-01"])
-    snapshot_a=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":criteria}).json()
+    snapshot_a=save_snapshot(client,headers,criteria).json()
     snapshot_a_values={item["id"]:item["requirement_quantity"] for item in snapshot_a["items"]}
 
     reopened=client.post(f"/api/v1/order-adjustments/{sheet['id']}/reopen",headers=headers,json={"lock_version":confirmed["lock_version"]}).json()
@@ -122,7 +123,7 @@ def test_reopened_adjustment_uses_latest_saved_values_and_preserves_standard_sna
     expected=sum((Decimal(value["adjusted_quantity"] if value["adjusted_quantity"] is not None else value["system_quantity"]) for value in saved_again["lines"] if value["ingredient_code_snapshot"]=="REQ-I1"),Decimal("0"))
     assert Decimal(_row(latest.json(),"REQ-I1")["requirement_quantity"])==expected
 
-    snapshot_b=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":criteria})
+    snapshot_b=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":criteria,"expected_result_fingerprint":latest.json()["result_fingerprint"]})
     assert snapshot_b.status_code==201,snapshot_b.text
     assert snapshot_b.json()["id"]!=snapshot_a["id"]
     current_a=client.get(f"/api/v1/requirement-snapshots/{snapshot_a['id']}",headers=headers).json()

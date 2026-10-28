@@ -1,10 +1,13 @@
 from datetime import UTC,date,datetime,time,timedelta
 from decimal import Decimal
+import re
 from zoneinfo import ZoneInfo
 from sqlalchemy.exc import IntegrityError
 from app.domains.requirements.service import RequirementService
 from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,InvalidSnapshotDateRangeError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
 from app.domains.snapshots.fingerprint import content_fingerprint,hash_payload,normalize,snapshot_fingerprint
+from app.domains.snapshots.exceptions import SnapshotResultChangedError,SnapshotResultFingerprintError
+from app.domains.snapshots.fingerprint import result_fingerprint
 from app.domains.snapshots.models import RequirementSnapshot,RequirementSnapshotItem
 from app.domains.snapshots.repository import SnapshotRepository
 from app.domains.auth.service import AuthService
@@ -29,9 +32,15 @@ class SnapshotService:
             self.repository.add(item);items.append(item)
         self.audit.record(actor_id=actor_id,action="snapshot_create",entity_type="requirement_snapshot",entity_id=header.id,entity_label=f"Revision {header.revision}",after_data={"revision":header.revision,"source_menus":header.source_menus,"known_estimated_cost":header.known_estimated_cost,"total_estimated_cost":header.total_estimated_cost,"item_count":len(result["rows"])})
         self.session.flush();return header,items,result
-    def create(self,criteria,actor_id):
+    def create(self,criteria,actor_id,*,expected_result_fingerprint=None):
         try:
-            header,_,_=self.build(criteria,actor_id)
+            if not isinstance(expected_result_fingerprint,str) or not re.fullmatch(r"[0-9a-f]{64}",expected_result_fingerprint):
+                raise SnapshotResultFingerprintError()
+            result=RequirementService(self.session).calculate(criteria)
+            if result_fingerprint(result)!=expected_result_fingerprint:raise SnapshotResultChangedError()
+            # Persist this verified read model. Source changes after comparison
+            # cannot enter the snapshot through a second calculation.
+            header,_,_=self.build(criteria,actor_id,result=result)
             self.session.commit()
         except IntegrityError as exc:
             self.session.rollback();raise DuplicateSnapshotError() from exc

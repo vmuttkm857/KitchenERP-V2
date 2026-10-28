@@ -30,7 +30,7 @@ def test_authenticated_master_data_to_confirmed_purchase_and_exports(client, db_
     snapshot_response = client.post(
         "/api/v1/requirement-snapshots",
         headers=headers,
-        json={"criteria": {"menu_ids": [menu["id"]]}},
+        json={"criteria": {"menu_ids": [menu["id"]]}, "expected_result_fingerprint": requirement["result_fingerprint"]},
     )
     assert snapshot_response.status_code == 201
     snapshot = snapshot_response.json()

@@ -35,7 +35,7 @@ def test_confirmed_workflow_keeps_frozen_requirements_snapshot_and_supplier_exce
                 "ordering_adjustment_sheet_ids": [sheet["id"]]}
     original = client.post("/api/v1/requirements/calculate", headers=headers, json=criteria)
     assert original.status_code == 200, original.text
-    snapshot = client.post("/api/v1/requirement-snapshots", headers=headers, json={"criteria": criteria})
+    snapshot = client.post("/api/v1/requirement-snapshots", headers=headers, json={"criteria": criteria, "expected_result_fingerprint": original.json()["result_fingerprint"]})
     assert snapshot.status_code == 201, snapshot.text
     snapshot_a = deepcopy(snapshot.json())
     export_url = f"/api/v1/exports/requirement-snapshots/{snapshot_a['id']}/suppliers/{suppliers[0]['id']}/weekly-order.xlsx?breakfast_previous_day=true"

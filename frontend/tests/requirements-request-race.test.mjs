@@ -3,13 +3,14 @@ import {readFileSync} from 'node:fs'
 import test from 'node:test'
 import vm from 'node:vm'
 import ts from 'typescript'
+import {createHash} from 'node:crypto'
 import {RequestSequence} from '../src/utils/listQuery.ts'
 import * as daily from '../src/features/requirements/dailyRequirements.ts'
 import * as numbers from '../src/utils/numbers.ts'
 
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
 const menu=id=>({id,name:id,start_date:'2026-11-02',end_date:'2026-11-08',is_active:true})
-function result(id){return {rows:[],daily_rows:[{requirement_date:'2026-11-02',menu_id:id,menu_name:id,supplier_id:'supplier',supplier_name:'供應商',ingredient_id:'ingredient',ingredient_code:'I1',ingredient_name:'青菜',quantity:'3.15',unit:'kg'}],known_estimated_cost:'0',total_estimated_cost:'0',anomalies:[],anomaly_summary:{total:0,errors:0,warnings:0}}}
+function result(id){return {result_fingerprint:createHash('sha256').update(id).digest('hex'),rows:[],daily_rows:[{requirement_date:'2026-11-02',menu_id:id,menu_name:id,supplier_id:'supplier',supplier_name:'供應商',ingredient_id:'ingredient',ingredient_code:'I1',ingredient_name:'青菜',quantity:'3.15',unit:'kg'}],known_estimated_cost:'0',total_estimated_cost:'0',anomalies:[],anomaly_summary:{total:0,errors:0,warnings:0}}}
 const context=id=>({id,revision:1,lock_version:1,source_fingerprint:'a'.repeat(64),criteria:{menu_ids:['A'],start_date:'2026-11-02',end_date:'2026-11-08'},source_menus:[{menu_id:'A',menu_name:'A',start_date:'2026-11-02',end_date:'2026-11-08',is_active:true}]})
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[]
 const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):typeof value==='string'?value:''
@@ -155,7 +156,7 @@ test('normal result can be copied exported saved and opened with its captured cr
   const criteria=ui.requests('/requirements/calculate')[0].body
   ui.click('下載 Excel');await ui.flush();assert.deepEqual(ui.calls.at(-1).body,criteria);ui.calls.at(-1).resolve();await ui.flush()
   assert.deepEqual(ui.downloads,[criteria]);ui.click('複製目前表格');await ui.flush();assert.equal(ui.copies.length,1)
-  ui.click('儲存為固定需求快照');await ui.flush();const save=ui.requests('/requirement-snapshots')[0];assert.deepEqual(save.body,{criteria})
+  ui.click('儲存為固定需求快照');await ui.flush();const save=ui.requests('/requirement-snapshots')[0];assert.deepEqual(save.body,{criteria,expected_result_fingerprint:result('A').result_fingerprint})
   save.resolve({id:'snapshot-A'});await ui.flush();ui.click('前往正式採購');assert.deepEqual(ui.opened,['snapshot-A'])
 })
 
@@ -223,7 +224,7 @@ test('actual quantity basis retains the selected source and date contract',async
   const ui=harness(context('confirmed-sheet'));t.after(()=>ui.close());await ui.flush();await calculated(ui)
   const criteria=ui.requests('/requirements/calculate')[0].body
   assert.deepEqual(criteria,{menu_ids:['A'],start_date:'2026-11-02',end_date:'2026-11-08',ordering_adjustment_sheet_ids:['confirmed-sheet']})
-  ui.click('儲存為固定需求快照');await ui.flush();assert.deepEqual(ui.requests('/requirement-snapshots')[0].body,{criteria})
+  ui.click('儲存為固定需求快照');await ui.flush();assert.deepEqual(ui.requests('/requirement-snapshots')[0].body,{criteria,expected_result_fingerprint:result('A').result_fingerprint})
   ui.requests('/requirement-snapshots')[0].resolve({id:'saved'});await ui.flush()
 })
 
@@ -231,6 +232,41 @@ test('range mode changes revoke pending results but weight display changes prese
   const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush()
   const old=ui.calculate();await ui.flush();ui.customDates();await ui.flush();ui.requests('/requirements/calculate')[0].resolve(result('OLD'));await old;await ui.flush()
   assert.deepEqual(ui.resultMenus(),[]);await calculated(ui);ui.click('重量換算 kg');await ui.flush();assert.deepEqual(ui.resultMenus(),['A'])
+})
+
+for(const fingerprint of [undefined,'bad'])test(`H07: missing or invalid result fingerprint (${fingerprint}) cannot be saved`,async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush()
+  const pending=ui.calculate();await ui.flush();ui.requests('/requirements/calculate')[0].resolve({...result('A'),result_fingerprint:fingerprint});await pending;await ui.flush()
+  assert.equal(ui.button('儲存為固定需求快照'),undefined);assert.match(ui.texts(),/一致性識別/);assert.equal(ui.loading(),false)
+})
+
+test('H07: changed-result 409 requires explicit recalculation before saving again',async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush();await calculated(ui)
+  const oldSave=ui.button('儲存為固定需求快照').props.onClick;oldSave();await ui.flush()
+  const save=ui.requests('/requirement-snapshots')[0]
+  assert.equal(save.body.expected_result_fingerprint,result('A').result_fingerprint)
+  save.reject(new ui.ApiError(409,{code:'SNAPSHOT_RESULT_CHANGED'}));await ui.flush()
+  assert.deepEqual(ui.resultMenus(),[]);assert.match(ui.texts(),/需求內容已變更.*重新計算/)
+  oldSave();await ui.flush();assert.equal(ui.requests('/requirement-snapshots').length,1)
+  await calculated(ui,'UPDATED');ui.click('儲存為固定需求快照');await ui.flush()
+  assert.equal(ui.requests('/requirement-snapshots')[1].body.expected_result_fingerprint,result('UPDATED').result_fingerprint)
+  ui.requests('/requirement-snapshots')[1].resolve({id:'updated'});await ui.flush()
+})
+
+test('H07: an obsolete snapshot conflict cannot invalidate the newer H04 result',async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush();await calculated(ui)
+  ui.click('儲存為固定需求快照');await ui.flush();const old=ui.requests('/requirement-snapshots')[0]
+  ui.toggle('B');await ui.flush();await calculated(ui,'B');old.reject(new ui.ApiError(409,{code:'SNAPSHOT_RESULT_CHANGED'}));await ui.flush()
+  assert.deepEqual(ui.resultMenus(),['B']);assert.doesNotMatch(ui.texts(),/需求內容已變更/)
+})
+
+test('H07: late calculation cannot replace the fingerprint sent with the newest result',async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush()
+  const a=ui.calculate();await ui.flush();ui.toggle('B');await ui.flush();const b=ui.calculate();await ui.flush()
+  ui.requests('/requirements/calculate')[1].resolve(result('B'));await b;await ui.flush()
+  ui.requests('/requirements/calculate')[0].resolve(result('A'));await a;await ui.flush()
+  ui.click('儲存為固定需求快照');await ui.flush();assert.equal(ui.requests('/requirement-snapshots')[0].body.expected_result_fingerprint,result('B').result_fingerprint)
+  ui.requests('/requirement-snapshots')[0].resolve({id:'B'});await ui.flush()
 })
 
 function downloadClient(){

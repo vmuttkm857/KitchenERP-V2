@@ -7,3 +7,5 @@ class SnapshotLockedError(Exception): pass
 class InvalidPurchaseUnitError(Exception): pass
 class SnapshotInUseError(Exception): pass
 class InvalidSnapshotDateRangeError(Exception): pass
+class SnapshotResultChangedError(Exception): pass
+class SnapshotResultFingerprintError(Exception): pass

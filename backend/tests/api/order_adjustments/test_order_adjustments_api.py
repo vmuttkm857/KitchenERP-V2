@@ -1,4 +1,5 @@
 from tests.menu_editor import save_editor
+from tests.snapshot_requests import save_snapshot
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -369,7 +370,7 @@ def test_adjustment_owned_snapshot_cannot_bypass_draft_or_purchase_guard(client,
 
 def test_snapshot_list_only_exposes_standard_and_confirmed_adjustment_snapshots(client,db_session):
     headers=auth(client,db_session);menu,*_=fixture(client,headers)
-    standard=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}})
+    standard=save_snapshot(client,headers,{"menu_ids":[menu["id"]]})
     assert standard.status_code==201,standard.text
 
     confirmed=create_sheet(client,headers,menu);assert confirmed.status_code==201,confirmed.text

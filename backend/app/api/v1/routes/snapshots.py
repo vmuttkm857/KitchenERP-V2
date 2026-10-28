@@ -9,6 +9,7 @@ from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapsho
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.snapshots.schemas import SnapshotCreate,SnapshotDetail,SnapshotHeaderPublic,SnapshotItemPublic,SnapshotItemUpdate,SnapshotList
 from app.domains.snapshots.service import SnapshotService
+from app.domains.snapshots.exceptions import SnapshotResultChangedError,SnapshotResultFingerprintError
 from app.domains.users.models import User
 from app.domains.requirements.exceptions import RequirementAdjustmentError
 from app.shared.schemas import PaginationMeta
@@ -16,6 +17,8 @@ from app.shared.schemas import PasswordConfirmation
 
 router=APIRouter(prefix="/requirement-snapshots",tags=["requirement-snapshots"])
 def mapped(exc):
+    if isinstance(exc,SnapshotResultChangedError):return HTTPException(409,detail={"code":"SNAPSHOT_RESULT_CHANGED","message":"需求內容已變更，請重新計算並確認後再儲存快照。"})
+    if isinstance(exc,SnapshotResultFingerprintError):return HTTPException(422,detail={"code":"SNAPSHOT_RESULT_FINGERPRINT_REQUIRED"})
     if isinstance(exc,RequirementAdjustmentError):return HTTPException(exc.status_code,detail={"code":exc.code,**exc.context})
     if isinstance(exc,SnapshotNotFoundError):return HTTPException(404,"Snapshot not found")
     if isinstance(exc,DuplicateSnapshotError):return HTTPException(409,detail={"code":"DUPLICATE_SNAPSHOT","existing_snapshot_id":str(exc.snapshot_id) if exc.snapshot_id else None})
@@ -29,7 +32,7 @@ def mapped(exc):
 
 @router.post("",response_model=SnapshotDetail,status_code=status.HTTP_201_CREATED)
 def create(data:SnapshotCreate,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
-    try:return SnapshotDetail.model_validate(SnapshotService(session).create(data.criteria,user.id))
+    try:return SnapshotDetail.model_validate(SnapshotService(session).create(data.criteria,user.id,expected_result_fingerprint=data.expected_result_fingerprint))
     except Exception as exc:raise mapped(exc) from exc
 
 @router.get("",response_model=SnapshotList)

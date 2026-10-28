@@ -30,7 +30,7 @@ test('adjustment navigation preserves full explicit calculation context',()=>{
 
 test('calculate export and snapshot share the same authoritative criteria',()=>{
   assert.match(requirements,/JSON\.stringify\(requestCriteria\)/)
-  assert.match(requirements,/JSON\.stringify\(\{criteria:resultCriteria\}\)/)
+  assert.match(requirements,/JSON\.stringify\(\{criteria:resultCriteria,expected_result_fingerprint:result\.result_fingerprint\}\)/)
   assert.match(requirements,/body:JSON\.stringify\(resultCriteria\)/)
   assert.match(requirements,/\/requirements\/calculate/)
   assert.match(requirements,/\/exports\/requirements\/xlsx/)

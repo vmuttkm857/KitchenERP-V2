@@ -12,9 +12,10 @@ from app.domains.ingredients.models import Ingredient
 from app.domains.recipes.models import DishIngredient
 from app.domains.menus.models import MenuDish
 from app.domains.users.models import User
+from tests.snapshot_requests import save_snapshot
 
 def create_snapshot(client,headers,menu):
-    return client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}})
+    return save_snapshot(client,headers,{"menu_ids":[menu["id"]]})
 
 def test_snapshot_known_answer_hard_copy_adjustment_and_immutability(client,db_session):
     headers=auth(client,db_session);menu,_,dishes,ingredients,suppliers=fixture(client,headers)

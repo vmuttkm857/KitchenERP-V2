@@ -1,4 +1,5 @@
 from tests.menu_editor import save_editor
+from tests.snapshot_requests import save_snapshot
 
 from io import BytesIO
 from openpyxl import load_workbook
@@ -28,7 +29,7 @@ def test_exports_require_auth(client):
 
 def test_supplier_weekly_snapshot_export_keeps_dish_sources_separate(client,db_session):
     headers=auth(client,db_session);menu,_,_,_,suppliers=requirements_fixture(client,headers)
-    snapshot=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}})
+    snapshot=save_snapshot(client,headers,{"menu_ids":[menu["id"]]})
     assert snapshot.status_code==201,snapshot.text
     response=client.get(f'/api/v1/exports/requirement-snapshots/{snapshot.json()["id"]}/suppliers/{suppliers[0]["id"]}/weekly-order.xlsx',headers=headers)
     assert response.status_code==200,response.text
@@ -46,7 +47,7 @@ def test_supplier_weekly_snapshot_export_keeps_dish_sources_separate(client,db_s
 
 def test_supplier_weekly_snapshot_export_rejects_unallocatable_aggregate_adjustment(client,db_session):
     headers=auth(client,db_session);menu,_,_,_,suppliers=requirements_fixture(client,headers)
-    snapshot=client.post("/api/v1/requirement-snapshots",headers=headers,json={"criteria":{"menu_ids":[menu["id"]]}}).json()
+    snapshot=save_snapshot(client,headers,{"menu_ids":[menu["id"]]}).json()
     chicken=next(item for item in snapshot["items"] if item["ingredient_code_snapshot"]=="REQ-I1")
     assert client.patch(f'/api/v1/requirement-snapshots/{snapshot["id"]}/items/{chicken["id"]}',headers=headers,json={"adjusted_quantity":"20"}).status_code==200
     response=client.get(f'/api/v1/exports/requirement-snapshots/{snapshot["id"]}/suppliers/{suppliers[0]["id"]}/weekly-order.xlsx',headers=headers)

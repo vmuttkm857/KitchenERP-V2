@@ -1,4 +1,5 @@
 import copy
+from tests.snapshot_requests import save_snapshot
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from threading import Barrier
@@ -37,8 +38,8 @@ def test_inline_edit_saves_source_only_preserves_adjustments_and_requires_one_ex
     line = sheet["lines"][0]
     sheet = client.patch(f"/api/v1/order-adjustments/{sheet['id']}/lines", headers=headers,
         json={"lock_version": sheet["lock_version"], "lines": [{"id": line["id"], "adjusted_quantity": "25", "adjusted_unit": "kg"}]}).json()
-    standard = client.post("/api/v1/requirement-snapshots", headers=headers,
-        json={"criteria": {**sheet["criteria"], "ordering_adjustment_sheet_ids": [sheet["id"]]}}).json()
+    standard = save_snapshot(client, headers,
+        {**sheet["criteria"], "ordering_adjustment_sheet_ids": [sheet["id"]]}).json()
     standard = client.get(f"/api/v1/requirement-snapshots/{standard['id']}", headers=headers).json()
     snapshot_state = {item.id: (item.requirement_quantity, item.adjusted_quantity)
         for item in db_session.scalars(select(RequirementSnapshotItem))}
