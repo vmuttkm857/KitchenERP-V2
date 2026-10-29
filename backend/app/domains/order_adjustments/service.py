@@ -201,6 +201,8 @@ class OrderingAdjustmentService:
         confirmed_sheet_ids={sheet.id for sheet in sheets if sheet.status=="confirmed"}
         confirmed_item_ids={line.snapshot_item_id for line in lines if line.sheet_id in confirmed_sheet_ids}
         snapshot_items={item.id:item for item in self.repository.snapshot_items_by_ids(confirmed_item_ids)} if confirmed_item_ids else {}
+        from app.domains.requirements.source_order import saved_source_orders
+        frozen_orders = saved_source_orders(snapshot_items.values())
         current_keys={f'{row["menu_dish_id"]}:{row["recipe_detail_id"]}' for row in calculation_source if row["recipe_detail_id"] is not None}
         overrides={};matched_sheets=set();frozen=[];coverages={}
         for sheet in sheets:
@@ -234,7 +236,7 @@ class OrderingAdjustmentService:
                 if sheet.status=="confirmed":
                     item=snapshot_items.get(line.snapshot_item_id)
                     if item is None:raise RequirementAdjustmentError("ADJUSTMENT_COVERAGE_UNAVAILABLE",sheet_id=str(sheet.id))
-                    frozen.append(self._frozen_source_row(line,item))
+                    frozen.append(self._frozen_source_row(line,item,saved_orders=frozen_orders))
         unmatched=[str(sheet.id) for sheet in sheets if sheet.id not in matched_sheets]
         if unmatched:raise RequirementAdjustmentError("ADJUSTMENT_NO_SOURCE_OVERLAP",sheet_ids=unmatched)
         for index,sheet in enumerate(sheets):
@@ -248,7 +250,9 @@ class OrderingAdjustmentService:
         return source,overrides
 
     @staticmethod
-    def _frozen_source_row(line,snapshot_item):
+    def _frozen_source_row(line,snapshot_item,*,saved_orders=None):
+        from app.domains.requirements.source_order import saved_source_orders, order_for_line
+        source_order = order_for_line(saved_source_orders([snapshot_item]) if saved_orders is None else saved_orders, line)
         return {
             "menu_id":line.source_menu_id,"menu_name":line.menu_name_snapshot,"menu_is_active":True,
             "menu_day_id":line.source_menu_day_id,"menu_date":line.requirement_date,
@@ -266,6 +270,7 @@ class OrderingAdjustmentService:
             "purchase_unit":line.configured_purchase_unit_snapshot,"package_size":line.package_size_snapshot,
             "minimum_order_quantity":line.minimum_order_quantity_snapshot,"ingredient_is_active":True,
             "supplier_is_active":True if line.source_supplier_id is not None else None,
+            **({"source_order": source_order} if source_order is not None else {}),
         }
 
     def _loaded(self,sheet_id,for_update=False):

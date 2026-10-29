@@ -11,12 +11,14 @@ import { MenuCandidateFilters,MenuCandidateOption,menuMonthRange } from '../menu
 import { useMenuCandidates } from '../menus/useMenuCandidates'
 import type { OrderingAdjustmentDetail } from '../order_adjustments/types'
 import { RequestSequence } from '../../utils/listQuery'
+import { SnapshotRevisionIntent } from './snapshotRevisionIntent'
 
 interface Row { row_key:string; ingredient_code:string; ingredient_name:string; supplier_name:string|null; requirement_quantity:string; requirement_unit:string; suggested_purchase_quantity:string|null; suggested_purchase_unit:string|null; configured_purchase_unit:string|null; package_size:string; minimum_order_quantity:string; current_price:string|null; estimated_cost:string|null; needs_review:boolean }
 interface Result { result_fingerprint:string; rows:Row[]; daily_rows:DailyRequirementRow[]; known_estimated_cost:string; total_estimated_cost:string|null; anomalies:Anomaly[]; anomaly_summary:{total:number;errors:number;warnings:number} }
 type RangeMode='all'|'custom'
 type QuantityBasis='theoretical'|'actual'
 interface CalculationCriteria { menu_ids:string[]; start_date:string|null; end_date:string|null; ordering_adjustment_sheet_ids?:string[] }
+interface RevisionContext {base_snapshot_id:string;latest_revision:number;next_revision:number;base_has_purchase:boolean}
 export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentContext?:OrderingAdjustmentDetail|null;onOpenSnapshot?:(snapshotId:string)=>void}) {
   const initialMenus=()=>new Map((adjustmentContext?.source_menus??[]).map(menu=>[menu.menu_id,{id:menu.menu_id,name:menu.menu_name,start_date:menu.start_date,end_date:menu.end_date,is_active:menu.is_active,category_id:null,category_name:null,notes:null} satisfies Menu]))
   const initialStart=adjustmentContext?.criteria.start_date??adjustmentContext?.criteria.selected_dates?.at(0)??''
@@ -33,6 +35,10 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
   const [result,setResult]=useState<Result|null>(null); const [view,setView]=useState<'daily'|'supplier'|'total'>('daily')
   const [loading,setLoading]=useState(false); const [error,setError]=useState('')
   const [snapshotMessage,setSnapshotMessage]=useState(''); const [savingSnapshot,setSavingSnapshot]=useState(false);const [savedSnapshotId,setSavedSnapshotId]=useState<string|null>(null)
+  const [duplicateId,setDuplicateId]=useState<string|null>(null)
+  const [revisionContext,setRevisionContext]=useState<RevisionContext|null>(null)
+  const [revisionError,setRevisionError]=useState('')
+  const revisionIntent=useRef(new SnapshotRevisionIntent())
   const [copyMessage,setCopyMessage]=useState('')
   const [basisMessage,setBasisMessage]=useState('')
   const [supplierKey,setSupplierKey]=useState('')
@@ -58,6 +64,7 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
   function invalidateResult(message='作業條件已變更，請重新計算需求量。'){
     const request=requestSequence.current.next()
     setCalculatedBasis(null);setResult(null);setResultCriteria(null);setCalculatedRequest(null)
+    setDuplicateId(null);setRevisionContext(null);setRevisionError('');revisionIntent.current.invalidate()
     setSavedSnapshotId(null);setSnapshotMessage('');setCopyMessage('');setBasisMessage(message);setError('');setLoading(false);setSavingSnapshot(false)
     return request
   }
@@ -80,14 +87,51 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
     if(request===null||!result||!isCurrentResult()||rangeError||snapshotRequest.current===request)return
     snapshotRequest.current=request;setSavingSnapshot(true);setSnapshotMessage('')
     try{
-      const snapshot=await apiRequest<{id:string}>('/requirement-snapshots',{method:'POST',body:JSON.stringify({criteria:resultCriteria,expected_result_fingerprint:result.result_fingerprint})})
+      const snapshot=await apiRequest<{id:string;revision:number}>('/requirement-snapshots',{method:'POST',body:JSON.stringify({criteria:resultCriteria,expected_result_fingerprint:result.result_fingerprint})})
       if(!requestSequence.current.isCurrent(request))return
-      setSavedSnapshotId(snapshot.id);setSnapshotMessage('固定需求快照已建立，可前往正式採購繼續處理。')
+      setDuplicateId(null);setSavedSnapshotId(snapshot.id);setSnapshotMessage('固定需求快照已建立，可前往正式採購繼續處理。')
     }catch(cause){
       if(!requestSequence.current.isCurrent(request))return
       if(adjustmentErrorCode(cause)==='SNAPSHOT_RESULT_CHANGED'){invalidateResult('需求內容已變更，請重新計算並確認後再儲存快照。');return}
-      const existingId=duplicateSnapshotId(cause);setSavedSnapshotId(existingId);setSnapshotMessage(existingId?'相同條件的固定快照已存在，可開啟既有版本繼續正式採購。':requirementErrorMessage(cause,'固定快照建立失敗'))
+      const existingId=duplicateSnapshotId(cause);setDuplicateId(existingId);setSavedSnapshotId(existingId);setSnapshotMessage(existingId?'相同條件的固定需求快照已存在。':requirementErrorMessage(cause,'固定快照建立失敗'))
     }finally{if(snapshotRequest.current===request)snapshotRequest.current=null;if(requestSequence.current.isCurrent(request))setSavingSnapshot(false)}
+  }
+  async function previewRevision(){
+    const request=calculatedRequest
+    if(request===null||!duplicateId||!isCurrentResult()||snapshotRequest.current===request)return
+    snapshotRequest.current=request;setSavingSnapshot(true);setRevisionError('')
+    try{
+      const context=await apiRequest<RevisionContext>(`/requirement-snapshots/${duplicateId}/revision-context`)
+      if(requestSequence.current.isCurrent(request)){setRevisionContext(context);setRevisionError('')}
+    }catch(cause){if(requestSequence.current.isCurrent(request))setSnapshotMessage(requirementErrorMessage(cause,'新版本資訊載入失敗，請重試。'))}
+    finally{if(snapshotRequest.current===request)snapshotRequest.current=null;if(requestSequence.current.isCurrent(request))setSavingSnapshot(false)}
+  }
+  async function confirmRevision(){
+    const request=calculatedRequest
+    if(request===null||!revisionContext||!result||!isCurrentResult()||snapshotRequest.current===request)return
+    const body=revisionIntent.current.begin(revisionContext.base_snapshot_id,resultCriteria,result.result_fingerprint)
+    if(!body)return
+    snapshotRequest.current=request;setSavingSnapshot(true);setRevisionError('')
+    let success=false
+    try{
+      const snapshot=await apiRequest<{id:string;revision:number}>('/requirement-snapshots/new-revision',{method:'POST',body:JSON.stringify(body)})
+      success=true
+      if(!requestSequence.current.isCurrent(request))return
+      setRevisionContext(null);setDuplicateId(null);setSavedSnapshotId(snapshot.id)
+      setSnapshotMessage(`已建立 Revision ${snapshot.revision}（${snapshot.id}）。`)
+      onOpenSnapshot?.(snapshot.id)
+    }catch(cause){
+      if(!requestSequence.current.isCurrent(request))return
+      const code=adjustmentErrorCode(cause)
+      if(code==='SNAPSHOT_RESULT_CHANGED'||code==='SNAPSHOT_REVISION_INTENT_REUSED'||code==='SNAPSHOT_REVISION_BASE_MISMATCH'){
+        invalidateResult('需求內容或版本條件已變更，請重新計算並確認後再建立新版本。');return
+      }
+      setRevisionError('尚未確認建立結果，請按「確認建立新版本」以相同意圖重試；不會自動重送。')
+    }finally{
+      revisionIntent.current.finish(body.revision_intent_id,success)
+      if(snapshotRequest.current===request)snapshotRequest.current=null
+      if(requestSequence.current.isCurrent(request))setSavingSnapshot(false)
+    }
   }
   async function download(){
     const request=calculatedRequest
@@ -121,7 +165,16 @@ export function RequirementsPage({adjustmentContext,onOpenSnapshot}:{adjustmentC
       <AnomalyGroups groups={anomalyGroups}/>
       <div className="requirement-view-toolbar"><div className="requirement-view-tabs" role="tablist" aria-label="需求量檢視"><button type="button" className={view==='daily'?'':'secondary'} onClick={()=>{setView('daily');setCopyMessage('')}}>每日需求</button><button type="button" className={view==='supplier'?'':'secondary'} onClick={()=>{setView('supplier');setCopyMessage('')}}>單一供應商</button><button type="button" className={view==='total'?'':'secondary'} onClick={()=>{setView('total');setCopyMessage('')}}>總需求</button></div><div className="segmented requirement-weight-unit-toggle" role="group" aria-label="重量顯示單位"><strong>重量顯示</strong><button type="button" className={weightUnitMode==='original'?'active':'secondary'} aria-pressed={weightUnitMode==='original'} onClick={()=>setWeightUnitMode('original')}>原始單位</button><button type="button" className={weightUnitMode==='kg'?'active':'secondary'} aria-pressed={weightUnitMode==='kg'} onClick={()=>setWeightUnitMode('kg')}>重量換算 kg</button></div>{view==='supplier'&&<label className="supplier-selector">供應商<select value={supplierKey} onChange={event=>{setSupplierKey(event.target.value);setCopyMessage('')}}>{supplierOptions(result.daily_rows).map(option=><option key={option.key} value={option.key}>{option.label}</option>)}</select></label>}<button type="button" className="secondary" disabled={loading} onClick={()=>void download()}>下載 Excel</button><button type="button" disabled={view==='supplier'&&!supplierKey} onClick={()=>void copyCurrent()}>{view==='supplier'?'複製此供應商':'複製目前表格'}</button>{copyMessage&&<small className={copyMessage.startsWith('已複製')?'success':'error'}>{copyMessage}</small>}</div>
       {view==='daily'&&<DailyRequirementTable rows={sortDailyRows(result.daily_rows,'daily')} toneRows={result.daily_rows} showSupplier weightUnitMode={weightUnitMode}/>} {view==='supplier'&&<DailyRequirementTable rows={filterSupplierRows(result.daily_rows,supplierKey)} toneRows={result.daily_rows} showSupplier={false} weightUnitMode={weightUnitMode}/>} {view==='total'&&<RequirementTable rows={result.rows} weightUnitMode={weightUnitMode}/>}</>}
-    {result&&calculatedBasis&&isCurrentResult()&&<><div className="requirements-section-title"><strong>E. 下一步操作</strong><span>固定需求快照是建立正式採購前的必要步驟</span></div><div className="snapshot-action"><button type="button" disabled={savingSnapshot} onClick={()=>void saveSnapshot()}>{savingSnapshot?'儲存中…':'儲存為固定需求快照'}</button><button type="button" className={savedSnapshotId?'':'secondary'} onClick={openPurchaseFlow}>前往正式採購</button><small>將以目前「{calculatedBasisLabel}」建立固定需求快照；不會自動建立正式採購單。</small>{snapshotMessage&&<strong>{snapshotMessage}</strong>}</div></>}
+    {result&&calculatedBasis&&isCurrentResult()&&<><div className="requirements-section-title"><strong>E. 下一步操作</strong><span>固定需求快照是建立正式採購前的必要步驟</span></div><div className="snapshot-action"><button type="button" disabled={savingSnapshot} onClick={()=>void saveSnapshot()}>{savingSnapshot?'儲存中…':'儲存為固定需求快照'}</button><button type="button" className={savedSnapshotId?'':'secondary'} onClick={openPurchaseFlow}>前往正式採購</button><small>將以目前「{calculatedBasisLabel}」建立固定需求快照；不會自動建立正式採購單。</small>{snapshotMessage&&<strong>{snapshotMessage}</strong>}{duplicateId&&<><button type="button" className="secondary" disabled={savingSnapshot} onClick={()=>{if(isCurrentResult())onOpenSnapshot?.(duplicateId)}}>開啟既有版本</button><button type="button" disabled={savingSnapshot} onClick={()=>void previewRevision()}>建立新版本</button></>}</div></>}
+    {revisionContext&&isCurrentResult()&&<div className="modal-backdrop"><section className="modal-panel" role="dialog" aria-modal="true" aria-label="建立新版本" onKeyDown={event=>{
+      if(event.key==='Escape'&&!savingSnapshot){event.preventDefault();setRevisionContext(null)}
+      if(event.key==='Tab'){
+        const buttons=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+        const first=buttons[0],last=buttons.at(-1)
+        if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}
+        else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}
+      }
+    }}><h3>建立固定需求快照新版本</h3><p>菜單：{selectedMenus.map(menu=>menu.name).join('、')}</p><p>計算範圍：{resultCriteria?.start_date?`${resultCriteria.start_date}～${resultCriteria.end_date}`:'全部已選菜單日期'}；{calculatedBasisLabel}</p><p>目前最新 Revision {revisionContext.latest_revision}，預計建立 Revision {revisionContext.next_revision}；實際編號以後端建立結果為準。</p><p>這會建立獨立快照，不覆寫舊版本，不會自動建立正式採購，也不會撤銷或取代舊版採購。</p>{revisionContext.base_has_purchase&&<p className="error">既有版本已有正式採購，請另行核對，避免重複下單。</p>}{revisionError&&<p role="alert" className="error">{revisionError}</p>}<footer><button type="button" className="secondary" autoFocus disabled={savingSnapshot} onClick={()=>setRevisionContext(null)}>取消</button><button type="button" disabled={savingSnapshot} onClick={()=>void confirmRevision()}>{savingSnapshot?'建立中…':'確認建立新版本'}</button></footer></section></div>}
   </section>
 }
 

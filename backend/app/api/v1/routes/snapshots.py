@@ -8,8 +8,11 @@ from app.domains.auth.dependencies import get_current_user, require_admin
 from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,InvalidSnapshotDateRangeError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
 from app.domains.auth.exceptions import InvalidCredentialsError
 from app.domains.snapshots.schemas import SnapshotCreate,SnapshotDetail,SnapshotHeaderPublic,SnapshotItemPublic,SnapshotItemUpdate,SnapshotList
+from app.domains.snapshots.schemas import SnapshotRevisionCreate,SnapshotRevisionContext
 from app.domains.snapshots.service import SnapshotService
 from app.domains.snapshots.exceptions import SnapshotResultChangedError,SnapshotResultFingerprintError
+from app.domains.snapshots.exceptions import (SnapshotRevisionIntentConflictError,SnapshotRevisionBaseError,
+    SnapshotRevisionConflictError,SnapshotRevisionIntentProtectedError)
 from app.domains.users.models import User
 from app.domains.requirements.exceptions import RequirementAdjustmentError
 from app.shared.schemas import PaginationMeta
@@ -17,6 +20,10 @@ from app.shared.schemas import PasswordConfirmation
 
 router=APIRouter(prefix="/requirement-snapshots",tags=["requirement-snapshots"])
 def mapped(exc):
+    if isinstance(exc,SnapshotRevisionIntentConflictError):return HTTPException(409,detail={"code":"SNAPSHOT_REVISION_INTENT_REUSED","message":"此建立意圖已用於不同內容，請重新計算並確認。"})
+    if isinstance(exc,SnapshotRevisionBaseError):return HTTPException(409,detail={"code":"SNAPSHOT_REVISION_BASE_MISMATCH"})
+    if isinstance(exc,SnapshotRevisionConflictError):return HTTPException(409,detail={"code":"SNAPSHOT_REVISION_CONFLICT"})
+    if isinstance(exc,SnapshotRevisionIntentProtectedError):return HTTPException(409,detail={"code":"SNAPSHOT_REVISION_INTENT_PROTECTED","message":"此版本需保留建立意圖紀錄，不能永久刪除。"})
     if isinstance(exc,SnapshotResultChangedError):return HTTPException(409,detail={"code":"SNAPSHOT_RESULT_CHANGED","message":"需求內容已變更，請重新計算並確認後再儲存快照。"})
     if isinstance(exc,SnapshotResultFingerprintError):return HTTPException(422,detail={"code":"SNAPSHOT_RESULT_FINGERPRINT_REQUIRED"})
     if isinstance(exc,RequirementAdjustmentError):return HTTPException(exc.status_code,detail={"code":exc.code,**exc.context})
@@ -33,6 +40,20 @@ def mapped(exc):
 @router.post("",response_model=SnapshotDetail,status_code=status.HTTP_201_CREATED)
 def create(data:SnapshotCreate,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
     try:return SnapshotDetail.model_validate(SnapshotService(session).create(data.criteria,user.id,expected_result_fingerprint=data.expected_result_fingerprint))
+    except Exception as exc:raise mapped(exc) from exc
+
+@router.post("/new-revision",response_model=SnapshotDetail,status_code=status.HTTP_201_CREATED)
+def create_revision(data:SnapshotRevisionCreate,response:Response,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:
+        value,replayed=SnapshotService(session).create_revision(data.criteria,user.id,base_snapshot_id=data.base_snapshot_id,
+            revision_intent_id=data.revision_intent_id,expected_result_fingerprint=data.expected_result_fingerprint)
+        if replayed:response.status_code=status.HTTP_200_OK
+        return SnapshotDetail.model_validate(value)
+    except Exception as exc:raise mapped(exc) from exc
+
+@router.get("/{snapshot_id}/revision-context",response_model=SnapshotRevisionContext)
+def revision_context(snapshot_id:uuid.UUID,user:Annotated[User,Depends(get_current_user)],session:Annotated[Session,Depends(get_db_session)]):
+    try:return SnapshotRevisionContext.model_validate(SnapshotService(session).revision_context(snapshot_id))
     except Exception as exc:raise mapped(exc) from exc
 
 @router.get("",response_model=SnapshotList)

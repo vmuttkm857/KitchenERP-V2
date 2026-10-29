@@ -1,4 +1,5 @@
 import uuid
+import hashlib
 from sqlalchemy import and_,func,or_,select
 from sqlalchemy.orm import Session
 from app.domains.snapshots.models import RequirementSnapshot,RequirementSnapshotItem
@@ -13,7 +14,16 @@ class SnapshotRepository:
         if value>=2**63:value-=2**64
         self.session.execute(select(func.pg_advisory_xact_lock(value)))
     def by_fingerprint(self,value):return self.session.scalar(select(RequirementSnapshot).where(RequirementSnapshot.fingerprint==value))
-    def by_content(self,criteria_fingerprint,content_fingerprint):return self.session.scalar(select(RequirementSnapshot).where(RequirementSnapshot.criteria_fingerprint==criteria_fingerprint,RequirementSnapshot.content_fingerprint==content_fingerprint,RequirementSnapshot.snapshot_kind=="standard"))
+    def by_content(self,criteria_fingerprint,content_fingerprint):
+        # Include explicit revisions as well as ordinary snapshots in normal dedup.
+        return self.session.scalar(select(RequirementSnapshot).where(RequirementSnapshot.criteria_fingerprint==criteria_fingerprint,RequirementSnapshot.content_fingerprint==content_fingerprint,RequirementSnapshot.snapshot_kind=="standard").order_by(RequirementSnapshot.revision.desc()).limit(1))
+    def lock_revision_intent(self,actor_id,intent_id):
+        key=hashlib.sha256(f"snapshot-revision-intent:{actor_id}:{intent_id}".encode()).hexdigest()
+        self.lock_creation_key(key)
+    def by_revision_intent(self,actor_id,intent_id):
+        return self.session.scalar(select(RequirementSnapshot).where(RequirementSnapshot.created_by==actor_id,RequirementSnapshot.revision_intent_id==intent_id))
+    def revision_base(self,snapshot_id):
+        return self.session.scalar(select(RequirementSnapshot).where(RequirementSnapshot.id==snapshot_id).with_for_update(read=True))
     def next_revision(self,criteria_fingerprint):return (self.session.scalar(select(func.max(RequirementSnapshot.revision)).where(RequirementSnapshot.criteria_fingerprint==criteria_fingerprint)) or 0)+1
     def get(self,snapshot_id):return self.session.get(RequirementSnapshot,snapshot_id)
     def item(self,snapshot_id,item_id):return self.session.scalar(select(RequirementSnapshotItem).where(RequirementSnapshotItem.snapshot_id==snapshot_id,RequirementSnapshotItem.id==item_id))

@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 
 from app.domains.exports.exceptions import SupplierWeeklyExportError
 from app.domains.exports.safety import safe_cell_text
+from app.domains.requirements.source_order import trusted_source_order, saved_source_orders, order_for_line
 from app.shared.domain.quantities import classify_erp_unit, convert_quantity, normalize_unit, quantize_quantity
 
 
@@ -116,6 +117,7 @@ def rows_from_snapshot_items(items: list[dict], supplier_id, *, require_meal_nam
                 "quantity": converted.quantity,
                 "unit": str(target_unit),
                 "supplier_name": str(item.get("supplier_name_snapshot") or ""),
+                "source_order": trusted_source_order(source.get("source_order")),
             })
         if quantize_quantity(converted_total) != quantize_quantity(Decimal(str(adjusted_quantity))):
             raise SupplierWeeklyExportError(
@@ -128,9 +130,10 @@ def rows_from_snapshot_items(items: list[dict], supplier_id, *, require_meal_nam
     return result
 
 
-def rows_from_adjustment_lines(lines, supplier_id) -> list[dict]:
+def rows_from_adjustment_lines(lines, supplier_id, *, snapshot_items=None) -> list[dict]:
     supplier_key = str(supplier_id)
     result = []
+    orders = saved_source_orders(snapshot_items or [])
     for line in lines:
         if str(line.source_supplier_id or "") != supplier_key:
             continue
@@ -145,6 +148,7 @@ def rows_from_adjustment_lines(lines, supplier_id) -> list[dict]:
             "quantity": line.adjusted_quantity if line.adjusted_quantity is not None else line.system_quantity,
             "unit": line.adjusted_unit if line.adjusted_unit is not None else line.system_unit,
             "supplier_name": line.supplier_name_snapshot or "",
+            "source_order": order_for_line(orders, line) if orders else None,
             "_sort": (
                 line.meal_type_sort_order_snapshot,
                 line.menu_dish_sort_order_snapshot,
@@ -217,7 +221,17 @@ def supplier_weekly_workbook(rows: list[dict], *, breakfast_previous_day=False) 
             cell.font = Font(name="Arial", size=11, bold=True, color="000000")
             cell.alignment = Alignment(horizontal="left", vertical="center")
             cell.border = THIN_BORDER
-        ordered = sorted(group, key=lambda row: row.get("_sort") or (row["meal_type_name"], row["dish_name"], row["dish_id"], row["ingredient_name"]))
+        if all(trusted_source_order(row.get("source_order")) is not None for row in group):
+            # Next day's breakfast belongs to this delivery, after today's meals.
+            # Explicit ranks survive snapshot normalize(), which sorts JSON arrays.
+            ordered = sorted(group, key=lambda row: (
+                row["requirement_date"], row["source_order"]["meal_sort_order"],
+                row["source_order"]["meal_position"],
+                row["source_order"]["visual_position"], row["source_order"]["ingredient_position"],
+            ))
+        else:
+            # Never fill a legacy/mixed sheet's missing positions from today's menu.
+            ordered = sorted(group, key=lambda row: row.get("_sort") or (row["meal_type_name"], row["dish_name"], row["dish_id"], row["ingredient_name"]))
         for index, row in enumerate(ordered, 1):
             values = [index, safe_cell_text(row["ingredient_name"]), _excel_number(row["_export_quantity"]), row["_export_unit"]]
             for column, value in enumerate(values, 1):

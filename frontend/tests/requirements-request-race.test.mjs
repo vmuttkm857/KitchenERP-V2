@@ -7,13 +7,14 @@ import {createHash} from 'node:crypto'
 import {RequestSequence} from '../src/utils/listQuery.ts'
 import * as daily from '../src/features/requirements/dailyRequirements.ts'
 import * as numbers from '../src/utils/numbers.ts'
+import {SnapshotRevisionIntent} from '../src/features/requirements/snapshotRevisionIntent.ts'
 
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
 const menu=id=>({id,name:id,start_date:'2026-11-02',end_date:'2026-11-08',is_active:true})
 function result(id){return {result_fingerprint:createHash('sha256').update(id).digest('hex'),rows:[],daily_rows:[{requirement_date:'2026-11-02',menu_id:id,menu_name:id,supplier_id:'supplier',supplier_name:'供應商',ingredient_id:'ingredient',ingredient_code:'I1',ingredient_name:'青菜',quantity:'3.15',unit:'kg'}],known_estimated_cost:'0',total_estimated_cost:'0',anomalies:[],anomaly_summary:{total:0,errors:0,warnings:0}}}
 const context=id=>({id,revision:1,lock_version:1,source_fingerprint:'a'.repeat(64),criteria:{menu_ids:['A'],start_date:'2026-11-02',end_date:'2026-11-08'},source_menus:[{menu_id:'A',menu_name:'A',start_date:'2026-11-02',end_date:'2026-11-08',is_active:true}]})
 const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[]
-const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):typeof value==='string'?value:''
+const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):typeof value==='string'||typeof value==='number'?String(value):''
 
 // Executes the real RequirementsPage callbacks/hooks. This is a lightweight
 // hook harness, not a browser, React DOM renderer, or a duplicate controller.
@@ -34,7 +35,7 @@ function harness(adjustmentContext){
   const Candidate=()=>{},Filters=()=>{}
   class ApiError extends Error{constructor(status,detail){super('API failed');this.status=status;this.detail=detail}}
   const api={ApiError,
-    apiRequest(path,init){const request={path,init,body:JSON.parse(init.body),...deferred()};calls.push(request);return request.promise},
+    apiRequest(path,init){const request={path,init,body:init?.body?JSON.parse(init.body):null,...deferred()};calls.push(request);return request.promise},
     async apiDownload(path,init,canDownload){const request={path,init,body:JSON.parse(init.body),...deferred()};calls.push(request);await request.promise;if(!canDownload||canDownload())downloads.push(request.body)},
   }
   const source=readFileSync(new URL('../src/features/requirements/RequirementsPage.tsx',import.meta.url),'utf8')
@@ -45,6 +46,7 @@ function harness(adjustmentContext){
     if(path.endsWith('/api/client'))return api
     if(path.endsWith('/listQuery'))return {RequestSequence}
     if(path==='./dailyRequirements')return daily
+    if(path==='./snapshotRevisionIntent')return {SnapshotRevisionIntent}
     if(path.endsWith('/numbers'))return numbers
     if(path.endsWith('/clipboard'))return {writeClipboard:async value=>{copies.push(value)}}
     if(path.endsWith('/anomalies'))return {groupAnomalies:()=>[]}
@@ -289,4 +291,92 @@ test('real apiDownload checks optional validity after reading the response body'
 
 test('real apiDownload preserves downloads without a guard or with a current guard',async()=>{
   for(const guard of [undefined,()=>true]){const runtime=downloadClient();const pending=runtime.api.apiDownload('/exports/requirements/xlsx',undefined,guard);runtime.body.resolve({});await pending;assert.deepEqual(runtime.clicks,['download']);assert.equal(runtime.calls.length,1)}
+})
+
+async function duplicate(ui,id='old'){
+  ui.click('儲存為固定需求快照');await ui.flush()
+  ui.requests('/requirement-snapshots').at(-1).reject(new ui.ApiError(409,{code:'DUPLICATE_SNAPSHOT',existing_snapshot_id:id}))
+  await ui.flush()
+}
+async function revisionPreview(ui,id='old'){
+  ui.click('建立新版本');await ui.flush()
+  ui.requests(`/requirement-snapshots/${id}/revision-context`).at(-1).resolve({base_snapshot_id:id,latest_revision:1,next_revision:2,base_has_purchase:true})
+  await ui.flush()
+}
+
+test('explicit revision requires confirmation and navigates using actual server revision',async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush();await calculated(ui)
+  await duplicate(ui)
+  assert.ok(ui.button('開啟既有版本'));assert.ok(ui.button('建立新版本'))
+  assert.equal(ui.requests('/requirement-snapshots/new-revision').length,0)
+  await revisionPreview(ui)
+  assert.match(ui.texts(),/預計建立 Revision 2/);assert.match(ui.texts(),/不會撤銷或取代舊版採購/)
+  const confirm=ui.button('確認建立新版本').props.onClick
+  confirm();confirm();await ui.flush()
+  const calls=ui.requests('/requirement-snapshots/new-revision');assert.equal(calls.length,1)
+  assert.equal(calls[0].body.expected_result_fingerprint,result('A').result_fingerprint)
+  calls[0].resolve({id:'new-R3',revision:3});await ui.flush()
+  assert.deepEqual(ui.opened,['new-R3']);assert.match(ui.texts(),/已建立 Revision 3/)
+})
+
+test('ambiguous timeout retries the exact intent and request without auto-retry',async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush();await calculated(ui)
+  await duplicate(ui);await revisionPreview(ui)
+  ui.click('確認建立新版本');await ui.flush()
+  const first=ui.requests('/requirement-snapshots/new-revision')[0]
+  first.reject(new Error('connection lost'));await ui.flush()
+  assert.equal(ui.requests('/requirement-snapshots/new-revision').length,1)
+  ui.click('確認建立新版本');await ui.flush()
+  const retry=ui.requests('/requirement-snapshots/new-revision')[1]
+  assert.deepEqual(retry.body,first.body)
+  retry.resolve({id:'original-commit',revision:2});await ui.flush()
+  assert.deepEqual(ui.opened,['original-commit'])
+})
+
+test('late revision preview cannot reopen a dialog after conditions change',async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush();await calculated(ui)
+  await duplicate(ui);ui.click('建立新版本');await ui.flush()
+  const old=ui.requests('/requirement-snapshots/old/revision-context')[0]
+  ui.toggle('B');await ui.flush();await calculated(ui,'B')
+  old.resolve({base_snapshot_id:'old',latest_revision:1,next_revision:2});await ui.flush()
+  assert.equal(ui.button('確認建立新版本'),undefined)
+  assert.deepEqual(ui.resultMenus(),['B'])
+})
+
+test('H07 explicit revision conflict invalidates old result without adding a revision',async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush();await calculated(ui)
+  await duplicate(ui);await revisionPreview(ui);ui.click('確認建立新版本');await ui.flush()
+  ui.requests('/requirement-snapshots/new-revision')[0].reject(new ui.ApiError(409,{code:'SNAPSHOT_RESULT_CHANGED'}));await ui.flush()
+  assert.deepEqual(ui.resultMenus(),[]);assert.equal(ui.button('確認建立新版本'),undefined)
+  assert.deepEqual(ui.opened,[])
+})
+
+test('obsolete revision response cannot navigate away from a newer calculation',async t=>{
+  const ui=harness();t.after(()=>ui.close());await ui.flush();ui.toggle('A');await ui.flush();await calculated(ui)
+  await duplicate(ui);await revisionPreview(ui);ui.click('確認建立新版本');await ui.flush()
+  const old=ui.requests('/requirement-snapshots/new-revision')[0]
+  ui.toggle('B');await ui.flush();await calculated(ui,'B')
+  old.resolve({id:'old-response',revision:2});await ui.flush()
+  assert.deepEqual(ui.resultMenus(),['B']);assert.deepEqual(ui.opened,[])
+})
+
+test('intent body is immutable to callers, retains failed intent, and separates success/new intent',()=>{
+  let count=0;const intent=new SnapshotRevisionIntent(()=>`intent-${++count}`)
+  const criteria={menu_ids:['A']};const first=intent.begin('base',criteria,'a'.repeat(64))
+  assert.equal(intent.begin('base',criteria,'a'.repeat(64)),null)
+  first.criteria.menu_ids.push('MUTATED')
+  intent.finish(first.revision_intent_id,false)
+  const retry=intent.begin('base',criteria,'a'.repeat(64))
+  assert.deepEqual(retry.criteria,criteria);assert.equal(retry.revision_intent_id,first.revision_intent_id)
+  intent.finish(retry.revision_intent_id,true)
+  assert.notEqual(intent.begin('base',criteria,'a'.repeat(64)).revision_intent_id,first.revision_intent_id)
+})
+
+test('late intent completion cannot release a newer in-flight intent',()=>{
+  let count=0;const intent=new SnapshotRevisionIntent(()=>`intent-${++count}`)
+  const old=intent.begin('base',{},'a');intent.invalidate()
+  const current=intent.begin('base',{},'b');intent.finish(old.revision_intent_id,true)
+  assert.equal(intent.begin('base',{},'b'),null)
+  intent.finish(current.revision_intent_id,false)
+  assert.equal(intent.begin('base',{},'b').revision_intent_id,current.revision_intent_id)
 })

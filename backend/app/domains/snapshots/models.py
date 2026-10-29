@@ -8,13 +8,29 @@ from app.db.base import Base
 
 class RequirementSnapshot(Base):
     __tablename__="requirement_snapshots"
-    __table_args__=(CheckConstraint("snapshot_kind IN ('standard','ordering_adjustment')",name="ck_requirement_snapshots_kind"),UniqueConstraint("criteria_fingerprint","revision",name="uq_snapshots_criteria_revision"),Index("uq_requirement_snapshots_standard_content","criteria_fingerprint","content_fingerprint",unique=True,postgresql_where=text("snapshot_kind = 'standard'")),Index("ix_requirement_snapshots_created_at","created_at"),)
+    __table_args__=(
+        CheckConstraint("snapshot_kind IN ('standard','ordering_adjustment')",name="ck_requirement_snapshots_kind"),
+        UniqueConstraint("criteria_fingerprint","revision",name="uq_snapshots_criteria_revision"),
+        CheckConstraint(
+            "(revision_intent_id IS NULL AND revision_intent_request_hash IS NULL) OR "
+            "(snapshot_kind = 'standard' AND revision_intent_id IS NOT NULL AND "
+            "revision_intent_request_hash IS NOT NULL AND revision_intent_request_hash ~ '^[0-9a-f]{64}$')",
+            name="ck_snapshots_revision_intent_pair",
+        ),
+        Index("uq_requirement_snapshots_standard_content","criteria_fingerprint","content_fingerprint",unique=True,
+              postgresql_where=text("snapshot_kind = 'standard' AND revision_intent_id IS NULL")),
+        Index("uq_snapshots_actor_revision_intent","created_by","revision_intent_id",unique=True,
+              postgresql_where=text("revision_intent_id IS NOT NULL")),
+        Index("ix_requirement_snapshots_created_at","created_at"),
+    )
     id:Mapped[uuid.UUID]=mapped_column(UUID(as_uuid=True),primary_key=True,default=uuid.uuid4)
     fingerprint:Mapped[str]=mapped_column(String(64),nullable=False)
     criteria_fingerprint:Mapped[str]=mapped_column(String(64),nullable=False,index=True)
     content_fingerprint:Mapped[str]=mapped_column(String(64),nullable=False)
     revision:Mapped[int]=mapped_column(Integer,nullable=False)
     snapshot_kind:Mapped[str]=mapped_column(String(32),nullable=False,default="standard",server_default="standard")
+    revision_intent_id:Mapped[uuid.UUID|None]=mapped_column(UUID(as_uuid=True),nullable=True)
+    revision_intent_request_hash:Mapped[str|None]=mapped_column(String(64),nullable=True)
     criteria:Mapped[dict]=mapped_column(JSONB,nullable=False)
     source_menus:Mapped[list]=mapped_column(JSONB,nullable=False)
     anomaly_snapshot:Mapped[list]=mapped_column(JSONB,nullable=False,default=list)

@@ -6,7 +6,9 @@ from sqlalchemy.exc import IntegrityError
 from app.domains.requirements.service import RequirementService
 from app.domains.snapshots.exceptions import DuplicateSnapshotError,EmptySnapshotError,InvalidPurchaseUnitError,InvalidSnapshotDateRangeError,SnapshotInUseError,SnapshotLockedError,SnapshotNotFoundError
 from app.domains.snapshots.fingerprint import content_fingerprint,hash_payload,normalize,snapshot_fingerprint
-from app.domains.snapshots.exceptions import SnapshotResultChangedError,SnapshotResultFingerprintError
+from app.domains.snapshots.exceptions import (SnapshotResultChangedError,SnapshotResultFingerprintError,
+    SnapshotRevisionIntentConflictError,SnapshotRevisionBaseError,SnapshotRevisionConflictError,
+    SnapshotRevisionIntentProtectedError)
 from app.domains.snapshots.fingerprint import result_fingerprint
 from app.domains.snapshots.models import RequirementSnapshot,RequirementSnapshotItem
 from app.domains.snapshots.repository import SnapshotRepository
@@ -16,7 +18,9 @@ from app.shared.domain.quantities import convert_quantity
 
 class SnapshotService:
     def __init__(self,session):self.session=session;self.repository=SnapshotRepository(session);self.audit=AuditLogService(session)
-    def build(self,criteria,actor_id,*,result=None,allow_duplicate=False,snapshot_kind="standard"):
+    def build(self,criteria,actor_id,*,result=None,allow_duplicate=False,snapshot_kind="standard",revision_intent=None):
+        if revision_intent is not None and (snapshot_kind!="standard" or not allow_duplicate):
+            raise SnapshotRevisionIntentConflictError()
         normalized=normalize(criteria.model_dump(exclude_none=True));criteria_hash=snapshot_fingerprint(normalized)
         self.repository.lock_creation_key(criteria_hash)
         result=result or RequirementService(self.session).calculate(criteria)
@@ -25,6 +29,8 @@ class SnapshotService:
         if existing and not allow_duplicate:raise DuplicateSnapshotError(existing.id)
         revision=self.repository.next_revision(criteria_hash)
         header=RequirementSnapshot(fingerprint=hash_payload({"criteria":criteria_hash,"content":content_hash,"revision":revision,"kind":snapshot_kind}),criteria_fingerprint=criteria_hash,content_fingerprint=content_hash,revision=revision,snapshot_kind=snapshot_kind,criteria=normalized,source_menus=normalize(result["source_menus"]),anomaly_snapshot=normalize(result["anomalies"]),anomaly_summary=result["anomaly_summary"],known_estimated_cost=result["known_estimated_cost"],total_estimated_cost=result["total_estimated_cost"],created_by=actor_id)
+        if revision_intent is not None:
+            header.revision_intent_id,header.revision_intent_request_hash=revision_intent
         self.repository.add(header);self.session.flush();items=[]
         for row in result["rows"]:
             related=[a for a in result["anomalies"] if str(a.get("related_entity_id")) in {str(row["ingredient_id"])} or str(a.get("context",{}).get("ingredient_id"))==str(row["ingredient_id"])]
@@ -32,10 +38,70 @@ class SnapshotService:
             self.repository.add(item);items.append(item)
         self.audit.record(actor_id=actor_id,action="snapshot_create",entity_type="requirement_snapshot",entity_id=header.id,entity_label=f"Revision {header.revision}",after_data={"revision":header.revision,"source_menus":header.source_menus,"known_estimated_cost":header.known_estimated_cost,"total_estimated_cost":header.total_estimated_cost,"item_count":len(result["rows"])})
         self.session.flush();return header,items,result
+    @staticmethod
+    def _validate_result_fingerprint(value):
+        if not isinstance(value,str) or not re.fullmatch(r"[0-9a-f]{64}",value):
+            raise SnapshotResultFingerprintError()
+
+    def revision_context(self,snapshot_id):
+        base=self.repository.get(snapshot_id)
+        if base is None:raise SnapshotNotFoundError()
+        if base.snapshot_kind!="standard":raise SnapshotRevisionBaseError()
+        next_revision=self.repository.next_revision(base.criteria_fingerprint)
+        return {"base_snapshot_id":base.id,"latest_revision":next_revision-1,"next_revision":next_revision,
+                "criteria":base.criteria,"source_menus":base.source_menus,"base_has_purchase":self._purchase(base.id) is not None}
+
+    def create_revision(self,criteria,actor_id,*,base_snapshot_id,revision_intent_id,expected_result_fingerprint):
+        self._validate_result_fingerprint(expected_result_fingerprint)
+        criteria_hash=snapshot_fingerprint(normalize(criteria.model_dump(exclude_none=True)))
+        request_hash=hash_payload({"operation":"snapshot-explicit-revision-v1","actor_id":actor_id,
+            "base_snapshot_id":base_snapshot_id,"criteria":criteria.model_dump(exclude_none=True),
+            "expected_result_fingerprint":expected_result_fingerprint})
+        def replay(existing):
+            if (existing.created_by!=actor_id or existing.snapshot_kind!="standard" or
+                    existing.revision_intent_request_hash!=request_hash):
+                raise SnapshotRevisionIntentConflictError()
+            # This is retrieval of an already-validated commit, not a new creation.
+            self.session.commit()
+            return self.detail(existing.id),True
+        try:
+            # All explicit paths use intent -> criteria lock order. Ordinary saves
+            # take the same criteria lock in build(), before dedup/max/revision.
+            self.repository.lock_revision_intent(actor_id,revision_intent_id)
+            existing=self.repository.by_revision_intent(actor_id,revision_intent_id)
+            if existing is not None:return replay(existing)
+            self.repository.lock_creation_key(criteria_hash)
+            base=self.repository.revision_base(base_snapshot_id)
+            if base is None:raise SnapshotNotFoundError()
+            if base.snapshot_kind!="standard" or base.criteria_fingerprint!=criteria_hash:
+                raise SnapshotRevisionBaseError()
+            result=RequirementService(self.session).calculate(criteria)
+            if result_fingerprint(result)!=expected_result_fingerprint:raise SnapshotResultChangedError()
+            header,_,_=self.build(criteria,actor_id,result=result,allow_duplicate=True,
+                revision_intent=(revision_intent_id,request_hash))
+            self.audit.record(actor_id=actor_id,action="snapshot_create_revision",entity_type="requirement_snapshot",
+                entity_id=header.id,entity_label=f"Revision {header.revision}",
+                metadata={"base_snapshot_id":str(base_snapshot_id),"revision_intent_id":str(revision_intent_id),
+                          "revision":header.revision})
+            self.session.commit()
+        except IntegrityError as exc:
+            self.session.rollback()
+            constraint=getattr(getattr(exc.orig,"diag",None),"constraint_name",None)
+            if constraint=="uq_snapshots_actor_revision_intent":
+                existing=self.repository.by_revision_intent(actor_id,revision_intent_id)
+                if existing is not None:
+                    try:return replay(existing)
+                    except Exception:self.session.rollback();raise
+            if constraint in {"uq_snapshots_actor_revision_intent","uq_snapshots_criteria_revision"}:
+                raise SnapshotRevisionConflictError() from exc
+            raise
+        except Exception:
+            self.session.rollback();raise
+        return self.detail(header.id),False
+
     def create(self,criteria,actor_id,*,expected_result_fingerprint=None):
         try:
-            if not isinstance(expected_result_fingerprint,str) or not re.fullmatch(r"[0-9a-f]{64}",expected_result_fingerprint):
-                raise SnapshotResultFingerprintError()
+            self._validate_result_fingerprint(expected_result_fingerprint)
             result=RequirementService(self.session).calculate(criteria)
             if result_fingerprint(result)!=expected_result_fingerprint:raise SnapshotResultChangedError()
             # Persist this verified read model. Source changes after comparison
@@ -106,6 +172,9 @@ class SnapshotService:
     def delete(self,snapshot_id,actor_id,password):
         value=self.repository.get(snapshot_id)
         if not value:raise SnapshotNotFoundError()
+        # Removing this row would erase durable retry history and permit replay
+        # to create another revision. Existing non-intent deletion is unchanged.
+        if getattr(value,"revision_intent_id",None) is not None:raise SnapshotRevisionIntentProtectedError()
         if self._purchase(snapshot_id):raise SnapshotInUseError()
         from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
         if OrderingAdjustmentRepository(self.session).sheet_for_snapshot(snapshot_id):raise SnapshotInUseError()

@@ -9,6 +9,17 @@ from app.shared.schemas import PaginationMeta
 class SnapshotCreate(BaseModel):
     criteria:RequirementCriteria
     expected_result_fingerprint:str=Field(pattern=r"^[0-9a-f]{64}$")
+class SnapshotRevisionCreate(SnapshotCreate):
+    base_snapshot_id:uuid.UUID
+    revision_intent_id:uuid.UUID
+
+class SnapshotRevisionContext(BaseModel):
+    base_snapshot_id:uuid.UUID
+    latest_revision:int
+    next_revision:int
+    criteria:dict[str,Any]
+    source_menus:list[dict[str,Any]]
+    base_has_purchase:bool
 class SnapshotItemUpdate(BaseModel):
     adjusted_quantity:Decimal|None=Field(default=None,ge=0)
     purchase_unit:str|None=Field(default=None,min_length=1,max_length=20)

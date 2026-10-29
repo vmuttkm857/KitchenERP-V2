@@ -9,3 +9,7 @@ class SnapshotInUseError(Exception): pass
 class InvalidSnapshotDateRangeError(Exception): pass
 class SnapshotResultChangedError(Exception): pass
 class SnapshotResultFingerprintError(Exception): pass
+class SnapshotRevisionIntentConflictError(Exception): pass
+class SnapshotRevisionBaseError(Exception): pass
+class SnapshotRevisionConflictError(Exception): pass
+class SnapshotRevisionIntentProtectedError(Exception): pass

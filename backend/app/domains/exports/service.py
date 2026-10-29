@@ -62,7 +62,7 @@ class ExportService:
                 from app.domains.exports.exceptions import SupplierWeeklyExportError
                 raise SupplierWeeklyExportError("ADJUSTMENT_EXPORT_STATUS_INVALID",status=result.get("ordering_adjustment_status"))
             from app.domains.order_adjustments.repository import OrderingAdjustmentRepository
-            rows=rows_from_adjustment_lines(OrderingAdjustmentRepository(self.session).lines(adjustment_id),supplier_id)
+            rows=rows_from_adjustment_lines(OrderingAdjustmentRepository(self.session).lines(adjustment_id),supplier_id,snapshot_items=result["items"])
         else:
             rows=rows_from_snapshot_items(result["items"],supplier_id,require_meal_name=breakfast_previous_day)
         dates=sorted({supplier_delivery_date(row,breakfast_previous_day=breakfast_previous_day) for row in rows})

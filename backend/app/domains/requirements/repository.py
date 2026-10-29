@@ -1,4 +1,5 @@
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
 from app.domains.dishes.models import Dish
@@ -6,6 +7,7 @@ from app.domains.ingredients.models import Ingredient
 from app.domains.menus.models import Menu, MenuDay, MenuDish, MenuMealType, MenuMealTypeColumn
 from app.domains.recipes.models import DishIngredient
 from app.domains.suppliers.models import Supplier
+from app.domains.requirements.source_order import attach_source_order
 
 
 class RequirementRepository:
@@ -15,7 +17,18 @@ class RequirementRepository:
             Menu.id.label("menu_id"),Menu.name.label("menu_name"),Menu.start_date,Menu.end_date,Menu.is_active
         ).where(Menu.id.in_(menu_ids)).order_by(Menu.start_date,Menu.id)).mappings()]
     def source_rows(self,criteria):
+        # Read the full placement layout in the same statement as quantities.
+        # A later query could observe a different column arrangement.
+        layout = (select(
+            MenuMealTypeColumn.menu_meal_type_id.label("layout_meal_id"),
+            func.jsonb_agg(aggregate_order_by(func.jsonb_build_object(
+                "id", MenuMealTypeColumn.id, "sort_order", MenuMealTypeColumn.sort_order,
+            ), MenuMealTypeColumn.sort_order, MenuMealTypeColumn.id)).label("columns"),
+        ).where(MenuMealTypeColumn.menu_meal_type_id.in_(
+            select(MenuMealType.id).where(MenuMealType.menu_id.in_(criteria.menu_ids))
+        )).group_by(MenuMealTypeColumn.menu_meal_type_id).subquery())
         statement=select(
+            layout.c.columns.label("_menu_columns"),
             Menu.id.label("menu_id"),Menu.name.label("menu_name"),Menu.is_active.label("menu_is_active"),
             MenuDay.id.label("menu_day_id"),MenuDay.menu_date,MenuMealType.id.label("meal_type_id"),MenuMealType.name.label("meal_type_name"),MenuMealType.sort_order.label("meal_type_sort_order"),MenuMealType.is_active.label("meal_type_is_active"),
             MenuDish.id.label("menu_dish_id"),MenuDish.menu_meal_type_column_id,MenuMealTypeColumn.sort_order.label("menu_meal_type_column_sort_order"),MenuDish.diner_count,MenuDish.sort_order.label("menu_dish_sort_order"),
@@ -27,11 +40,12 @@ class RequirementRepository:
         ).join(MenuDay,MenuDay.menu_id==Menu.id).join(MenuMealType,MenuMealType.id==MenuDay.menu_meal_type_id)
         statement=statement.join(MenuDish,MenuDish.menu_day_id==MenuDay.id).outerjoin(MenuMealTypeColumn,MenuMealTypeColumn.id==MenuDish.menu_meal_type_column_id).join(Dish,Dish.id==MenuDish.dish_id)
         statement=statement.outerjoin(DishIngredient,DishIngredient.dish_id==Dish.id).outerjoin(Ingredient,Ingredient.id==DishIngredient.ingredient_id).outerjoin(Supplier,Supplier.id==Ingredient.primary_supplier_id)
+        statement=statement.outerjoin(layout,layout.c.layout_meal_id==MenuMealType.id)
         statement=statement.where(Menu.id.in_(criteria.menu_ids),MenuMealType.is_active.is_(True))
         if criteria.selected_dates is not None: statement=statement.where(MenuDay.menu_date.in_(criteria.selected_dates))
         elif criteria.start_date is not None: statement=statement.where(MenuDay.menu_date>=criteria.start_date,MenuDay.menu_date<=criteria.end_date)
         statement=statement.order_by(Menu.id,MenuDay.menu_date,MenuMealType.sort_order,MenuDish.sort_order,DishIngredient.sort_order,DishIngredient.id)
-        return [dict(row) for row in self.session.execute(statement).mappings()]
+        return attach_source_order([dict(row) for row in self.session.execute(statement).mappings()])
 
     def locked_source_rows(self,criteria):
         """Lock exactly the selected source graph, then return one consistent read."""
