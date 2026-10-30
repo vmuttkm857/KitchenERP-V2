@@ -14,6 +14,7 @@ interface Props {
   onEditColumns: (meal: MealType) => void
   onMoveDish: (sourceMenuDishId:string,target:MenuDishInsertTarget) => Promise<void>
   movingDish: boolean
+  showDinerCounts?: boolean
 }
 
 function dateLabel(date: string) {
@@ -22,7 +23,7 @@ function dateLabel(date: string) {
   })
 }
 
-export function MenuWeekGrid({ dates, meals, columns, selectedKey, slotFor, onSelect, onEditColumns, onMoveDish, movingDish }: Props) {
+export function MenuWeekGrid({ dates, meals, columns, selectedKey, slotFor, onSelect, onEditColumns, onMoveDish, movingDish, showDinerCounts = true }: Props) {
   const [draggedDishId,setDraggedDishId]=useState<string|null>(null)
   const [dropTarget,setDropTarget]=useState<MenuDishInsertTarget|null>(null)
   const suppressClickUntil=useRef(0)
@@ -64,7 +65,7 @@ export function MenuWeekGrid({ dates, meals, columns, selectedKey, slotFor, onSe
             onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))setDropTarget(null)}}
             onDrop={event=>{event.preventDefault();event.stopPropagation();const bounds=event.currentTarget.getBoundingClientRect();const target=insertTarget(event.clientY<bounds.top+bounds.height/2?rowIndex:rowIndex+1);const sourceId=event.dataTransfer.getData('text/plain')||draggedDishId;if(!canInsertMenuDish(sourceId,target,movingDish))return;if(sourceId)void onMoveDish(sourceId,target);scheduleFinishDrag()}}>
             <button className="meal-cell-button" onClick={() => {if(Date.now()>=suppressClickUntil.current)onSelect(date, meal)}} aria-label={`編輯 ${date} ${meal.name}`} aria-pressed={selectedKey === cellKey}>
-              {dish?<div className="cell-dish" draggable={!movingDish} onDragStart={event=>dish.id&&startDrag(event,dish.id)} onDragEnd={scheduleFinishDrag} title="拖曳菜色以移動排序"><strong title={dish.dish_name}>{dish.dish_name}</strong><span>{dish.diner_count} 人</span></div>:rowIndex===0&&slot.dishes.length===0?<span className="cell-empty">＋ 新增菜色</span>:null}
+              {dish?<div className="cell-dish" draggable={!movingDish} onDragStart={event=>dish.id&&startDrag(event,dish.id)} onDragEnd={scheduleFinishDrag} title="拖曳菜色以移動排序"><strong title={dish.dish_name}>{dish.dish_name}</strong>{showDinerCounts&&<span>{dish.diner_count} 人</span>}</div>:rowIndex===0&&slot.dishes.length===0?<span className="cell-empty">＋ 新增菜色</span>:null}
               {rowIndex===0&&slot.notes&&<small className="cell-note">本餐有備註</small>}
             </button>
           </td>

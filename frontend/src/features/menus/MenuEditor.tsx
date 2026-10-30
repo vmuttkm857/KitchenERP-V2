@@ -27,6 +27,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const [mealDrafts, setMealDrafts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [movingDish,setMovingDish]=useState(false)
+  const [showDinerCounts,setShowDinerCounts]=useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [dialog, setDialog] = useState<'meal' | 'copy' | 'export' | 'production' | null>(null)
@@ -66,6 +67,7 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   }, [applyAggregate, menu.id])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => { setShowDinerCounts(false) }, [menu.id])
 
   const meals = useMemo(() => data?.meal_types.filter(meal => meal.is_active || Object.values(slots).some(slot => slot.menu_meal_type_id === meal.id)) ?? [], [data, slots])
   const incompleteSourceRange = !sourceFilterStart || !sourceFilterEnd
@@ -155,9 +157,9 @@ export function MenuEditor({ menu, onClose }: { menu: Menu; onClose: () => void 
   const selectedSourceMenu = sourceMenus.find(item => item.id === sourceMenu)
 
   return <section className="menu-editor-page">
-    <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={() => openDialog('export')}>匯出</button><button onClick={() => openDialog('production')}>標準食譜卡／廚房製作單</button><button className="secondary" onClick={onClose}>返回</button></div></header>
+    <header className="page-header"><div><p className="eyebrow">菜單編輯</p><h1>{data.menu.name}</h1><p>{data.menu.start_date} ～ {data.menu.end_date}</p></div><div className="page-actions"><button type="button" className="secondary" aria-pressed={showDinerCounts} onClick={() => setShowDinerCounts(value => !value)}>{showDinerCounts ? '隱藏人數' : '顯示人數'}</button><button className="secondary" onClick={() => openDialog('meal')}>餐別設定</button><button className="secondary" onClick={() => openDialog('copy')}>複製菜單</button><button className="secondary" onClick={() => openDialog('export')}>匯出</button><button onClick={() => openDialog('production')}>標準食譜卡／廚房製作單</button><button className="secondary" onClick={onClose}>返回</button></div></header>
     {error && <Feedback type="error">{error}</Feedback>}{message && <Feedback type="success">{message}</Feedback>}
-    {!meals.length ? <div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div> : <div className="menu-editor-workspace"><MenuWeekGrid dates={data.dates} meals={meals} columns={data.meal_type_columns} selectedKey={editingKey} slotFor={slotFor} onSelect={selectCell} onEditColumns={meal=>setColumnMealId(meal.id)} onMoveDish={moveMenuDish} movingDish={movingDish}/></div>}
+    {!meals.length ? <div className="state-panel">請先從「餐別設定」建立至少一個啟用餐別。</div> : <div className="menu-editor-workspace"><MenuWeekGrid dates={data.dates} meals={meals} columns={data.meal_type_columns} selectedKey={editingKey} slotFor={slotFor} onSelect={selectCell} onEditColumns={meal=>setColumnMealId(meal.id)} onMoveDish={moveMenuDish} movingDish={movingDish} showDinerCounts={showDinerCounts}/></div>}
     {columnMealId&&<MenuColumnDialog menuId={menu.id} meal={data.meal_types.find(meal=>meal.id===columnMealId)!} columns={data.meal_type_columns.filter(column=>column.menu_meal_type_id===columnMealId)} onChanged={load} onClose={()=>setColumnMealId(null)}/>}
     {editing && <MenuMealEditorDialog menuId={menu.id} date={editing.date} mealTypeId={editing.mealId} onSaved={mealSaved} onClose={() => setEditingKey(null)}/>}
     {dialog === 'meal' && <div className="modal-backdrop" onMouseDown={() => setDialog(null)}><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="meal-title" onMouseDown={event => event.stopPropagation()}><header><h2 id="meal-title">餐別設定</h2><button className="secondary" onClick={() => setDialog(null)}>關閉</button></header><form className="inline-form" onSubmit={addMeal}><label>新餐別名稱<input autoFocus value={mealName} onChange={event => setMealName(event.target.value)} required/></label><button>新增餐別</button></form><div className="meal-list">{data.meal_types.map(meal => <div key={meal.id} className={!meal.is_active ? 'inactive' : ''}><label>名稱<input value={mealDrafts[meal.id] ?? meal.name} onChange={event => setMealDrafts({ ...mealDrafts, [meal.id]: event.target.value })}/></label><button className="secondary" aria-label={`${meal.name} 上移`} onClick={() => void moveMeal(meal, -1)}>上移</button><button className="secondary" aria-label={`${meal.name} 下移`} onClick={() => void moveMeal(meal, 1)}>下移</button><button onClick={() => void saveMeal(meal)}>儲存</button><button className="secondary" onClick={() => void toggleMeal(meal)}>{meal.is_active ? '停用' : '恢復'}</button></div>)}</div></section></div>}
