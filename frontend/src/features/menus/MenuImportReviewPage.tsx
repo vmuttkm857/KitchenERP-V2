@@ -51,11 +51,26 @@ function DishResolutionDialog({batchId,line,onClose,onResolved}:{batchId:string;
   const [selected,setSelected]=useState<DishOption|null>(null),[loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[error,setError]=useState('')
   const [excludeConfirm,setExcludeConfirm]=useState(false)
   const inputRef=useRef<HTMLInputElement>(null)
+  const mutation=useRef({pending:false,active:true})
+  useEffect(()=>{
+    const current={pending:false,active:true};mutation.current=current
+    return()=>{current.active=false}
+  },[batchId,line.id])
   useEffect(()=>{void apiRequest<List<DishCategoryOption>>('/categories/dish?active=true&page_size=100').then(value=>setCategories(value.items)).catch(()=>setError('菜色分類載入失敗，但仍可使用名稱搜尋。'));window.setTimeout(()=>inputRef.current?.focus(),0)},[])
   useEffect(()=>{const timer=window.setTimeout(()=>setDebounced(search.trim()),250);return()=>window.clearTimeout(timer)},[search])
   useEffect(()=>{setPage(1)},[debounced,categoryId])
   useEffect(()=>{if(!debounced&&!categoryId){setResults([]);setTotal(0);setLoading(false);return}let active=true;setLoading(true);const params=new URLSearchParams({active:'true',page:String(page),page_size:'20'});if(debounced)params.set('search',debounced);if(categoryId)params.set('category_id',categoryId);void apiRequest<Paged<DishOption>>(`/dishes?${params}`).then(value=>{if(active){setResults(value.items);setTotal(value.pagination.total)}}).catch(()=>{if(active)setError('菜色搜尋失敗，請稍後再試。')}).finally(()=>{if(active)setLoading(false)});return()=>{active=false}},[categoryId,debounced,page])
-  async function mutate(path:string,init:RequestInit,fallback:string){setSaving(true);setError('');try{await apiRequest(path,init);onResolved(await apiRequest<MenuImportBatchDetail>(`/menu-imports/${batchId}`))}catch(cause){setError(publicError(cause,fallback))}finally{setSaving(false)}}
+  async function mutate(path:string,init:RequestInit,fallback:string){
+    const current=mutation.current
+    if(current.pending||!current.active)return
+    current.pending=true;setSaving(true);setError('')
+    const isCurrent=()=>current.active&&mutation.current===current
+    try{
+      const detail=await apiRequest<MenuImportBatchDetail>(path,init)
+      if(isCurrent())onResolved(detail)
+    }catch(cause){if(isCurrent())setError(publicError(cause,fallback))}
+    finally{current.pending=false;if(isCurrent())setSaving(false)}
+  }
   async function save(){if(!selected)return;await mutate(`/menu-imports/${batchId}/lines/${line.id}`,{method:'PATCH',body:JSON.stringify({dish_id:selected.id})},'菜色確認失敗，草稿尚未變更。')}
   async function exclude(){await mutate(`/menu-imports/${batchId}/lines/${line.id}/exclude`,{method:'POST'},'排除菜色失敗，草稿尚未變更。')}
   async function restore(){await mutate(`/menu-imports/${batchId}/lines/${line.id}/restore`,{method:'POST'},'恢復菜色失敗，草稿尚未變更。')}

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import test from 'node:test'
+import vm from 'node:vm'
+import ts from 'typescript'
 import {menuImportDates,menuImportGridRows,menuImportStatus} from '../src/features/menus/menuImportGrid.ts'
 
 const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
@@ -14,6 +16,73 @@ const css=read('../src/styles/global.css')
 const line=(date,meal,mealOrder,column,columnOrder,name,reviewRequired=false)=>({
   line_key:`${date}-${meal}-${column}`,date,meal_name:meal,meal_sort_order:mealOrder,column_name:column,column_sort_order:columnOrder,
   original_import_name:name,normalized_name:name,dish:reviewRequired?null:{id:name,code:name,name,is_active:true},status:reviewRequired?'UNMATCHED':'MATCHED',review_required:reviewRequired,source_row:2,source_column:3,diner_count:1,
+})
+
+// Real dialog callbacks and controlled promises; not React DOM/browser E2E.
+function resolutionHarness(excluded=false){
+  let hooks=[],cursor=0,effects=[],cleanups=[],tree
+  const calls=[],resolved=[],Picker=()=>{},pending={}
+  pending.promise=new Promise((resolve,reject)=>Object.assign(pending,{resolve,reject}))
+  const react={
+    useState(initial){const i=cursor++;if(!(i in hooks))hooks[i]=typeof initial==='function'?initial():initial;return [hooks[i],value=>{hooks[i]=typeof value==='function'?value(hooks[i]):value}]},
+    useRef(initial){const i=cursor++;return hooks[i]??=( {current:initial} )},
+    useEffect(fn,deps){const i=cursor++;if(!hooks[i]||deps.some((v,j)=>v!==hooks[i][j])){hooks[i]=deps;effects.push(()=>{cleanups[i]?.();cleanups[i]=fn()})}},
+  }
+  const jsx=(type,props)=>({type,props}),exports={}
+  vm.runInNewContext(ts.transpileModule(review+'\nexport { DishResolutionDialog };',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{
+    exports,window:{setTimeout(){return 1},clearTimeout(){}},require:p=>p==='react'?react:p==='react/jsx-runtime'?{jsx,jsxs:jsx}:p==='../../api/client'?{ApiError:class extends Error{},apiRequest:(path,init)=>{calls.push({path,init});if(path.startsWith('/categories/'))return Promise.resolve({items:[]});if(!init)throw Error('Unexpected GET after mutation');return pending.promise}}:p==='./DishSearchPicker'?{DishSearchPicker:Picker}:p==='./menuImportGrid'?{menuImportStatus:x=>x.resolution_status}:{}
+  })
+  const props={batchId:'batch',line:{id:'line',date:'2026-11-09',meal_name:'午餐',column_name:'主菜',original_import_name:'原菜名',resolution_status:excluded?'EXCLUDED':'UNMATCHED'},onClose(){},onResolved:value=>resolved.push(value)}
+  function render(){cursor=0;effects=[];tree=exports.DishResolutionDialog(props);effects.forEach(fn=>fn())}
+  const nodes=x=>Array.isArray(x)?x.flatMap(nodes):x&&typeof x==='object'?[x,...nodes(x.props?.children)]:[]
+  const text=x=>Array.isArray(x)?x.map(text).join(''):x&&typeof x==='object'?text(x.props?.children):typeof x==='string'?x:''
+  render()
+  return {calls,resolved,pending,render,unmount(){cleanups.forEach(fn=>fn?.())},button:label=>nodes(tree).find(n=>n.type==='button'&&text(n)===label),texts:()=>text(tree),choose(){nodes(tree).find(n=>n.type===Picker).props.onAdd({id:'dish',name:'測試菜色',code:'D'});render()},writes:()=>calls.filter(c=>c.init?.method),gets:()=>calls.filter(c=>!c.init?.method&&!c.path.startsWith('/categories/'))}
+}
+
+for(const action of ['resolve','exclude','restore']){
+  test(`${action} applies the complete server response with one mutation and no follow-up GET`,async()=>{
+    const ui=resolutionHarness(action==='restore');await Promise.resolve()
+    if(action==='resolve')ui.choose()
+    if(action==='exclude'){ui.button('從匯入排除').props.onClick();ui.render()}
+    const label={resolve:'確認變更',exclude:'確定排除',restore:'恢復此菜色'}[action]
+    const operation=ui.button(label).props.onClick();ui.render()
+    assert.equal(ui.resolved.length,0);assert.equal(ui.writes().length,1)
+    assert.equal(ui.writes()[0].init.method,action==='resolve'?'PATCH':'POST')
+    assert.equal(ui.writes()[0].path,`/menu-imports/batch/lines/line${action==='resolve'?'':`/${action}`}`)
+    assert.ok(ui.button('取消').props.disabled)
+    const response={id:'batch',status:'REVIEW_REQUIRED',can_finalize:false,summary:{duplicate_conflict_count:2,review_required_count:2,excluded_count:1},lines:[{id:'line',resolution_status:'MANUALLY_RESOLVED',duplicate_conflict:true},{id:'other',resolution_status:'AMBIGUOUS'},{id:'third',resolution_status:'UNMATCHED'},{id:'excluded',resolution_status:'EXCLUDED'}],layout:[{column_name:'主菜'}],finalize_warnings:['重複菜色']}
+    ui.pending.resolve(response);await operation;for(let i=0;i<6;i++)await Promise.resolve();ui.render()
+    assert.equal(ui.resolved.length,1);assert.equal(ui.resolved[0],response)
+    assert.equal(ui.gets().length,0);assert.equal(ui.button('取消').props.disabled,false)
+    assert.ok(!ui.texts().includes('失敗'))
+  })
+}
+
+test('READY response is retained exactly and same-tick duplicate actions submit only once',async()=>{
+  const ui=resolutionHarness();ui.choose();const submit=ui.button('確認變更').props.onClick
+  submit();submit();assert.equal(ui.writes().length,1)
+  const response={id:'batch',status:'READY',can_finalize:true,summary:{duplicate_conflict_count:0,review_required_count:0},lines:[]}
+  ui.pending.resolve(response);for(let i=0;i<8;i++)await Promise.resolve()
+  assert.equal(ui.resolved.length,1);assert.equal(ui.resolved[0],response)
+})
+
+for(const action of ['resolve','exclude','restore'])test(`${action} failure keeps current draft and permits retry`,async()=>{
+  const ui=resolutionHarness(action==='restore');if(action==='resolve')ui.choose()
+  if(action==='exclude'){ui.button('從匯入排除').props.onClick();ui.render()}
+  ui.button({resolve:'確認變更',exclude:'確定排除',restore:'恢復此菜色'}[action]).props.onClick()
+  ui.pending.reject(Error('request failed'));for(let i=0;i<8;i++)await Promise.resolve();ui.render()
+  assert.equal(ui.resolved.length,0);assert.equal(ui.gets().length,0)
+  assert.ok(ui.texts().includes('失敗'));assert.equal(ui.button('取消').props.disabled,false)
+  ui.button({resolve:'確認變更',exclude:'確定排除',restore:'恢復此菜色'}[action]).props.onClick()
+  for(let i=0;i<8;i++)await Promise.resolve()
+  assert.equal(ui.writes().length,2);assert.equal(ui.resolved.length,0)
+})
+
+test('a late mutation response from a closed dialog cannot update the draft',async()=>{
+  const ui=resolutionHarness();ui.choose();ui.button('確認變更').props.onClick();ui.unmount()
+  ui.pending.resolve({id:'batch',status:'READY'});for(let i=0;i<8;i++)await Promise.resolve()
+  assert.equal(ui.resolved.length,0);assert.equal(ui.gets().length,0)
 })
 
 test('weekly planner uses the imported date range and backend meal/column sort order',()=>{
@@ -66,11 +135,10 @@ test('duplicate draft and unfinished list both navigate to persistent review',()
   assert.match(app,/MenuImportReviewPage/)
 })
 
-test('review is restored only from batch GET and line resolution refetches authoritative detail',()=>{
+test('review initially loads its authoritative batch and retains review states',()=>{
   assert.match(review,/apiRequest<MenuImportBatchDetail>\(`\/menu-imports\/\$\{batchId\}`\)/)
   assert.match(review,/method:'PATCH'/)
   assert.match(review,/dish_id:selected\.id/)
-  assert.match(review,/await apiRequest\(path,init\);onResolved\(await apiRequest<MenuImportBatchDetail>/)
   assert.doesNotMatch(review,/setDetail\([^)]*review_required:\s*false/)
   assert.match(review,/菜單審核完成/)
   assert.match(review,/可以建立新的正式菜單/)
@@ -143,7 +211,7 @@ test('every persisted import line is editable while colors only communicate revi
   assert.match(review,/確認變更/)
 })
 
-test('excluded lines use persisted exclude and restore actions followed by authoritative GET',()=>{
+test('excluded lines retain persisted exclude and restore actions and confirmation',()=>{
   assert.match(review,/\/lines\/\$\{line\.id\}\/exclude/)
   assert.match(review,/\/lines\/\$\{line\.id\}\/restore/)
   assert.match(review,/只會從本次 Excel 匯入排除/)
