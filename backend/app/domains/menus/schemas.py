@@ -167,6 +167,8 @@ class MenuSlotPublic(BaseModel):
 
 
 class MenuEditorAggregate(BaseModel):
+    # Display metadata stays outside slots and both menu fingerprints.
+    dish_category_ids: dict[str, uuid.UUID | None] = Field(default_factory=dict)
     menu: MenuPublic
     dates: list[date]
     meal_types: list[MealTypePublic]
@@ -176,6 +178,7 @@ class MenuEditorAggregate(BaseModel):
 
 
 class MenuMealSlotDetail(MenuSlotPublic):
+    dish_category_ids: dict[str, uuid.UUID | None] = Field(default_factory=dict)
     menu_day_id: uuid.UUID | None
     slot_fingerprint: str
 

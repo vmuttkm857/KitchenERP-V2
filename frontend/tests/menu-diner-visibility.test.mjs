@@ -50,7 +50,7 @@ test('editor toggles all counts without changing names, ordering, data or API ca
  assert.equal(ui.calls.length,count);assert.equal(JSON.stringify(aggregate),before)
  assert.ok(ui.calls.every(c=>!c.init?.method||c.init.method==='GET'))
  nodes(ui.cards()).find(n=>n.type==='button'&&n.props['aria-label']==='編輯 2026-11-09 午餐').props.onClick()
- await ui.flush();assert.ok(ui.dialog())
+ await ui.flush();assert.ok(ui.dialog());assert.equal(ui.dialog().props.showCategoryColors,true)
 })
 test('a different menu resets counts to hidden',async()=>{
  const ui=harness();await ui.flush();ui.button('顯示人數').props.onClick();await ui.flush();assert.equal(ui.grid().props.showDinerCounts,true)

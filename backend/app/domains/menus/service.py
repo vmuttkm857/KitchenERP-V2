@@ -305,11 +305,13 @@ class MenuService:
         if row is None:raise MenuNotFoundError()
         menu=dict(row); meal_types=self.repository.meal_types(menu_id)
         grouped={}
+        dish_category_ids={}
         for row in self.repository.aggregate_rows(menu_id):
             key=row["menu_day_id"]
             slot=grouped.setdefault(key,{"menu_day_id":key,"menu_date":row["menu_date"],
                 "menu_meal_type_id":row["menu_meal_type_id"],"notes":row["slot_notes"],"dishes":[]})
             if row["menu_dish_id"] is not None:
+                dish_category_ids[str(row["dish_id"])]=row["dish_category_id"]
                 slot["dishes"].append({"id":row["menu_dish_id"],"dish_id":row["dish_id"],
                     "menu_meal_type_column_id":row["menu_meal_type_column_id"],
                     "dish_code":row["dish_code"],"dish_name":row["dish_name"],
@@ -320,6 +322,7 @@ class MenuService:
         while current <= menu["end_date"]: dates.append(current); current += timedelta(days=1)
         result={"menu":menu,"dates":dates,"meal_types":meal_types,
             "meal_type_columns":self.repository.menu_columns(menu_id),"slots":list(grouped.values())}
+        result["dish_category_ids"]=dish_category_ids
         result["editor_fingerprint"]=editor_fingerprint(result)
         return result
 
@@ -349,7 +352,9 @@ class MenuService:
                    and slot["menu_meal_type_id"]==meal_type_id),None)
         return {**(slot or {"menu_day_id":None,"menu_date":menu_date,
                 "menu_meal_type_id":meal_type_id,"notes":None,"dishes":[]}),
-                "slot_fingerprint":slot_fingerprint(aggregate,menu_date,meal_type_id)}
+                "slot_fingerprint":slot_fingerprint(aggregate,menu_date,meal_type_id),
+                "dish_category_ids":{str(dish["dish_id"]):aggregate["dish_category_ids"].get(str(dish["dish_id"]))
+                    for dish in (slot["dishes"] if slot else [])}}
 
     def save_meal_slot(self,menu_id,meal_type_id,menu_date,data:MenuMealSlotSave,actor_id):
         try:

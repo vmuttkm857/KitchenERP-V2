@@ -6,6 +6,7 @@ import hashlib
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect,text
 from sqlalchemy.exc import DBAPIError,IntegrityError
 
@@ -69,5 +70,5 @@ def test_new_constraints_and_downgrade_refusal_preserve_intent_history(migrated_
     with pytest.raises(DBAPIError,match="SNAPSHOT_REVISION_INTENTS_PREVENT_DOWNGRADE"):
         command.downgrade(config(),"20261008_0027")
     with engine.connect() as conn:
-        assert conn.scalar(text("SELECT version_num FROM alembic_version"))=="20261029_0028"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version"))==ScriptDirectory.from_config(config()).get_current_head()
         assert conn.scalar(text("SELECT count(*) FROM requirement_snapshots WHERE revision_intent_id=:id"),{"id":intent})==1

@@ -7,6 +7,7 @@ import { MealEditorController } from './mealEditorController'
 import type { MenuAggregate, MenuMealAdjustmentContext } from './types'
 
 export interface MenuMealEditorDialogProps {
+  showCategoryColors?: boolean
   menuId: string
   date: string
   mealTypeId: string
@@ -21,7 +22,7 @@ export function MenuMealEditorDialog(props: MenuMealEditorDialogProps) {
   return <MealEditorSession key={`${props.menuId}:${props.date}:${props.mealTypeId}`} {...props}/>
 }
 
-function MealEditorSession({ menuId, date, mealTypeId, onSaved, onClose, orderingAdjustmentContext }: MenuMealEditorDialogProps) {
+function MealEditorSession({ menuId, date, mealTypeId, onSaved, onClose, orderingAdjustmentContext, showCategoryColors=false }: MenuMealEditorDialogProps) {
   const controller = useMemo(() => new MealEditorController(menuId, date, mealTypeId, apiRequest, orderingAdjustmentContext), [menuId, date, mealTypeId, orderingAdjustmentContext?.sheet_id, orderingAdjustmentContext?.lock_version])
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const clearDirty = useEditorDirty(state.dirty)
@@ -85,7 +86,7 @@ function MealEditorSession({ menuId, date, mealTypeId, onSaved, onClose, orderin
     : confirmation?.kind === 'remove' ? `只會從本餐移除「${state.slot?.dishes[confirmation.index]?.dish_name ?? '此菜色'}」，不會刪除菜色主檔。` : ''
 
   return <>
-    {state.slot && meal ? <MenuEditorPanel date={date} meal={meal} columns={state.aggregate!.meal_type_columns} slot={state.slot}
+    {state.slot && meal ? <MenuEditorPanel showCategoryColors={showCategoryColors} dishCategoryIds={state.dishCategoryIds} date={date} meal={meal} columns={state.aggregate!.meal_type_columns} slot={state.slot}
       search={search} categoryId={categoryId} categories={state.categories} results={state.results} searchTotal={state.total} searchPage={page} searchLoading={state.searchLoading}
       searchInputRef={searchInputRef} onClose={requestClose} onSave={save} saving={busy} blocked={state.conflict}
       saveError={[state.error, state.searchError].filter(Boolean).join(' ')} onReload={state.contextBlocked?undefined:reload}

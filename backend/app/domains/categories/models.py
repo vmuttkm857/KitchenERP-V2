@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,7 +25,12 @@ class IngredientCategory(CategoryFields, Base):
 
 class DishCategory(CategoryFields, Base):
     __tablename__ = "dish_categories"
+    __table_args__ = (CheckConstraint(
+        "background_color IS NULL OR background_color ~ '^#[0-9A-Fa-f]{6}$'",
+        name="ck_dish_categories_background_color",
+    ),)
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    background_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
 
 
 class MenuCategory(CategoryFields, Base):

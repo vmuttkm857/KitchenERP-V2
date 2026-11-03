@@ -1,4 +1,5 @@
-import type { DishCategoryOption, DishOption, List, MenuAggregate, MenuDish, MenuMealSlotDetail, MenuMealSlotSave, MenuSlot, MenuMealAdjustmentContext } from './types'
+import type { DishCategoryOption, DishOption, MenuAggregate, MenuDish, MenuMealSlotDetail, MenuMealSlotSave, MenuSlot, MenuMealAdjustmentContext } from './types'
+import { loadDishCategories } from '../categories/categoryDisplay.js'
 import { reorderMenuDishesByColumns } from './menuPlacement.js'
 
 export type MealEditorRequest = <T>(path: string, init?: RequestInit) => Promise<T>
@@ -11,6 +12,7 @@ interface State {
   error: string
   conflict: boolean
   contextBlocked: boolean
+  dishCategoryIds: Record<string, string | null>
   categories: DishCategoryOption[]
   results: DishOption[]
   total: number
@@ -20,7 +22,7 @@ interface State {
 
 // A single session owns its draft and version. No parent aggregate is ever submitted.
 export class MealEditorController {
-  private state: State = { aggregate: null, slot: null, loading: true, saving: false, dirty: false, error: '', conflict: false, contextBlocked: false, categories: [], results: [], total: 0, searchLoading: false, searchError: '' }
+  private state: State = { aggregate: null, slot: null, loading: true, saving: false, dirty: false, error: '', conflict: false, contextBlocked: false, dishCategoryIds: {}, categories: [], results: [], total: 0, searchLoading: false, searchError: '' }
   private listeners = new Set<() => void>()
   private generation = 0
   private searchGeneration = 0
@@ -53,14 +55,14 @@ export class MealEditorController {
       if (generation !== this.generation) return
       const [aggregate, categories] = await Promise.all([
         this.request<MenuAggregate>(`/menus/${this.menuId}/editor`),
-        this.request<List<DishCategoryOption>>('/categories/dish?page_size=100'),
+        loadDishCategories(this.request, () => generation === this.generation),
       ])
       if (generation !== this.generation) return
       if (source.menu_date !== this.date || source.menu_meal_type_id !== this.mealTypeId || aggregate.menu.id !== this.menuId || !aggregate.meal_types.some(meal => meal.id === this.mealTypeId)) throw new Error('Invalid meal source')
-      const { slot_fingerprint, ...slot } = source
+      const { slot_fingerprint, dish_category_ids = {}, ...slot } = source
       this.fingerprint = slot_fingerprint
       this.initial = JSON.stringify(slot)
-      this.publish({ aggregate, categories: categories.items, slot, dirty: false, conflict: false, contextBlocked: false })
+      this.publish({ aggregate, categories, dishCategoryIds: dish_category_ids, slot, dirty: false, conflict: false, contextBlocked: false })
     } catch {
       if (generation === this.generation) this.publish({ error: '餐次載入失敗，請重試；尚未儲存的內容仍保留。' })
     } finally {
@@ -96,6 +98,8 @@ export class MealEditorController {
     const slot = this.state.slot
     if (!slot || !dish.is_active || !this.state.aggregate?.meal_types.find(meal => meal.id === this.mealTypeId)?.is_active) return
     if (slot.dishes.some(item => item.dish_id === dish.id)) { this.publish({ error: `「${dish.name}」已在本餐中` }); return }
+    if (this.state.saving || this.state.loading || this.state.conflict) return
+    this.publish({ dishCategoryIds: { ...this.state.dishCategoryIds, [dish.id]: dish.category_id ?? null } })
     this.change({ ...slot, dishes: [...slot.dishes, { dish_id: dish.id, menu_meal_type_column_id: null, dish_code: dish.code, dish_name: dish.name, dish_category_name: dish.category_name, diner_count: 1, notes: null, sort_order: slot.dishes.length + 1 }] })
   }
 

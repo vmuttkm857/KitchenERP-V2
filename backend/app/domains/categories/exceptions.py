@@ -8,3 +8,7 @@ class CategoryNameExistsError(Exception):
 
 class CategoryInUseError(Exception):
     pass
+
+
+class InvalidCategoryColorError(Exception):
+    pass
