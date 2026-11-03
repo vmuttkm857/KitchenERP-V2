@@ -72,9 +72,9 @@ test('fresh status revalidation rejects confirmation or procurement locks before
 })
 
 // Run the real detail-view hooks and callbacks, mocking only API/UI boundaries.
-function harness(initial=fixture()){
+function harness(initial=fixture(),memoize=true){
   let hooks=[],index=0,pending=[],tree,props,unmounted=false,exports
-  const calls=[],api={saveFail:false,refreshFail:false,previewFail:false,syncFail:null,pendingSave:null,pendingPreview:null,pendingSync:null,preview:null,detail:structuredClone(initial.detail),layouts:initial.layouts}
+  const calls=[],matrixBuilds=[],api={saveFail:false,refreshFail:false,previewFail:false,syncFail:null,pendingSave:null,pendingPreview:null,pendingSync:null,preview:null,detail:structuredClone(initial.detail),layouts:initial.layouts}
   const scroll={scrollLeft:640,scrollTop:320},viewport={scrollX:0,scrollY:470,scrollTo(x,y){this.scrollX=x;this.scrollY=y}}
   const root={querySelector:()=>scroll}
   class ApiError extends Error{constructor(status,detail){super('API failed');this.status=status;this.detail=detail}}
@@ -85,12 +85,14 @@ function harness(initial=fixture()){
     useState:initial=>{const i=index++;hooks[i]??={value:typeof initial==='function'?initial():initial};return [hooks[i].value,next=>{hooks[i].value=typeof next==='function'?next(hooks[i].value):next;schedule()}]},
     useRef:initial=>{const i=index++;return hooks[i]??={current:initial}},
     useCallback:(fn,deps)=>{const i=index++;if(!hooks[i]||!equal(hooks[i].deps,deps))hooks[i]={deps,fn};return hooks[i].fn},
+    useMemo:(fn,deps)=>{const i=index++;if(!memoize||!hooks[i]||!equal(hooks[i].deps,deps))hooks[i]={deps,value:fn()};return hooks[i].value},
     useEffect:(effect,deps)=>{const i=index++,old=hooks[i];if(!old||!equal(old.deps,deps))pending.push(()=>{old?.cleanup?.();hooks[i]={deps,cleanup:effect()}})},
   }
   react.useLayoutEffect=react.useEffect
   const jsx=(type,props,key)=>({type,props:props??{},key}),dialog=()=>{}
   const apiMethods={
-    getOrderingAdjustmentMenuLayout:async id=>{calls.push(['layout',id]);return api.layouts[id]},
+    confirmOrderingAdjustment:async(id,version)=>{calls.push(['confirm',id,version]);api.detail={...api.detail,status:'confirmed',lock_version:version+1};return structuredClone(api.detail)},
+    getOrderingAdjustmentMenuLayout:async id=>{calls.push(['layout',id]);const layout=api.layouts[id];if(api.pendingLayout)await api.pendingLayout;return layout},
     getOrderingAdjustment:async id=>{calls.push(['get',id]);if(api.refreshFail)throw new ApiError(503,null);return structuredClone(api.detail)},
     updateOrderingAdjustmentLines:async(id,payload)=>{calls.push(['save',id,payload]);if(api.pendingSave)await api.pendingSave;if(api.saveFail)throw new ApiError(409,{code:'LOCK_VERSION_CONFLICT'});api.detail={...api.detail,lock_version:api.detail.lock_version+1,lines:api.detail.lines.map(line=>{const change=payload.lines.find(item=>item.id===line.id);return change?{...line,...change,effective_quantity:change.adjusted_quantity??line.system_quantity,effective_unit:change.adjusted_unit??line.system_unit}:line})};return structuredClone(api.detail)},
     previewOrderingAdjustmentSync:async(id,version)=>{calls.push(['preview',id,version]);const preview=api.preview??safePreview(api.detail);if(api.pendingPreview)await api.pendingPreview;if(api.previewFail)throw new ApiError(503,null);return structuredClone(preview)},
@@ -108,7 +110,7 @@ function harness(initial=fixture()){
     if(path.endsWith('/MenuMealEditorDialog'))return {MenuMealEditorDialog:dialog}
     if(path==='./api')return apiMethods
     if(path==='./editor')return editor
-    if(path==='./matrix')return matrix
+    if(path==='./matrix')return {...matrix,buildAdjustmentMenuMatrix:(...args)=>{matrixBuilds.push(args[1].menu_id);return matrix.buildAdjustmentMenuMatrix(...args)}}
     if(path==='./view')return view
     if(path==='./mealEditing')return {canAutoApplyMealSync,captureAdjustmentScroll,prepareAdjustmentMealEdit,restoreAdjustmentScroll,validAdjustmentMealTarget}
     if(path.endsWith('/mealSectionTone'))return {mealSectionTone}
@@ -118,19 +120,101 @@ function harness(initial=fixture()){
   render()
   const nodes=value=>Array.isArray(value)?value.flatMap(nodes):value&&typeof value==='object'?[value,...nodes(value.props?.children)]:[]
   const text=value=>Array.isArray(value)?value.map(text).join(''):value&&typeof value==='object'?text(value.props?.children):typeof value==='string'?value:''
-  return {api,calls,dialog,scroll,viewport,exports,async settle(){await new Promise(done=>setTimeout(done,5))},
+  return {api,calls,matrixBuilds,dialog,scroll,viewport,exports,async settle(){await new Promise(done=>setTimeout(done,5))},
     async saved(aggregate=api.layouts['menu-a'],changed=true){api.detail={...api.detail,stale:changed};this.mealDialog().props.onSaved(aggregate,{changed});await this.settle()},
     detail:()=>props.detail,
     setDetail(detail){props={...props,detail};render()},
     matrix:()=>nodes(tree).find(node=>node.type===exports.AdjustmentWeeklyMatrix),
     mealDialog:()=>nodes(tree).find(node=>node.type===dialog),
     syncDialog:()=>nodes(tree).find(node=>node.type?.name==='SyncAdjustmentDialog'),
+    completeDialog:()=>nodes(tree).find(node=>node.type?.name==='CompleteAdjustmentDialog'),
     button:label=>nodes(tree).find(node=>node.type==='button'&&text(node)===label),
     texts:()=>text(tree),
     matrixNodes(){return nodes(exports.AdjustmentWeeklyMatrix(this.matrix().props))},
     close(){unmounted=true;hooks.forEach(hook=>hook?.cleanup?.())},
   }
 }
+
+test('quantity typing reuses identical structural matrices; uncached control measures the previous work',async t=>{
+  const counts=[]
+  for(const memoize of [false,true]){
+    const ui=harness(fixture(),memoize)
+    try{
+      await ui.settle();const start=ui.matrixBuilds.length,original=ui.matrix().props.matrix
+      for(let i=0;i<20;i++){ui.matrix().props.onChange('line',String(i+3));await ui.settle()}
+      counts.push(ui.matrixBuilds.length-start)
+      assert.equal(ui.matrix().props.values.line,'22');assert.ok(ui.matrix().props.dirtySet.has('line'))
+      assert.deepEqual(ui.matrix().props.matrix,original)
+      if(memoize)assert.equal(ui.matrix().props.matrix,original)
+      ui.matrix().props.onChange('line','invalid');await ui.settle()
+      assert.ok(ui.matrix().props.validationErrors.line)
+    }finally{ui.close()}
+  }
+  assert.ok(counts[0]>0);assert.equal(counts[1],0)
+  t.diagnostic(`20 sequential quantity edits: uncached=${counts[0]}, memoized=${counts[1]} matrix builds (controlled hooks, not browser profiling)`)
+})
+
+test('restoring a manually adjusted unit changes draft values without rebuilding structure',async()=>{
+  const f=fixture();Object.assign(f.detail.lines[0],{adjusted_quantity:'2000',adjusted_unit:'g',effective_quantity:'2000',effective_unit:'g'})
+  const ui=harness(f)
+  try{
+    await ui.settle();const count=ui.matrixBuilds.length
+    ui.matrix().props.onRestore(f.detail.lines[0]);await ui.settle()
+    assert.equal(ui.matrix().props.units.line,'kg');assert.equal(ui.matrix().props.values.line,'2')
+    assert.ok(ui.matrix().props.dirtySet.has('line'));assert.equal(ui.matrix().props.validationErrors.line,null)
+    assert.equal(ui.matrixBuilds.length,count)
+  }finally{ui.close()}
+})
+
+for(const dependency of ['lines','criteria','source_menus','id'])test(`matrix invalidates on ${dependency} even when lock_version is unchanged`,async()=>{
+  const ui=harness()
+  try{
+    await ui.settle();const before=ui.matrix().props.matrix,count=ui.matrixBuilds.length,d=ui.detail()
+    const next={...d}
+    if(dependency==='lines')next.lines=d.lines.map(line=>({...line,dish_name_snapshot:'更新菜名'}))
+    if(dependency==='criteria')next.criteria={...d.criteria,selected_dates:[day],start_date:null,end_date:null}
+    if(dependency==='source_menus')next.source_menus=d.source_menus.map(menu=>({...menu,menu_name:'更新菜單'}))
+    if(dependency==='id')next.id='another-sheet'
+    ui.setDetail(next);await ui.settle()
+    assert.ok(ui.matrixBuilds.length>count);assert.notEqual(ui.matrix().props.matrix,before)
+    assert.deepEqual(ui.matrix().props.matrix,matrix.buildAdjustmentMenuMatrix(next.lines,next.source_menus[0],ui.api.layouts['menu-a'],next.criteria))
+  }finally{ui.close()}
+})
+
+test('layout response invalidates matrices and a superseded layout request cannot overwrite them',async()=>{
+  const ui=harness();await ui.settle()
+  let release
+  try{
+    const before=ui.matrixBuilds.length
+    ui.api.pendingLayout=new Promise(resolve=>{release=resolve})
+    ui.setDetail({...ui.detail(),lock_version:2})
+    ui.api.layouts={'menu-a':{...ui.api.layouts['menu-a'],meal_type_columns:[{id:'col',menu_meal_type_id:'meal-a',name:'新版欄位',sort_order:1}]},'menu-b':ui.api.layouts['menu-b']}
+    ui.api.pendingLayout=null
+    ui.setDetail({...ui.detail(),lock_version:3});await ui.settle()
+    assert.ok(ui.matrixBuilds.length>before)
+    assert.equal(ui.matrix().props.matrix.meals[0].rows[0].label,'新版欄位')
+    const latest=ui.matrix().props.matrix,count=ui.matrixBuilds.length
+    release();await ui.settle()
+    assert.equal(ui.matrix().props.matrix,latest);assert.equal(ui.matrixBuilds.length,count)
+  }finally{release?.();ui.close()}
+})
+
+test('save and confirmation adopt authoritative lines and preserve dirty and read-only states',async()=>{
+  const ui=harness()
+  try{
+    await ui.settle();const before=ui.matrix().props.matrix
+    ui.matrix().props.onChange('line','5');await ui.settle()
+    ui.button('儲存草稿').props.onClick();await ui.settle()
+    assert.notEqual(ui.matrix().props.matrix,before)
+    assert.equal(ui.matrix().props.dirtySet.size,0)
+    assert.equal(ui.matrix().props.matrix.meals[0].rows[0].cells[day][0].lines[0].effective_quantity,'5')
+    ui.button('完成叫貨調整').props.onClick();await ui.settle()
+    ui.completeDialog().props.onConfirm();await ui.settle()
+    assert.equal(ui.detail().status,'confirmed');assert.equal(ui.detail().lock_version,3)
+    assert.equal(ui.matrix().props.readOnly,true);assert.equal(ui.matrix().props.values.line,'5')
+    assert.equal(ui.calls.filter(call=>call[0]==='confirm').length,1)
+  }finally{ui.close()}
+})
 
 test('matrix renders one edit button per date and meal, not per dish, including empty meals',async()=>{
   const f=fixture();f.layouts['menu-a'].meal_type_columns=[{id:'main',name:'主菜',menu_meal_type_id:'meal-a',sort_order:1},{id:'side',name:'副菜',menu_meal_type_id:'meal-a',sort_order:2}]

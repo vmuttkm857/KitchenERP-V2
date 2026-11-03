@@ -1,4 +1,4 @@
-import { FormEvent,useCallback,useEffect,useLayoutEffect,useRef,useState } from 'react'
+import { FormEvent,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState } from 'react'
 import type {Dispatch,ReactNode,SetStateAction} from 'react'
 import { ApiError } from '../../api/client'
 import { useEditorDirty } from '../../app/NavigationBlocker'
@@ -143,7 +143,10 @@ function OrderingAdjustmentDetailView({detail,onDetailChange,onBack,onReview}:{d
   const hasInvalid=dirtyIds.some(id=>Boolean(validationErrors[id]))
   const clearEditorDirty=useEditorDirty(dirtyIds.length>0)
   const staleReasons=[...new Set([...detail.warnings.map(warning=>warning.code),...detail.lines.flatMap(line=>line.stale_reasons)].map(staleReasonLabel))]
-  const matrices=detail.source_menus.map(menu=>buildAdjustmentMenuMatrix(detail.lines,menu,layouts[menu.menu_id],detail.criteria)),activeMatrix=matrices.find(matrix=>matrix.menuId===activeMenuId)??matrices[0]
+  // Draft quantities/units do not alter structure. Server data and layouts do.
+  const matrices=useMemo(()=>detail.source_menus.map(menu=>buildAdjustmentMenuMatrix(detail.lines,menu,layouts[menu.menu_id],detail.criteria)),
+    [detail.id,detail.lines,detail.source_menus,detail.criteria,layouts])
+  const activeMatrix=matrices.find(matrix=>matrix.menuId===activeMenuId)??matrices[0]
   function preserveScroll(){scrollToRestore.current=captureAdjustmentScroll(detailRoot.current)}
   useLayoutEffect(()=>{restoreAdjustmentScroll(detailRoot.current,scrollToRestore.current);scrollToRestore.current=null})
   useEffect(()=>()=>{syncGeneration.current++},[detail.id])
