@@ -140,33 +140,132 @@ test('controller keeps display map out of dirty state and save payload; add/move
   assert.equal(controller.getSnapshot().dirty,false)
 })
 
-test('category management create/edit/clear send colors only for dish categories and preserve failures', async () => {
-  const calls=[],records={dish:[category],ingredient:[{...category,id:'ingredient'}]}, Feedback=()=>{}, Color=()=>{}
-  let fail=false
+function management(request) {
+  const Empty=()=>{},Color=()=>{},Feedback=()=>{}
   const ui=hooks(react=>load('features/categories/CategoriesPage.tsx',react,{
-    '../../api/client':{ApiError:class ApiError extends Error{},apiRequest:async(path,init)=>{calls.push({path,init}); if(init){if(fail)throw Error('offline');return category}return {items:records[path.includes('/dish')?'dish':'ingredient'],pagination:{total:1}}}},
-    './CategoryColorPicker':{CategoryColorPicker:Color}, '../../components/ui/Page':{Feedback},
+    '../../api/client':{ApiError:class ApiError extends Error{},apiRequest:request},
+    './CategoryColorPicker':{CategoryColorPicker:Color},
+    '../../components/ui/Page':{Feedback,EmptyState:Empty},
   }).CategoriesPage,{})
-  await ui.flush()
-  const tab=label=>{const tabs=nodes(ui.tree).find(node=>node.type?.name==='CategoryTypeTabs');return nodes(tabs.type(tabs.props)).find(node=>node.props?.role==='tab'&&text(node)===label)}
-  const button=label=>nodes(ui.tree).find(node=>node.type==='button'&&text(node)===label)
-  assert.equal(nodes(ui.tree).some(node=>node.type===Color),false)
-  tab('菜色分類').props.onClick();await ui.flush()
-  nodes(ui.tree).find(node=>node.type===Color).props.onChange('#FCE4EC')
-  nodes(ui.tree).find(node=>node.type==='input').props.onChange({target:{value:'新分類'}});await ui.flush()
+  return {ui,Empty,Color,
+    tab(label){const tabs=nodes(ui.tree).find(node=>node.type?.name==='CategoryTypeTabs');return nodes(tabs.type(tabs.props)).find(node=>node.props?.role==='tab'&&text(node)===label)},
+    button(label){return nodes(ui.tree).find(node=>node.type==='button'&&text(node)===label)},
+    row(name){return nodes(ui.tree).find(node=>node.type==='tr'&&nodes(node).some(child=>child.type==='strong'&&text(child)===name))},
+    dialog(){return nodes(ui.tree).find(node=>node.type?.name==='CategoryDialog')},
+  }
+}
+
+test('simple create then edit persists color, full name-cell preview, inactive/reorder and clear; failures retain draft', async () => {
+  const calls=[],records={dish:[{...category}],ingredient:[{...category,id:'ingredient'}]}
+  let fail=false
+  const page=management(async(path,init)=>{
+    calls.push({path,init})
+    const parts=path.split('?')[0].split('/'),kind=parts[2]
+    if(!init)return {items:structuredClone(records[kind]).sort((a,b)=>a.sort_order-b.sort_order),pagination:{total:records[kind].length}}
+    if(fail)throw Error('offline')
+    const body=init.body?JSON.parse(init.body):{}
+    if(init.method==='POST'&&parts.length===3){const created={...category,...body,id:'new',background_color:null};records[kind].push(created);return structuredClone(created)}
+    const record=records[kind].find(item=>item.id===parts[3])
+    if(init.method==='PATCH')Object.assign(record,body)
+    if(parts[4]==='deactivate')record.is_active=false
+    return structuredClone(record)
+  })
+  const {ui}=page
+  await ui.flush();assert.equal(nodes(ui.tree).some(node=>node.type===page.Color),false)
+  page.tab('菜色分類').props.onClick();await ui.flush()
+  assert.equal(nodes(ui.tree).some(node=>node.type===page.Color),false)
+  const callsBeforeSameTab=calls.length
+  page.tab('菜色分類').props.onClick();await ui.flush()
+  assert.ok(page.row(category.name),'clicking the selected tab must retain the loaded list')
+  assert.equal(calls.length,callsBeforeSameTab,'the selected tab must not start another request')
+  const createForm=nodes(ui.tree).find(node=>node.type==='form')
+  assert.equal(nodes(createForm).filter(node=>node.type==='input').length,1)
+  assert.equal(nodes(createForm).filter(node=>node.type==='fieldset').length,0)
+  nodes(createForm).find(node=>node.type==='input').props.onChange({target:{value:'新分類'}});await ui.flush()
   await nodes(ui.tree).find(node=>node.type==='form').props.onSubmit({preventDefault(){}});await ui.flush()
-  assert.equal(JSON.parse(calls.find(call=>call.init?.method==='POST').init.body).background_color,'#FCE4EC')
-  button('修改').props.onClick();await ui.flush()
-  let dialog=nodes(ui.tree).find(node=>typeof node.type==='function'&&node.type.name==='CategoryDialog')
-  fail=true;await dialog.props.onSave('改名','#DCEDC8');await ui.flush()
-  dialog=nodes(ui.tree).find(node=>node.type?.name==='CategoryDialog')
-  assert.ok(dialog.props.error)
-  fail=false;await dialog.props.onSave('改名',null);await ui.flush()
+  const created=JSON.parse(calls.find(call=>call.init?.method==='POST').init.body)
+  assert.equal(created.name,'新分類');assert.equal('background_color' in created,false)
+  const edit=()=>nodes(page.row('新分類')).find(node=>node.type==='button'&&text(node)==='修改')
+  edit().props.onClick();await ui.flush()
+  await page.dialog().props.onSave('新分類','#FCE4EC');await ui.flush()
+  assert.equal(records.dish.find(item=>item.id==='new').background_color,'#FCE4EC')
+  const preview=()=>nodes(page.row('新分類')).find(node=>node.props?.className==='category-name-cell')
+  assert.equal(preview().props.style['--dish-category-background'],'#FCE4EC')
+  assert.match(text(preview()),/#FCE4EC/)
+  nodes(page.row('新分類')).find(node=>node.type==='button'&&text(node)==='停用').props.onClick();await ui.flush()
+  assert.equal(records.dish.find(item=>item.id==='new').is_active,false)
+  assert.equal(preview().props.style['--dish-category-background'],'#FCE4EC')
+  nodes(page.row('新分類')).find(node=>node.type==='button'&&text(node)==='↑ 上移').props.onClick();await ui.flush()
+  assert.equal(preview().props.style['--dish-category-background'],'#FCE4EC')
+  edit().props.onClick();await ui.flush();fail=true
+  await page.dialog().props.onSave('新分類','#DCEDC8');await ui.flush()
+  assert.ok(page.dialog().props.error)
+  assert.equal(preview().props.style['--dish-category-background'],'#FCE4EC')
+  fail=false;await page.dialog().props.onSave('新分類',null);await ui.flush()
   assert.equal(JSON.parse(calls.filter(call=>call.init?.method==='PATCH').at(-1).init.body).background_color,null)
-  tab('食材分類').props.onClick();await ui.flush();button('修改').props.onClick();await ui.flush()
-  dialog=nodes(ui.tree).find(node=>node.type?.name==='CategoryDialog')
-  await dialog.props.onSave('食材改名','#BBDEFB');await ui.flush()
+  assert.equal(preview().props.style,undefined);assert.match(text(preview()),/中性/)
+  page.tab('食材分類').props.onClick();await ui.flush();page.button('修改').props.onClick();await ui.flush()
+  await page.dialog().props.onSave('食材改名','#BBDEFB');await ui.flush()
   assert.equal('background_color' in JSON.parse(calls.filter(call=>call.init?.method==='PATCH').at(-1).init.body),false)
+})
+
+test('failed dish request cannot display previous ingredient rows; safe status/path and retry preserve the error', async () => {
+  let fail=true
+  const calls=[],page=management(async(path,init)=>{
+    calls.push({path,init})
+    if(path.includes('/ingredient'))return {items:[{...category,id:'ingredient',name:'合成食材分類'}],pagination:{total:1}}
+    if(fail)throw Object.assign(Error('SERVER_PRIVATE_DETAIL_SENTINEL'),{status:500})
+    return {items:[category],pagination:{total:1}}
+  })
+  await page.ui.flush();assert.ok(page.row('合成食材分類'))
+  page.tab('菜色分類').props.onClick();await page.ui.flush()
+  assert.equal(page.row('合成食材分類'),undefined)
+  assert.equal(page.row(category.name),undefined)
+  assert.match(text(page.ui.tree),/HTTP 500/)
+  assert.match(text(page.ui.tree),/\/categories\/dish\?page_size=100/)
+  assert.match(text(page.ui.tree),/Migration/)
+  assert.doesNotMatch(text(page.ui.tree),/SERVER_PRIVATE_DETAIL_SENTINEL/)
+  assert.equal(nodes(page.ui.tree).some(node=>node.type===page.Empty),false)
+  assert.ok(page.button('重新載入分類'))
+  fail=false;page.button('重新載入分類').props.onClick();await page.ui.flush()
+  assert.ok(page.row(category.name));assert.doesNotMatch(text(page.ui.tree),/分類載入失敗/)
+  assert.equal(calls.filter(call=>call.path.includes('/dish')).length,2)
+  assert.equal(calls.some(call=>call.init?.method),false)
+})
+
+test('a later page failing never publishes partial categories, and a failed reload hides stale rows', async () => {
+  let mode='partial'
+  const first=Array.from({length:100},(_,i)=>({...category,id:String(i)}))
+  const page=management(async path=>{
+    if(path.includes('/ingredient'))return {items:[],pagination:{total:0}}
+    if(mode==='success')return {items:[category],pagination:{total:1}}
+    if(path.includes('page=2')||mode==='reload-failure')throw Object.assign(Error('private'),{status:403})
+    return {items:first,pagination:{total:101}}
+  })
+  await page.ui.flush();page.tab('菜色分類').props.onClick();await page.ui.flush()
+  assert.equal(page.row(category.name),undefined)
+  assert.match(text(page.ui.tree),/page=2/);assert.match(text(page.ui.tree),/HTTP 403/)
+  mode='success';page.button('重新載入分類').props.onClick();await page.ui.flush()
+  assert.ok(page.row(category.name))
+  // Re-entering the same category triggers a fresh read after another tab.
+  mode='reload-failure';page.tab('食材分類').props.onClick();await page.ui.flush();page.tab('菜色分類').props.onClick();await page.ui.flush()
+  assert.equal(page.row(category.name),undefined);assert.match(text(page.ui.tree),/HTTP 403/)
+})
+
+test('category loader distinguishes response shape, pagination change, authentication and network failures', async () => {
+  for(const bad of [{items:null},{items:[{}]},{items:[],pagination:{total:'1'}}]){
+    await assert.rejects(display.loadDishCategories(async()=>bad),error=>{
+      assert.equal(error.code,'format');assert.match(display.categoryLoadMessage(error,'fallback'),/格式不符/);return true
+    })
+  }
+  for(const status of [401,403,500]){
+    await assert.rejects(display.loadDishCategories(async()=>{throw {status,message:'SECRET_DETAIL'}}),error=>{
+      assert.equal(error.status,status);assert.match(display.categoryLoadMessage(error,'fallback'),new RegExp(`HTTP ${status}`));assert.doesNotMatch(display.categoryLoadMessage(error,'fallback'),/SECRET_DETAIL/);return true
+    })
+  }
+  await assert.rejects(display.loadDishCategories(async()=>{throw new TypeError('private URL')}),error=>{
+    assert.match(display.categoryLoadMessage(error,'fallback'),/Backend 連線/);assert.doesNotMatch(display.categoryLoadMessage(error,'fallback'),/private URL/);return true
+  })
 })
 
 test('edit dialog retains current color, selection stays local until save, and non-dish dialogs have no color control', async () => {

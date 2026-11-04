@@ -330,8 +330,13 @@ button.compact { min-height:2rem; padding:.3rem .45rem; font-size:.76rem; }
 .category-context { margin-bottom:.75rem; }
 .category-context h2 { margin:0 0 .25rem; font-size:1.15rem; }
 .category-context p { margin:0; color:#637168; }
-.category-create-form { display:flex; align-items:end; gap:.65rem; max-width:32rem; margin-bottom:1rem; padding:.85rem; background:#f5f8f5; border:1px solid #e0e7e1; border-radius:.6rem; }
-.category-create-form label { flex:1; }
+.category-create-form { display:flex; flex-wrap:wrap; align-items:end; gap:.65rem; max-width:32rem; margin-bottom:1rem; padding:.85rem; background:#f5f8f5; border:1px solid #e0e7e1; border-radius:.6rem; }
+.category-create-form label { flex:1; min-width:min(100%,12rem); }
+.category-create-form input { min-width:0; }
+.category-create-form>button { flex-shrink:0; }
+.category-table .category-name-cell[style] { background:var(--dish-category-background); color:var(--dish-category-text); }
+.category-table .category-name-cell small { display:block; margin-top:.3rem; color:inherit; font-size:.8rem; }
+.category-load-retry { margin-bottom:.8rem; }
 .category-table th:nth-child(1) { width:32%; }.category-table th:nth-child(2) { width:10rem; }.category-table th:nth-child(3) { width:13rem; }.category-table th:nth-child(4) { width:22rem; }
 .category-order-actions { display:flex; gap:.35rem; }
 .category-dialog { width:min(30rem,100%); }
@@ -342,7 +347,6 @@ button.category-color-choice[aria-pressed="true"] { border-color:#285b38; box-sh
 button.category-color-choice:focus-visible { outline:3px solid #285b38; outline-offset:3px; }
 .category-color-preview { margin-top:.7rem; padding:.7rem; border:1px solid #cbd8ce; border-radius:.4rem; background:#f5f7f5; }
 .category-color-preview span { padding:.15rem .3rem; background:#fff; color:#17251c; border-radius:.2rem; }
-.category-create-form>.category-color-picker { flex-basis:100%; }
 .category-dialog form>footer { display:flex; justify-content:flex-end; gap:.55rem; padding-top:1rem; margin-top:1rem; border-top:1px solid #e2e8e3; }
 .supplier-dialog { width:min(34rem,100%); }
 .supplier-edit-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.8rem; width:100%; }
